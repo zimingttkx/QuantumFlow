@@ -17,9 +17,8 @@ logger = structlog.get_logger().bind(component="api_model_management")
 
 router = APIRouter(prefix="/models", tags=["Model Management"])
 
-# 模型路径映射
+# 模型路径映射 - HuggingFace可以直接使用Hub ID
 MODEL_PATH_MAPPING: Dict[str, str] = {
-    "Phi-3-mini": "microsoft/Phi-3-mini-4k-instruct",
     "Qwen2.5-1.5B": "Qwen/Qwen2.5-1.5B-Instruct",
     "Qwen2.5-3B": "Qwen/Qwen2.5-3B-Instruct",
     "Qwen2.5-7B": "Qwen/Qwen2.5-7B-Instruct",
@@ -50,10 +49,10 @@ async def load_model(request: LoadModelRequest) -> LoadModelResponse:
         success = await engine_manager.load_model(
             model_name=request.model,
             model_path=model_path,
-            backend=InferenceBackendType(request.backend) if request.backend else InferenceBackendType.VLLM,
+            backend=InferenceBackendType(request.backend) if request.backend else InferenceBackendType.HUGGINGFACE,
             tensor_parallel=request.tensor_parallel or 1,
-            gpu_memory_utilization=request.gpu_memory_utilization or 0.9,
-            max_model_len=request.max_model_len or 8192,
+            gpu_memory_utilization=request.gpu_memory_utilization or 0.8,
+            max_model_len=request.max_model_len or 2048,
             dtype=request.dtype or "auto",
             quantization=request.quantization,
         )

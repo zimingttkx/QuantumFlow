@@ -29,7 +29,7 @@ class TestModelConfig:
         assert config.model_name == "test-model"
         assert config.model_path == "path/to/model"
         assert config.tensor_parallel == 2
-        assert config.gpu_memory_utilization == 0.9  # 默认值
+        assert config.gpu_memory_utilization == 0.8  # 默认值
 
     def test_model_config_to_dict(self):
         """测试模型配置转字典"""
@@ -147,9 +147,11 @@ class TestEngineManager:
         # 创建一个新的 Manager 实例进行测试
         manager = EngineManager.__new__(EngineManager)
         manager._initialized = False
+        manager._engines = {}
+        manager._loaded_models = {}
 
-        # 模拟初始化失败
-        with patch.object(manager, "initialize", return_value=False):
+        # mock initialize 返回 False (需要 AsyncMock)
+        with patch.object(manager, "initialize", new_callable=AsyncMock, return_value=False):
             # 由于没有引擎，应该抛出异常
             with pytest.raises(InferenceError):
                 await manager.load_model(

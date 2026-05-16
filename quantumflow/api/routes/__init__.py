@@ -9,7 +9,7 @@ router = APIRouter()
 # 注册子路由
 router.include_router(health.router)
 router.include_router(inference.router)
+router.include_router(model_management.router)
 router.include_router(models.router)
 router.include_router(cluster.router)
 router.include_router(metrics.router)
-router.include_router(model_management.router)

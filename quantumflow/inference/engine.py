@@ -16,8 +16,8 @@ class ModelConfig:
     model_path: str
     tensor_parallel: int = 1
     pipeline_parallel: int = 1
-    gpu_memory_utilization: float = 0.9
-    max_model_len: int = 8192
+    gpu_memory_utilization: float = 0.8  # 降低显存使用率适应RTX 4080 Laptop
+    max_model_len: int = 2048  # 降低max_model_len适应显存
     dtype: str = "auto"  # float16, bfloat16, float32, auto
     quantization: Optional[str] = None  # awq, gptq, gguf
     trust_remote_code: bool = True

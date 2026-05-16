@@ -120,7 +120,7 @@ class TestClusterEndpoint:
 
     def test_get_node(self, client):
         """测试获取节点信息"""
-        response = client.get("/api/v1/cluster/nodes/node-1")
+        response = client.get("/api/v1/cluster/nodes/local-node")
         assert response.status_code == 200
         data = response.json()
-        assert data["node_id"] == "node-1"
+        assert data["node_id"] == "local-node"

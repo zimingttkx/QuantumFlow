@@ -290,19 +290,19 @@ class LoadModelRequest(BaseModel):
 
     model: str = Field(..., description="模型名称（简称，如 Qwen2.5-7B）")
     model_path: Optional[str] = Field(None, description="模型路径（HuggingFace ID 或本地路径）")
-    backend: Optional[str] = Field("vllm", description="推理后端: vllm, tgi, sglang")
+    backend: Optional[str] = Field("huggingface", description="推理后端: huggingface, vllm, tgi, sglang")
     tensor_parallel: Optional[int] = Field(1, description="张量并行度")
-    gpu_memory_utilization: Optional[float] = Field(0.9, description="GPU显存利用率")
-    max_model_len: Optional[int] = Field(8192, description="最大模型长度")
+    gpu_memory_utilization: Optional[float] = Field(0.6, description="GPU显存利用率")  # 降低显存使用率适应RTX 4080 Laptop
+    max_model_len: Optional[int] = Field(2048, description="最大模型长度")  # 降低max_model_len适应显存
     dtype: Optional[str] = Field("auto", description="数据类型: auto, float16, bfloat16, float32")
     quantization: Optional[str] = Field(None, description="量化方式: awq, gptq, gguf")
 
     model_config = {"json_schema_extra": {"example": {
-        "model": "Phi-3-mini",
-        "model_path": "microsoft/Phi-3-mini-4k-instruct",
-        "backend": "vllm",
+        "model": "Qwen2.5-1.5B",
+        "model_path": "Qwen/Qwen2.5-1.5B-Instruct",
+        "backend": "huggingface",
         "tensor_parallel": 1,
-        "gpu_memory_utilization": 0.9,
+        "gpu_memory_utilization": 0.8,
     }}}
 
 

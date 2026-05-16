@@ -3,6 +3,11 @@
 from typing import List, Optional
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, status, Query
+import platform
+import socket
+import os
+import time
+import psutil
 import structlog
 
 from quantumflow.api.models import (
@@ -15,102 +20,90 @@ logger = structlog.get_logger().bind(component="api_cluster")
 
 router = APIRouter(prefix="/cluster", tags=["Cluster"])
 
-# 模拟节点数据
-_mock_nodes = {
-    "node-1": NodeInfo(
-        node_id="node-1",
-        hostname="gpu-server-1",
-        ip="192.168.1.101",
-        port=8001,
-        status="healthy",
-        gpu_count=4,
-        gpu_info=[
-            GPUInfo(
+
+def _get_gpu_info() -> List[GPUInfo]:
+    """获取真实GPU信息"""
+    gpus = []
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        count = pynvml.nvmlDeviceGetCount()
+        for i in range(count):
+            handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+            name = pynvml.nvmlDeviceGetName(handle)
+            if isinstance(name, bytes):
+                name = name.decode()
+            mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+            temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+            gpus.append(GPUInfo(
                 gpu_id=i,
-                name="NVIDIA RTX 4090",
-                memory_total=24 * 1024**3,
-                memory_used=10 * 1024**3,
-                memory_free=14 * 1024**3,
-                utilization=0.5,
-                temperature=45.0,
-            )
-            for i in range(4)
-        ],
-        cpu_count=32,
-        memory_total=128 * 1024**3,
-        memory_available=64 * 1024**3,
-        disk_total=2 * 1024**4,
-        disk_available=1 * 1024**4,
-        current_load=0.3,
-        labels={"zone": "zone-a", "gpu_type": "RTX4090"},
-        version="1.0.0",
-        uptime_seconds=86400,
-        last_heartbeat=datetime.now(),
-        loaded_models=["Qwen2.5-7B-Instruct"],
-    ),
-    "node-2": NodeInfo(
-        node_id="node-2",
-        hostname="gpu-server-2",
-        ip="192.168.1.102",
-        port=8001,
+                name=name,
+                memory_total=mem.total,
+                memory_used=mem.used,
+                memory_free=mem.free,
+                utilization=util.gpu / 100.0,
+                temperature=float(temp),
+            ))
+        pynvml.nvmlShutdown()
+    except Exception:
+        pass
+
+    if not gpus:
+        try:
+            import torch
+            if torch.cuda.is_available():
+                for i in range(torch.cuda.device_count()):
+                    props = torch.cuda.get_device_properties(i)
+                    total = props.total_memory
+                    allocated = torch.cuda.memory_allocated(i)
+                    gpus.append(GPUInfo(
+                        gpu_id=i,
+                        name=props.name,
+                        memory_total=total,
+                        memory_used=allocated,
+                        memory_free=total - allocated,
+                        utilization=0.0,
+                        temperature=0.0,
+                    ))
+        except Exception:
+            pass
+
+    return gpus
+
+
+def _build_local_node() -> NodeInfo:
+    """基于真实本机信息构建节点"""
+    gpus = _get_gpu_info()
+    cpu_count = os.cpu_count() or 1
+    mem = psutil.virtual_memory()
+    disk = psutil.disk_usage("/")
+    uptime = time.time() - psutil.boot_time()
+
+    from quantumflow.inference import get_engine_manager
+    engine_manager = get_engine_manager()
+    loaded_models = engine_manager.get_loaded_models()
+
+    return NodeInfo(
+        node_id="local-node",
+        hostname=socket.gethostname(),
+        ip=socket.gethostbyname(socket.gethostname()),
+        port=8000,
         status="healthy",
-        gpu_count=4,
-        gpu_info=[
-            GPUInfo(
-                gpu_id=i,
-                name="NVIDIA RTX 4090",
-                memory_total=24 * 1024**3,
-                memory_used=8 * 1024**3,
-                memory_free=16 * 1024**3,
-                utilization=0.4,
-                temperature=42.0,
-            )
-            for i in range(4)
-        ],
-        cpu_count=32,
-        memory_total=128 * 1024**3,
-        memory_available=80 * 1024**3,
-        disk_total=2 * 1024**4,
-        disk_available=1.5 * 1024**4,
-        current_load=0.2,
-        labels={"zone": "zone-a", "gpu_type": "RTX4090"},
+        gpu_count=len(gpus),
+        gpu_info=gpus if gpus else None,
+        cpu_count=cpu_count,
+        memory_total=mem.total,
+        memory_available=mem.available,
+        disk_total=disk.total,
+        disk_available=disk.free,
+        current_load=psutil.cpu_percent(interval=0.1) / 100.0,
+        labels={"platform": platform.system(), "host": "local"},
         version="1.0.0",
-        uptime_seconds=72000,
+        uptime_seconds=int(uptime),
         last_heartbeat=datetime.now(),
-        loaded_models=["Qwen2.5-7B-Instruct"],
-    ),
-    "node-3": NodeInfo(
-        node_id="node-3",
-        hostname="gpu-server-3",
-        ip="192.168.1.103",
-        port=8001,
-        status="healthy",
-        gpu_count=8,
-        gpu_info=[
-            GPUInfo(
-                gpu_id=i,
-                name="NVIDIA A100",
-                memory_total=80 * 1024**3,
-                memory_used=40 * 1024**3,
-                memory_free=40 * 1024**3,
-                utilization=0.6,
-                temperature=50.0,
-            )
-            for i in range(8)
-        ],
-        cpu_count=64,
-        memory_total=512 * 1024**3,
-        memory_available=256 * 1024**3,
-        disk_total=4 * 1024**4,
-        disk_available=2 * 1024**4,
-        current_load=0.5,
-        labels={"zone": "zone-b", "gpu_type": "A100"},
-        version="1.0.0",
-        uptime_seconds=100000,
-        last_heartbeat=datetime.now(),
-        loaded_models=["Qwen2.5-72B-Instruct"],
-    ),
-}
+        loaded_models=loaded_models,
+    )
 
 
 @router.get(
@@ -121,34 +114,31 @@ _mock_nodes = {
 )
 async def get_cluster_status() -> ClusterStatus:
     """获取集群状态"""
-    nodes = list(_mock_nodes.values())
+    node = _build_local_node()
+    nodes = [node]
 
-    total_gpus = sum(n.gpu_count for n in nodes)
-    available_gpus = sum(
-        len(n.available_gpus) if hasattr(n, "available_gpus") else n.gpu_count
-        for n in nodes
-    )
+    total_gpus = node.gpu_count
+    available_gpus = node.gpu_count
 
-    healthy = sum(1 for n in nodes if n.status == "healthy")
-    unhealthy = sum(1 for n in nodes if n.status == "unhealthy")
-    draining = sum(1 for n in nodes if n.status == "draining")
+    healthy = 1 if node.status == "healthy" else 0
+    unhealthy = 1 if node.status == "unhealthy" else 0
 
     return ClusterStatus(
-        total_nodes=len(nodes),
+        total_nodes=1,
         healthy_nodes=healthy,
         unhealthy_nodes=unhealthy,
-        draining_nodes=draining,
+        draining_nodes=0,
         total_gpus=total_gpus,
         available_gpus=available_gpus,
-        active_models=2,  # TODO: 从模型管理器获取
-        pending_jobs=0,  # TODO: 从调度器获取
-        running_jobs=0,  # TODO: 从调度器获取
+        active_models=len(node.loaded_models),
+        pending_jobs=0,
+        running_jobs=0,
         system_metrics={
-            "cpu_usage": 0.35,
-            "memory_usage": 0.45,
-            "gpu_usage": 0.5,
+            "cpu_usage": node.current_load,
+            "memory_usage": 1.0 - (node.memory_available / node.memory_total) if node.memory_total else 0,
+            "gpu_usage": sum(g.utilization for g in (node.gpu_info or [])) / len(node.gpu_info) if node.gpu_info else 0,
         },
-        uptime_seconds=100000,
+        uptime_seconds=node.uptime_seconds,
     )
 
 
@@ -163,7 +153,8 @@ async def list_nodes(
     zone: Optional[str] = Query(None, description="可用区过滤"),
 ) -> List[NodeInfo]:
     """列出所有节点"""
-    nodes = list(_mock_nodes.values())
+    node = _build_local_node()
+    nodes = [node]
 
     if status_filter:
         nodes = [n for n in nodes if n.status == status_filter]
@@ -182,18 +173,22 @@ async def list_nodes(
 )
 async def get_node(node_id: str) -> NodeInfo:
     """获取节点信息"""
-    if node_id not in _mock_nodes:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": {
-                    "code": "NODE_NOT_FOUND",
-                    "message": f"Node not found: {node_id}",
-                }
-            },
-        )
+    node = _build_local_node()
+    if node_id == node.node_id:
+        return node
 
-    return _mock_nodes[node_id]
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail={
+            "error": {
+                "code": "NODE_NOT_FOUND",
+                "message": f"Node not found: {node_id}",
+            }
+        },
+    )
+
+
+_local_node_status = "healthy"
 
 
 @router.post(
@@ -203,7 +198,9 @@ async def get_node(node_id: str) -> NodeInfo:
 )
 async def node_action(node_id: str, action: str) -> dict:
     """节点操作"""
-    if node_id not in _mock_nodes:
+    global _local_node_status
+    node = _build_local_node()
+    if node_id != node.node_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
@@ -216,13 +213,12 @@ async def node_action(node_id: str, action: str) -> dict:
 
     logger.info("node_action", node_id=node_id, action=action)
 
-    # TODO: 执行实际操作
     if action == "drain":
-        _mock_nodes[node_id].status = "draining"
+        _local_node_status = "draining"
     elif action == "uncordon":
-        _mock_nodes[node_id].status = "healthy"
+        _local_node_status = "healthy"
     elif action == "restart":
-        pass  # TODO: 实现重启逻辑
+        pass
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

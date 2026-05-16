@@ -348,6 +348,18 @@ class WorkerNode:
             "gpu_enabled": str(self.config.gpu_enabled).lower(),
         }
 
+    def _get_gpu_temperature(self, gpu_id: int) -> float:
+        """获取GPU温度"""
+        try:
+            import pynvml
+            pynvml.nvmlInit()
+            handle = pynvml.nvmlDeviceGetHandleByIndex(gpu_id)
+            temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+            pynvml.nvmlShutdown()
+            return float(temp)
+        except Exception:
+            return 0.0
+
     async def _collect_gpu_info(self) -> List[Dict[str, Any]]:
         """收集GPU信息"""
         gpu_info = []
@@ -369,7 +381,7 @@ class WorkerNode:
                         "utilization": (memory_allocated / props.total_memory) * 100
                         if props.total_memory > 0
                         else 0,
-                        "temperature": 0,  # 需要nvidia-ml-py
+                        "temperature": self._get_gpu_temperature(i),
                     })
 
                     # 更新监控指标

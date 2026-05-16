@@ -29,11 +29,11 @@ router = APIRouter(prefix="/inference", tags=["Inference"])
 # 模拟请求ID生成
 _request_counter = 0
 
-# 预加载的模型映射（演示用）
+# 预加载的模型映射（演示用）- 直接使用HuggingFace Hub ID
 _MODEL_MAPPING = {
-    "Qwen2.5-7B": "Qwen/Qwen2.5-7B-Instruct",
     "Qwen2.5-1.5B": "Qwen/Qwen2.5-1.5B-Instruct",
-    "Phi-3-mini": "microsoft/Phi-3-mini-4k-instruct",
+    "Qwen2.5-3B": "Qwen/Qwen2.5-3B-Instruct",
+    "Qwen2.5-7B": "Qwen/Qwen2.5-7B-Instruct",
 }
 
 
@@ -46,15 +46,11 @@ def _generate_request_id() -> str:
 
 def _convert_sampling_params(request: InferenceRequest) -> SamplingParams:
     """转换采样参数"""
-    params = request.sampling_params or {}
-    return SamplingParams(
-        temperature=params.get("temperature", 0.7),
-        top_p=params.get("top_p", 0.9),
-        top_k=params.get("top_k", 50),
-        max_tokens=params.get("max_tokens", 2048),
-        repetition_penalty=params.get("repetition_penalty", 1.0),
-        stop=params.get("stop"),
-    )
+    if request.sampling_params is None:
+        return SamplingParams()
+    if isinstance(request.sampling_params, dict):
+        return SamplingParams(**request.sampling_params)
+    return request.sampling_params
 
 
 @router.post(
@@ -87,22 +83,41 @@ async def generate(request: InferenceRequest) -> InferenceResponse:
 
         # 检查模型是否已加载
         if not engine_manager.is_model_loaded(request.model):
-            # 尝试自动加载模型
-            logger.info("auto_loading_model", model=request.model, path=model_path)
-            try:
-                await engine_manager.load_model(
-                    model_name=request.model,
-                    model_path=model_path,
-                    tensor_parallel=1,
-                )
-            except Exception as e:
-                logger.warning("model_load_failed", model=request.model, error=str(e))
-                # 如果加载失败，返回提示信息
+            # 只自动加载已知的模型，未知模型直接返回mock数据避免HF Hub长时间等待
+            if request.model in _MODEL_MAPPING:
+                logger.info("auto_loading_model", model=request.model, path=model_path)
+                try:
+                    success = await engine_manager.load_model(
+                        model_name=request.model,
+                        model_path=model_path,
+                        tensor_parallel=1,
+                        gpu_memory_utilization=0.8,
+                        max_model_len=2048,
+                    )
+                    if not success:
+                        raise InferenceError(f"Failed to load model {request.model}")
+                except Exception as e:
+                    logger.warning("model_load_failed", model=request.model, error=str(e))
+                    return InferenceResponse(
+                        request_id=request_id,
+                        model=request.model,
+                        prompt=request.prompt,
+                        generated_text=f"[注意: 模型 {request.model} 未加载。当前返回模拟数据。]\n\n用户输入: {request.prompt}",
+                        finish_reason="stop",
+                        latency_ms=(time.time() - start_time) * 1000,
+                        usage={
+                            "prompt_tokens": len(request.prompt) // 4,
+                            "completion_tokens": 50,
+                            "total_tokens": len(request.prompt) // 4 + 50,
+                        },
+                    )
+            else:
+                # 未知模型：直接返回mock数据
                 return InferenceResponse(
                     request_id=request_id,
                     model=request.model,
                     prompt=request.prompt,
-                    generated_text=f"[注意: 模型 {request.model} 未加载。请先在服务器上加载模型。当前返回模拟数据。]\n\n用户输入: {request.prompt}",
+                    generated_text=f"[注意: 模型 {request.model} 未加载。当前返回模拟数据。]\n\n用户输入: {request.prompt}",
                     finish_reason="stop",
                     latency_ms=(time.time() - start_time) * 1000,
                     usage={
@@ -184,15 +199,37 @@ async def generate_stream(request: InferenceRequest) -> StreamingResponse:
 
         # 检查模型是否已加载
         if not engine_manager.is_model_loaded(request.model):
-            try:
-                await engine_manager.load_model(
-                    model_name=request.model,
-                    model_path=model_path,
-                    tensor_parallel=1,
+            # 只自动加载已知模型
+            if request.model in _MODEL_MAPPING:
+                try:
+                    success = await engine_manager.load_model(
+                        model_name=request.model,
+                        model_path=model_path,
+                        tensor_parallel=1,
+                        gpu_memory_utilization=0.8,
+                        max_model_len=2048,
+                    )
+                    if not success:
+                        raise InferenceError(f"Failed to load model {request.model}")
+                except Exception as e:
+                    logger.warning("model_load_failed", model=request.model, error=str(e))
+                    error_response = StreamResponse(
+                        request_id=request_id,
+                        delta=f"模型加载失败: {str(e)}",
+                        is_final=True,
+                        finish_reason="error",
+                    )
+                    yield f"data: {error_response.model_dump_json()}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
+            else:
+                error_response = StreamResponse(
+                    request_id=request_id,
+                    delta=f"模型 {request.model} 未加载",
+                    is_final=True,
+                    finish_reason="error",
                 )
-            except Exception as e:
-                logger.warning("model_load_failed", model=request.model, error=str(e))
-                yield f"data: {{'error': '模型加载失败: {str(e)}'}}\n\n"
+                yield f"data: {error_response.model_dump_json()}\n\n"
                 yield "data: [DONE]\n\n"
                 return
 
@@ -227,7 +264,13 @@ async def generate_stream(request: InferenceRequest) -> StreamingResponse:
 
         except Exception as e:
             logger.error("stream_generate_error", error=str(e))
-            yield f"data: {{'error': '{str(e)}'}}\n\n"
+            error_response = StreamResponse(
+                request_id=request_id,
+                delta=f"生成错误: {str(e)}",
+                is_final=True,
+                finish_reason="error",
+            )
+            yield f"data: {error_response.model_dump_json()}\n\n"
 
         yield "data: [DONE]\n\n"
 
@@ -263,15 +306,54 @@ async def batch_generate(request: BatchInferenceRequest) -> BatchInferenceRespon
     engine_manager = get_engine_manager()
 
     # 检查模型是否已加载
+    model_load_failed = False
     if not engine_manager.is_model_loaded(request.model):
-        try:
-            await engine_manager.load_model(
-                model_name=request.model,
-                model_path=model_path,
-                tensor_parallel=1,
+        if request.model in _MODEL_MAPPING:
+            try:
+                success = await engine_manager.load_model(
+                    model_name=request.model,
+                    model_path=model_path,
+                    tensor_parallel=1,
+                    gpu_memory_utilization=0.8,
+                    max_model_len=2048,
+                )
+                if not success:
+                    raise InferenceError(f"Failed to load model {request.model}")
+            except Exception as e:
+                logger.warning("model_load_failed", model=request.model, error=str(e))
+                model_load_failed = True
+        else:
+            model_load_failed = True
+
+    # 如果模型加载失败，返回模拟数据
+    if model_load_failed:
+        mock_results = []
+        for i, prompt in enumerate(request.prompts):
+            mock_results.append(
+                InferenceResponse(
+                    request_id=f"{batch_id}_{i}",
+                    model=request.model,
+                    prompt=prompt,
+                    generated_text=f"[注意: 模型 {request.model} 未加载。当前返回模拟数据。]\n\n用户输入: {prompt}",
+                    finish_reason="stop",
+                    latency_ms=0,
+                    usage={
+                        "prompt_tokens": len(prompt) // 4,
+                        "completion_tokens": 50,
+                        "total_tokens": len(prompt) // 4 + 50,
+                    },
+                )
             )
-        except Exception as e:
-            logger.warning("model_load_failed", model=request.model, error=str(e))
+        return BatchInferenceResponse(
+            batch_id=batch_id,
+            model=request.model,
+            total=len(request.prompts),
+            completed=len(mock_results),
+            failed=0,
+            results=mock_results,
+            total_latency_ms=0,
+            avg_latency_ms=0,
+        )
 
     # 从请求中提取采样参数
     req_sampling = request.sampling_params
@@ -349,14 +431,15 @@ async def batch_generate(request: BatchInferenceRequest) -> BatchInferenceRespon
 )
 async def chat(request: ChatRequest) -> InferenceResponse:
     """对话接口"""
-    # 将对话历史转换为单个提示词
+    # 使用ChatML格式构建prompt
     prompt_parts = []
     for msg in request.messages:
-        role = msg.role.upper()
-        prompt_parts.append(f"{role}: {msg.content}")
+        role = msg.role.lower()
+        if role not in ("user", "assistant", "system"):
+            role = "user"
+        prompt_parts.append(f"<|im_start|>{role}\n{msg.content}<|im_end|>")
 
-    prompt = "\n\n".join(prompt_parts)
-    prompt += "\n\nASSISTANT:"
+    prompt = "\n".join(prompt_parts) + "\n<|im_start|>assistant\n"
 
     # 调用生成接口
     return await generate(

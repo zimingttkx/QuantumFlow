@@ -10,6 +10,7 @@ from quantumflow.inference.engine import (
     InferenceResult,
 )
 from quantumflow.inference.backends.vllm import VLLMEngine
+from quantumflow.inference.backends.huggingface import HuggingFaceEngine
 from quantumflow.core.constants import InferenceBackendType
 from quantumflow.core.exceptions import InferenceError, ModelNotFoundError
 
@@ -43,7 +44,7 @@ class EngineManager:
         self._default_engine: Optional[InferenceEngine] = None
         self._loaded_models: Dict[str, InferenceEngine] = {}  # model_name -> engine
 
-    async def initialize(self, backend: InferenceBackendType = InferenceBackendType.VLLM) -> bool:
+    async def initialize(self, backend: InferenceBackendType = InferenceBackendType.HUGGINGFACE) -> bool:
         """
         初始化指定后端的推理引擎
 
@@ -56,6 +57,14 @@ class EngineManager:
         try:
             if backend == InferenceBackendType.VLLM:
                 engine = VLLMEngine()
+                success = await engine.initialize()
+                if success:
+                    self._engines[backend] = engine
+                    self._default_engine = engine
+                    logger.info("engine_manager_initialized", backend=backend.value)
+                    return True
+            elif backend == InferenceBackendType.HUGGINGFACE:
+                engine = HuggingFaceEngine()
                 success = await engine.initialize()
                 if success:
                     self._engines[backend] = engine
@@ -75,7 +84,7 @@ class EngineManager:
         self,
         model_name: str,
         model_path: str,
-        backend: InferenceBackendType = InferenceBackendType.VLLM,
+        backend: InferenceBackendType = InferenceBackendType.HUGGINGFACE,
         **kwargs,
     ) -> bool:
         """
@@ -104,8 +113,8 @@ class EngineManager:
             model_path=model_path,
             tensor_parallel=kwargs.get("tensor_parallel", 1),
             pipeline_parallel=kwargs.get("pipeline_parallel", 1),
-            gpu_memory_utilization=kwargs.get("gpu_memory_utilization", 0.9),
-            max_model_len=kwargs.get("max_model_len", 8192),
+            gpu_memory_utilization=kwargs.get("gpu_memory_utilization", 0.8),  # 降低显存使用率适应RTX 4080 Laptop
+            max_model_len=kwargs.get("max_model_len", 2048),  # 降低max_model_len适应显存
             dtype=kwargs.get("dtype", "auto"),
             quantization=kwargs.get("quantization"),
             trust_remote_code=kwargs.get("trust_remote_code", True),

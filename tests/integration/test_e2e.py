@@ -236,11 +236,11 @@ class TestE2EClusterManagement:
 
     def test_get_node(self, client):
         """测试获取节点详情"""
-        response = client.get("/api/v1/cluster/nodes/node-1")
+        response = client.get("/api/v1/cluster/nodes/local-node")
 
         assert response.status_code == 200
         data = response.json()
-        assert data["node_id"] == "node-1"
+        assert data["node_id"] == "local-node"
         assert "gpu_info" in data
 
     def test_get_nonexistent_node(self, client):
@@ -252,7 +252,7 @@ class TestE2EClusterManagement:
     def test_node_action_drain(self, client):
         """测试节点drain操作"""
         response = client.post(
-            "/api/v1/cluster/nodes/node-1/action?action=drain"
+            "/api/v1/cluster/nodes/local-node/action?action=drain"
         )
 
         assert response.status_code == 200
@@ -263,7 +263,7 @@ class TestE2EClusterManagement:
     def test_node_action_uncordon(self, client):
         """测试节点uncordon操作"""
         response = client.post(
-            "/api/v1/cluster/nodes/node-1/action?action=uncordon"
+            "/api/v1/cluster/nodes/local-node/action?action=uncordon"
         )
 
         assert response.status_code == 200

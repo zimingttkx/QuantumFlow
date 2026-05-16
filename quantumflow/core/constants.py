@@ -42,6 +42,7 @@ class InferenceBackendType(str, Enum):
     SGLANG = "sglang"
     TRT_LLM = "tensorrt-llm"
     LIGER = "liger"
+    HUGGINGFACE = "huggingface"
 
 
 # 调度策略类型
