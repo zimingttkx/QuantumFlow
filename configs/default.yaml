@@ -1,0 +1,146 @@
+# QuantumFlow 配置
+
+## 默认配置 (configs/default.yaml)
+
+```yaml
+# 应用配置
+app:
+  name: "QuantumFlow"
+  version: "1.0.0"
+  environment: "development"
+  log_level: "INFO"
+
+# API配置
+api:
+  host: "0.0.0.0"
+  port: 8000
+  workers: 4
+  timeout: 300
+  cors_enabled: true
+  cors_origins:
+    - "*"
+  rate_limit_enabled: true
+  rate_limit_requests_per_minute: 100
+  rate_limit_burst: 20
+
+# 调度器配置
+scheduler:
+  enabled: true
+  loop_interval_ms: 100
+  max_concurrent_requests: 1000
+  queue_max_size: 10000
+  queue_high_priority_threshold: 8
+  queue_default_priority: 5
+  strategy_default: "adaptive"
+  strategy_gang_enabled: true
+  strategy_gang_timeout_seconds: 300
+  strategy_pack_enabled: true
+  strategy_pack_max_batch_size: 32
+
+# 集群配置
+cluster:
+  heartbeat_interval_seconds: 5
+  heartbeat_timeout_seconds: 30
+  node_labels:
+    - type
+    - zone
+    - gpu_type
+
+# Worker配置
+worker:
+  heartbeat_interval_seconds: 3
+  gpu_monitoring_interval_seconds: 5
+  model_cache_size_gb: 100
+  max_concurrent_inferences: 10
+
+# 推理配置
+inference:
+  default_backend: "vllm"
+  backends:
+    vllm:
+      backend_type: "vllm"
+      default_tensor_parallel: 1
+      default_gpu_memory_utilization: 0.9
+      max_model_len: 8192
+      enforce_eager: false
+      trust_remote_code: true
+  defaults:
+    temperature: 0.7
+    top_p: 0.9
+    top_k: 50
+    max_tokens: 2048
+
+# 存储配置
+storage:
+  redis:
+    host: "localhost"
+    port: 6379
+    db: 0
+    password: null
+    pool_size: 20
+  model_registry_type: "filesystem"
+  model_registry_base_path: "/models"
+
+# 监控配置
+monitoring:
+  enabled: true
+  metrics_port: 9090
+  metrics_path: "/metrics"
+  health_check_path: "/health"
+  health_check_detailed: true
+
+# 模型配置
+models:
+  allowed_download_sources:
+    - "hf://"
+    - "modelscope://"
+  cache_dir: "/root/.cache/huggingface"
+  download_timeout_seconds: 3600
+```
+
+## 开发环境配置 (configs/development.yaml)
+
+```yaml
+app:
+  environment: "development"
+  log_level: "DEBUG"
+
+api:
+  workers: 1  # 开发时使用单worker
+
+monitoring:
+  enabled: true
+```
+
+## 生产环境配置 (configs/production.yaml)
+
+```yaml
+app:
+  environment: "production"
+  log_level: "INFO"
+
+api:
+  workers: 8
+  rate_limit_enabled: true
+  rate_limit_requests_per_minute: 1000
+
+scheduler:
+  max_concurrent_requests: 5000
+  queue_max_size: 50000
+
+cluster:
+  heartbeat_timeout_seconds: 60
+
+monitoring:
+  enabled: true
+  metrics_port: 9090
+```
+
+## 环境变量
+
+| 变量名 | 描述 | 默认值 |
+|--------|------|--------|
+| QF_ENVIRONMENT | 运行环境 | development |
+| QF_CONFIG_FILE | 配置文件路径 | configs/{env}.yaml |
+| QF_LOG_LEVEL | 日志级别 | INFO |
+| QF_REDIS_URL | Redis连接URL | redis://localhost:6379 |

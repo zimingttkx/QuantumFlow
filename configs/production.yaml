@@ -1,0 +1,87 @@
+# QuantumFlow 生产环境配置
+
+app:
+  name: "QuantumFlow"
+  version: "1.0.0"
+  environment: "production"
+  log_level: "INFO"
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  workers: 8
+  timeout: 300
+  cors_enabled: true
+  cors_origins:
+    - "*"
+  rate_limit_enabled: true
+  rate_limit_requests_per_minute: 1000
+  rate_limit_burst: 50
+
+scheduler:
+  enabled: true
+  loop_interval_ms: 50
+  max_concurrent_requests: 5000
+  queue_max_size: 50000
+  queue_high_priority_threshold: 8
+  queue_default_priority: 5
+  strategy_default: "adaptive"
+  strategy_gang_enabled: true
+  strategy_gang_timeout_seconds: 600
+  strategy_pack_enabled: true
+  strategy_pack_max_batch_size: 64
+
+cluster:
+  heartbeat_interval_seconds: 5
+  heartbeat_timeout_seconds: 60
+  node_labels:
+    - type
+    - zone
+    - gpu_type
+
+worker:
+  heartbeat_interval_seconds: 3
+  gpu_monitoring_interval_seconds: 5
+  model_cache_size_gb: 100
+  max_concurrent_inferences: 10
+
+inference:
+  default_backend: "vllm"
+  backends:
+    vllm:
+      backend_type: "vllm"
+      default_tensor_parallel: 1
+      default_gpu_memory_utilization: 0.92
+      max_model_len: 8192
+      enforce_eager: false
+      trust_remote_code: true
+      enable_chunked_prefill: true
+  defaults:
+    temperature: 0.7
+    top_p: 0.9
+    top_k: 50
+    max_tokens: 2048
+
+storage:
+  redis:
+    host: "localhost"
+    port: 6379
+    db: 0
+    password: null
+    pool_size: 50
+  model_registry_type: "filesystem"
+  model_registry_base_path: "/models"
+
+monitoring:
+  enabled: true
+  metrics_port: 9090
+  metrics_path: "/metrics"
+  health_check_path: "/health"
+  health_check_detailed: true
+
+models:
+  allowed_download_sources:
+    - "hf://"
+    - "modelscope://"
+  cache_dir: "/root/.cache/huggingface"
+  download_timeout_seconds: 3600

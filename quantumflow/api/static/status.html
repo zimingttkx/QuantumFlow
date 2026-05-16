@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QuantumFlow - 集群状态</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #6366F1;
+            --success: #10B981;
+            --warning: #F59E0B;
+            --danger: #EF4444;
+            --bg-dark: #0F172A;
+            --bg-card: #1E293B;
+            --text-primary: #F8FAFC;
+            --text-secondary: #94A3B8;
+            --border: #334155;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 2rem;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        /* Header */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .logo-icon {
+            width: 48px;
+            height: 48px;
+            background: linear-gradient(135deg, var(--primary), #8B5CF6);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+        }
+
+        .logo-text h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary), #8B5CF6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .logo-text span {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 0.75rem;
+        }
+
+        .btn {
+            padding: 0.625rem 1rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5558E3;
+        }
+
+        .btn-secondary {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--primary);
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.25rem;
+        }
+
+        .stat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.75rem;
+        }
+
+        .stat-label {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .stat-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+        }
+
+        .stat-icon.nodes { background: rgba(99, 102, 241, 0.2); }
+        .stat-icon.gpus { background: rgba(16, 185, 129, 0.2); }
+        .stat-icon.models { background: rgba(245, 158, 11, 0.2); }
+        .stat-icon.jobs { background: rgba(139, 92, 246, 0.2); }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+        }
+
+        .stat-detail {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        /* Main Content Grid */
+        .content-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 1.5rem;
+        }
+
+        @media (max-width: 1024px) {
+            .content-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Card */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 1.25rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .card-title {
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        .card-body {
+            padding: 1.25rem;
+        }
+
+        /* Node List */
+        .node-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .node-item {
+            background: var(--bg-dark);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .node-status {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .node-status.healthy { background: var(--success); }
+        .node-status.unhealthy { background: var(--danger); }
+        .node-status.draining { background: var(--warning); }
+
+        .node-info h4 {
+            font-size: 0.875rem;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .node-info p {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .node-stats {
+            display: flex;
+            gap: 1rem;
+            text-align: center;
+        }
+
+        .node-stat {
+            font-size: 0.75rem;
+        }
+
+        .node-stat .value {
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        .node-stat .label {
+            color: var(--text-secondary);
+        }
+
+        /* GPU Bars */
+        .gpu-bar {
+            display: flex;
+            gap: 4px;
+        }
+
+        .gpu-slot {
+            width: 24px;
+            height: 8px;
+            background: var(--border);
+            border-radius: 2px;
+            position: relative;
+        }
+
+        .gpu-slot.used {
+            background: var(--primary);
+        }
+
+        .gpu-slot.warning {
+            background: var(--warning);
+        }
+
+        .gpu-slot.danger {
+            background: var(--danger);
+        }
+
+        /* Model List */
+        .model-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.875rem;
+            background: var(--bg-dark);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 0.75rem;
+        }
+
+        .model-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .model-info h4 {
+            font-size: 0.875rem;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .model-info p {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .model-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .badge {
+            padding: 0.25rem 0.625rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .badge.ready {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--success);
+        }
+
+        .badge.loading {
+            background: rgba(245, 158, 11, 0.2);
+            color: var(--warning);
+        }
+
+        /* Activity */
+        .activity-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .activity-item {
+            display: flex;
+            gap: 0.75rem;
+            font-size: 0.875rem;
+        }
+
+        .activity-icon {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            flex-shrink: 0;
+        }
+
+        .activity-icon.success {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--success);
+        }
+
+        .activity-icon.info {
+            background: rgba(99, 102, 241, 0.2);
+            color: var(--primary);
+        }
+
+        .activity-icon.warning {
+            background: rgba(245, 158, 11, 0.2);
+            color: var(--warning);
+        }
+
+        .activity-content {
+            flex: 1;
+        }
+
+        .activity-content p {
+            margin-bottom: 0.25rem;
+        }
+
+        .activity-content span {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        /* Footer */
+        .footer {
+            margin-top: 2rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border);
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+
+        /* Animations */
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .loading {
+            animation: pulse 1.5s infinite;
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 3rem 1rem;
+            color: var(--text-secondary);
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <div class="logo-icon">⚡</div>
+                <div class="logo-text">
+                    <h1>QuantumFlow</h1>
+                    <span>分布式大模型推理平台</span>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-secondary" onclick="refreshData()">
+                    🔄 刷新
+                </button>
+                <button class="btn btn-primary" onclick="window.open('/docs', '_blank')">
+                    📖 API文档
+                </button>
+            </div>
+        </header>
+
+        <!-- Stats Grid -->
+        <div class="stats-grid" id="statsGrid">
+            <div class="stat-card">
+                <div class="stat-header">
+                    <span class="stat-label">节点</span>
+                    <div class="stat-icon nodes">🖥️</div>
+                </div>
+                <div class="stat-value" id="totalNodes">-</div>
+                <div class="stat-detail"><span id="healthyNodes">-</span> 健康 / <span id="unhealthyNodes">-</span> 异常</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-header">
+                    <span class="stat-label">GPU</span>
+                    <div class="stat-icon gpus">🎮</div>
+                </div>
+                <div class="stat-value" id="totalGpus">-</div>
+                <div class="stat-detail"><span id="availableGpus">-</span> 可用 / 总计</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-header">
+                    <span class="stat-label">模型</span>
+                    <div class="stat-icon models">🤖</div>
+                </div>
+                <div class="stat-value" id="totalModels">-</div>
+                <div class="stat-detail">已加载模型数</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-header">
+                    <span class="stat-label">作业</span>
+                    <div class="stat-icon jobs">📋</div>
+                </div>
+                <div class="stat-value" id="pendingJobs">-</div>
+                <div class="stat-detail"><span id="runningJobs">-</span> 运行中</div>
+            </div>
+        </div>
+
+        <!-- Content Grid -->
+        <div class="content-grid">
+            <!-- Main Content -->
+            <div>
+                <!-- Nodes Card -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">🖥️ 计算节点</h3>
+                        <span id="nodesUpdateTime" style="font-size: 0.75rem; color: var(--text-secondary);"></span>
+                    </div>
+                    <div class="card-body">
+                        <div class="node-list" id="nodeList">
+                            <!-- 动态加载 -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Models Card -->
+                <div class="card" style="margin-top: 1.5rem;">
+                    <div class="card-header">
+                        <h3 class="card-title">🤖 已部署模型</h3>
+                        <button class="btn btn-secondary" onclick="window.open('/api/v1/models', '_blank')" style="padding: 0.375rem 0.75rem; font-size: 0.75rem;">
+                            查看全部 →
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div class="node-list" id="modelList">
+                            <!-- 动态加载 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sidebar -->
+            <div>
+                <!-- Activity Card -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">📊 最近活动</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="activity-list" id="activityList">
+                            <div class="activity-item">
+                                <div class="activity-icon info">ℹ️</div>
+                                <div class="activity-content">
+                                    <p>系统已启动</p>
+                                    <span>刚刚</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quick Actions Card -->
+                <div class="card" style="margin-top: 1.5rem;">
+                    <div class="card-header">
+                        <h3 class="card-title">⚡ 快速操作</h3>
+                    </div>
+                    <div class="card-body">
+                        <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                            <button class="btn btn-primary" onclick="testInference()" style="width: 100%; justify-content: center;">
+                                🧪 测试推理
+                            </button>
+                            <button class="btn btn-secondary" onclick="window.open('/api/v1/cluster/nodes', '_blank')" style="width: 100%; justify-content: center;">
+                                📋 查看节点JSON
+                            </button>
+                            <button class="btn btn-secondary" onclick="window.open('/api/v1/metrics', '_blank')" style="width: 100%; justify-content: center;">
+                                📈 Prometheus指标
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- System Info Card -->
+                <div class="card" style="margin-top: 1.5rem;">
+                    <div class="card-header">
+                        <h3 class="card-title">ℹ️ 系统信息</h3>
+                    </div>
+                    <div class="card-body">
+                        <div style="font-size: 0.875rem; color: var(--text-secondary);">
+                            <p style="margin-bottom: 0.5rem;"><strong style="color: var(--text-primary);">版本:</strong> <span id="version">1.0.0</span></p>
+                            <p style="margin-bottom: 0.5rem;"><strong style="color: var(--text-primary);">环境:</strong> <span id="environment">-</span></p>
+                            <p style="margin-bottom: 0.5rem;"><strong style="color: var(--text-primary);">运行时间:</strong> <span id="uptime">-</span></p>
+                            <p><strong style="color: var(--text-primary);">最后更新:</strong> <span id="lastUpdate">-</span></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>QuantumFlow v1.0.0 | 分布式大模型推理平台 | <a href="/docs" style="color: var(--primary);">API文档</a></p>
+        </footer>
+    </div>
+
+    <script>
+        // 状态页配置
+        const CONFIG = {
+            apiBase: '/api/v1',
+            refreshInterval: 10000, // 10秒自动刷新
+        };
+
+        // 格式化时间
+        function formatTime(timestamp) {
+            if (!timestamp) return '-';
+            const date = new Date(timestamp * 1000);
+            return date.toLocaleTimeString('zh-CN');
+        }
+
+        // 格式化运行时间
+        function formatUptime(seconds) {
+            if (!seconds) return '-';
+            const days = Math.floor(seconds / 86400);
+            const hours = Math.floor((seconds % 86400) / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+
+            if (days > 0) return `${days}天 ${hours}小时`;
+            if (hours > 0) return `${hours}小时 ${minutes}分钟`;
+            return `${minutes}分钟`;
+        }
+
+        // 获取健康检查数据
+        async function fetchHealth() {
+            try {
+                const res = await fetch(`${CONFIG.apiBase}/health`);
+                const data = await res.json();
+
+                document.getElementById('version').textContent = data.version || '1.0.0';
+                document.getElementById('uptime').textContent = formatUptime(data.uptime_seconds);
+                document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString('zh-CN');
+
+                return data;
+            } catch (e) {
+                console.error('Health fetch failed:', e);
+                return null;
+            }
+        }
+
+        // 获取集群状态
+        async function fetchClusterStatus() {
+            try {
+                const res = await fetch(`${CONFIG.apiBase}/cluster/status`);
+                const data = await res.json();
+
+                // 更新统计卡片
+                document.getElementById('totalNodes').textContent = data.total_nodes;
+                document.getElementById('healthyNodes').textContent = data.healthy_nodes;
+                document.getElementById('unhealthyNodes').textContent = data.unhealthy_nodes;
+
+                document.getElementById('totalGpus').textContent = data.total_gpus;
+                document.getElementById('availableGpus').textContent = data.available_gpus;
+
+                document.getElementById('activeModels').textContent = data.active_models;
+
+                document.getElementById('pendingJobs').textContent = data.pending_jobs;
+                document.getElementById('runningJobs').textContent = data.running_jobs;
+
+                return data;
+            } catch (e) {
+                console.error('Cluster status fetch failed:', e);
+                return null;
+            }
+        }
+
+        // 获取节点列表
+        async function fetchNodes() {
+            try {
+                const res = await fetch(`${CONFIG.apiBase}/cluster/nodes`);
+                const nodes = await res.json();
+
+                const nodeList = document.getElementById('nodeList');
+                document.getElementById('nodesUpdateTime').textContent = `更新于 ${new Date().toLocaleTimeString('zh-CN')}`;
+
+                if (nodes.length === 0) {
+                    nodeList.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-state-icon">🖥️</div>
+                            <p>暂无节点信息</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                nodeList.innerHTML = nodes.map(node => {
+                    const gpuBar = generateGpuBar(node.gpu_count || 0, node.gpu_info || []);
+                    const statusClass = node.status === 'healthy' ? 'healthy' :
+                                       node.status === 'draining' ? 'draining' : 'unhealthy';
+
+                    return `
+                        <div class="node-item">
+                            <div class="node-status ${statusClass}"></div>
+                            <div class="node-info">
+                                <h4>${node.hostname}</h4>
+                                <p>${node.ip} | ${node.gpu_count}×GPU | CPU: ${node.cpu_count || 0}核</p>
+                            </div>
+                            <div class="node-stats">
+                                <div class="node-stat">
+                                    <div class="gpu-bar">${gpuBar}</div>
+                                    <div class="label">GPU</div>
+                                </div>
+                                <div class="node-stat">
+                                    <div class="value">${Math.round((node.memory_available / node.memory_total) * 100) || 0}%</div>
+                                    <div class="label">内存</div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                return nodes;
+            } catch (e) {
+                console.error('Nodes fetch failed:', e);
+                return [];
+            }
+        }
+
+        // 生成GPU使用条
+        function generateGpuBar(count, gpuInfo) {
+            if (!count) return '';
+
+            return Array.from({ length: count }, (_, i) => {
+                let cls = '';
+                if (gpuInfo && gpuInfo[i]) {
+                    const usage = gpuInfo[i].memory_used / gpuInfo[i].memory_total;
+                    if (usage > 0.9) cls = 'danger';
+                    else if (usage > 0.7) cls = 'warning';
+                    else cls = 'used';
+                }
+                return `<div class="gpu-slot ${cls}"></div>`;
+            }).join('');
+        }
+
+        // 获取模型列表
+        async function fetchModels() {
+            try {
+                const res = await fetch(`${CONFIG.apiBase}/models`);
+                const models = await res.json();
+
+                const modelList = document.getElementById('modelList');
+                document.getElementById('totalModels').textContent = models.length;
+
+                if (models.length === 0) {
+                    modelList.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-state-icon">🤖</div>
+                            <p>暂无已加载模型</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                modelList.innerHTML = models.slice(0, 5).map(model => {
+                    const badgeClass = model.status === 'ready' ? 'ready' : 'loading';
+                    const badgeText = model.status === 'ready' ? '就绪' : '加载中';
+
+                    return `
+                        <div class="model-item">
+                            <div class="model-info">
+                                <h4>${model.name}</h4>
+                                <p>${(model.parameter_count / 1e9).toFixed(1)}B 参数 | TP=${model.tensor_parallel}</p>
+                            </div>
+                            <div class="model-status">
+                                <span class="badge ${badgeClass}">${badgeText}</span>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                return models;
+            } catch (e) {
+                console.error('Models fetch failed:', e);
+                return [];
+            }
+        }
+
+        // 测试推理
+        async function testInference() {
+            const btn = event.target;
+            const originalText = btn.textContent;
+            btn.textContent = '⏳ 测试中...';
+            btn.disabled = true;
+
+            try {
+                const res = await fetch(`${CONFIG.apiBase}/inference/generate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        model: 'Qwen2.5-7B-Instruct',
+                        prompt: '你好，请简短介绍一下量子计算',
+                        sampling_params: {
+                            temperature: 0.7,
+                            max_tokens: 100
+                        }
+                    })
+                });
+
+                const data = await res.json();
+
+                if (data.generated_text) {
+                    addActivity('success', `测试推理成功 (${data.latency_ms?.toFixed(0)}ms)`, data.generated_text.substring(0, 50) + '...');
+                }
+            } catch (e) {
+                addActivity('warning', '测试推理失败', e.message);
+            }
+
+            btn.textContent = originalText;
+            btn.disabled = false;
+        }
+
+        // 添加活动记录
+        function addActivity(type, title, detail) {
+            const list = document.getElementById('activityList');
+            const icons = {
+                success: '✅',
+                info: 'ℹ️',
+                warning: '⚠️'
+            };
+
+            const activity = document.createElement('div');
+            activity.className = 'activity-item';
+            activity.innerHTML = `
+                <div class="activity-icon ${type}">${icons[type]}</div>
+                <div class="activity-content">
+                    <p>${title}</p>
+                    <span>${detail}</span>
+                </div>
+            `;
+
+            // 插入到列表开头
+            list.insertBefore(activity, list.firstChild);
+
+            // 保留最近5条
+            while (list.children.length > 5) {
+                list.removeChild(list.lastChild);
+            }
+        }
+
+        // 刷新所有数据
+        async function refreshData() {
+            addActivity('info', '正在刷新数据...', '');
+
+            await Promise.all([
+                fetchHealth(),
+                fetchClusterStatus(),
+                fetchNodes(),
+                fetchModels()
+            ]);
+
+            addActivity('success', '数据已刷新', '');
+        }
+
+        // 初始化
+        async function init() {
+            await refreshData();
+
+            // 定时刷新
+            setInterval(refreshData, CONFIG.refreshInterval);
+        }
+
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
