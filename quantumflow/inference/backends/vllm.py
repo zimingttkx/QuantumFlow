@@ -49,7 +49,11 @@ class VLLMEngine(InferenceEngine):
             return False
 
         try:
+            import os
             from vllm import LLM, SamplingParams as VLLMSamplingParams
+
+            # 允许覆盖 max_model_len（用于短上下文模型如 Phi-3）
+            os.environ["VLLM_ALLOW_LONG_MAX_MODEL_LEN"] = "1"
 
             logger.info(
                 "loading_model",
@@ -71,7 +75,7 @@ class VLLMEngine(InferenceEngine):
                 block_size=config.block_size,
                 max_num_batched_tokens=config.max_num_batched_tokens,
                 max_num_seqs=config.max_num_seqs,
-                enforce_eager=config.enforce_eager,
+                enforce_eager=config.enforce_eager if hasattr(config, 'enforce_eager') else True,
             )
 
             self._llm_instances[config.model_name] = llm
