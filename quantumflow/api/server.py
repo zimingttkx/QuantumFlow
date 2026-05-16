@@ -85,15 +85,14 @@ def create_app() -> FastAPI:
     # Prometheus监控
     Instrumentator().instrument(app).expose(app, endpoint="/api/v1/metrics")
 
-    # 根路径
+    # 根路径 - 返回前端页面
     @app.get("/", include_in_schema=False)
     async def root():
-        """根路径"""
-        return {
-            "name": "QuantumFlow",
-            "version": __version__,
-            "docs": "/docs",
-        }
+        """返回前端页面"""
+        from fastapi.responses import FileResponse
+        import os
+        static_path = os.path.join(os.path.dirname(__file__), "static", "index.html")
+        return FileResponse(static_path)
 
     logger.info("app_created", version=__version__)
 
