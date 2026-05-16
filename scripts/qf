@@ -1,0 +1,24 @@
+#!/bin/bash
+# QuantumFlow 交互式终端
+
+source ~/anaconda3/etc/profile.d/conda.sh
+conda activate DL-310
+
+cd /home/dingziming/PycharmProjects/QuantumFlow
+
+# 检查服务是否在运行
+if ! curl -s --max-time 2 http://localhost:8000/api/v1/models/status > /dev/null 2>&1; then
+    echo "服务未运行，正在启动..."
+    nohup python -m uvicorn quantumflow.api.server:app --host 0.0.0.0 --port 8000 > /tmp/quantumflow_server.log 2>&1 &
+    echo -n "等待服务启动"
+    for i in $(seq 1 10); do
+        if curl -s --max-time 1 http://localhost:8000/api/v1/models/status > /dev/null 2>&1; then
+            echo " ✓"
+            break
+        fi
+        echo -n "."
+        sleep 1
+    done
+fi
+
+python -m quantumflow.cli interactive

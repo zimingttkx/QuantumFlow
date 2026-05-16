@@ -22,14 +22,16 @@
 
 <div align="center">
 
-| 🎯 核心能力 | 🌟 差异化亮点 | 🔧 技术优势 |
-|:---:|:---:|:---:|
-| **智能调度** | Gang/Pack/自适应多策略 | 自动选择最优执行路径 |
-| **多后端支持** | vLLM / TGI / SGLang | 统一接口，灵活切换 |
-| **国产硬件** | 昇腾NPU深度适配 | 打破 NVIDIA 垄断 |
-| **企业级** | 多租户 / 限流 / 容灾 | 开箱即用的生产特性 |
+| 🎯 核心能力 | 🌟 差异化亮点 | 🔧 技术优势 | 状态 |
+|:---:|:---:|:---:|:---:|
+| **智能调度** | Gang/Pack/自适应多策略 | 自动选择最优执行路径 | ✅ 代码完成 |
+| **多后端支持** | vLLM / HF / TGI / SGLang | 统一接口，灵活切换 | ✅ HF 可用 |
+| **国产硬件** | 昇腾NPU深度适配 | 打破 NVIDIA 垄断 | 📋 规划中 |
+| **企业级** | 多租户 / 限流 / 容灾 | 开箱即用的生产特性 | 📋 规划中 |
 
 </div>
+
+> ✅ 已完成 &nbsp;&nbsp; 🔄 开发中 &nbsp;&nbsp; 📋 规划中
 
 ### 🔥 为什么选择 QuantumFlow？
 
@@ -62,58 +64,35 @@
 ### 📦 安装
 
 ```bash
-# 从 PyPI 安装
-pip install quantumflow
-
-# 或从源码安装
-git clone https://github.com/quantumflow/quantumflow.git
-cd quantumflow
+git clone <repo-url>
+cd QuantumFlow
 pip install -e .
 ```
 
-### 💻 启动服务
+### 💻 启动
 
 ```bash
-# 启动 API 服务器
-quantumflow serve --port 8000
+# 一键启动（推荐）
+./scripts/qf
 
-# 或使用 Python
-python -c "from quantumflow.api.server import app; import uvicorn; uvicorn.run(app, host='0.0.0.0', port=8000)"
+# 或手动启动
+python -m quantumflow.cli serve
 ```
 
-### 🔥 3 行代码开始推理
+浏览器打开 `http://localhost:8000` 进入前端。
 
-```python
-from quantumflow import QuantumFlow
-
-# 创建客户端
-qf = QuantumFlow(api_url="http://localhost:8000")
-
-# 部署模型（自动选择最优配置）
-qf.deploy("Qwen2.5-72B-Instruct", tensor_parallel=4)
-
-# 推理！
-result = qf.generate(
-    model="Qwen2.5-72B-Instruct",
-    prompt="解释量子纠缠的基本原理"
-)
-print(result)
-```
-
-### 🛠️ CLI 使用
+### 🛠️ CLI
 
 ```bash
-# 查看集群状态
-quantumflow status
+# 交互式终端
+python -m quantumflow.cli interactive
 
-# 部署模型
-quantumflow deploy Qwen2.5-72B --tensor-parallel 4 --gpus 0,1,2,3
-
-# 测试生成
-quantumflow generate Qwen2.5-72B -p "Hello, world!"
-
-# 批量推理
-quantumflow batch Qwen2.5-7B --file prompts.txt
+# 命令行
+python -m quantumflow.cli status              # 集群状态
+python -m quantumflow.cli models              # 模型列表
+python -m quantumflow.cli load Qwen2.5-1.5B  # 加载模型
+python -m quantumflow.cli chat Qwen2.5-1.5B -p "你好"  # 对话
+python -m quantumflow.cli generate Qwen2.5-1.5B -p "你好"  # 生成
 ```
 
 ---
@@ -126,16 +105,16 @@ quantumflow batch Qwen2.5-7B --file prompts.txt
 ├────────────────────────────────────────────────────────────────────────┤
 │                                                                        │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │                        接入层 (Gateway)                          │  │
+│  │                   接入层 (Gateway) ✅ 已完成                     │  │
 │  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐         │  │
 │  │  │ REST API│  │ gRPC API│  │ Python  │  │   CLI   │         │  │
-│  │  │ FastAPI │  │   SDK   │  │  SDK    │  │         │         │  │
+│  │  │ ✅FastAPI│  │ 📋 SDK  │  │ 📋 SDK  │  │ ✅ CLI  │         │  │
 │  │  └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘         │  │
 │  └───────┼─────────────┼─────────────┼─────────────┼───────────────┘  │
 │          └─────────────┴─────────────┴─────────────┘                     │
 │                               │                                         │
 │  ┌───────────────────────────┼───────────────────────────────────────┐ │
-│  │                    调度层 (Scheduler)                               │ │
+│  │                    调度层 (Scheduler) ✅ 代码完成                    │ │
 │  │  ┌────────────────────────────────────────────────────────────┐  │ │
 │  │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │  │ │
 │  │  │  │  Gang    │  │  Pack    │  │Adaptive  │  │ Priority │   │  │ │
@@ -145,7 +124,7 @@ quantumflow batch Qwen2.5-7B --file prompts.txt
 │  └──────────────────────────────────────────────────────────────────┘ │
 │                               │                                         │
 │  ┌───────────────────────────┼───────────────────────────────────────┐ │
-│  │                    集群管理层 (Cluster)                            │ │
+│  │                    集群管理层 (Cluster) ✅ 单机模式                  │ │
 │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │ │
 │  │  │   Node      │  │  Service    │  │  Health    │              │ │
 │  │  │  Registry   │  │  Discovery  │  │  Monitor   │              │ │
@@ -153,10 +132,10 @@ quantumflow batch Qwen2.5-7B --file prompts.txt
 │  └──────────────────────────────────────────────────────────────────┘ │
 │                               │                                         │
 │  ┌───────────────────────────┼───────────────────────────────────────┐ │
-│  │                    执行层 (Worker Pool)                           │ │
+│  │                    执行层 (Worker Pool) 🔄 单节点                  │ │
 │  │  ┌─────────────────────────────────────────────────────────────┐  │ │
 │  │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │  │ │
-│  │  │  │   vLLM   │  │   TGI    │  │  SGLang  │  │  TRT-LLM │   │  │ │
+│  │  │  │ ✅ HF    │  │ 📋 vLLM  │  │ 📋 TGI   │  │📋 SGLang │   │  │ │
 │  │  │  └──────────┘  └──────────┘  └──────────┘  └──────────┘   │  │ │
 │  │  │           ▲            ▲            ▲            ▲        │  │ │
 │  │  │            └────────────┴────────────┴────────────┘         │  │ │
@@ -237,26 +216,21 @@ quantumflow batch Qwen2.5-7B --file prompts.txt
 
 ## 🛠️ 支持的模型
 
-### 开源模型
-
-| 模型 | 参数量 | 推荐配置 | 最低显存 |
-|------|--------|----------|----------|
-| Qwen2.5-7B | 7B | TP=1 | 16GB |
-| Qwen2.5-14B | 14B | TP=1 | 24GB |
-| Qwen2.5-72B | 72B | TP=4 | 4×24GB |
-| LLaMA-3-8B | 8B | TP=1 | 16GB |
-| LLaMA-3-70B | 70B | TP=4 | 4×24GB |
-| DeepSeek-V2 | 236B | TP=16 | 8×H100 |
-| GLM-4-9B | 9B | TP=1 | 18GB |
-| Yi-1.5-34B | 34B | TP=2 | 2×40GB |
+| 模型 | 参数量 | 显存要求 | 状态 |
+|------|--------|----------|------|
+| Qwen2.5-1.5B | 1.5B | ~3GB | ✅ 已验证 |
+| Qwen2.5-3B | 3B | ~6GB | ✅ 可加载 |
+| Qwen2.5-7B | 7B | ~14GB | 📋 待测试 |
+| LLaMA-3-8B | 8B | ~16GB | 📋 规划中 |
+| Qwen2.5-72B | 72B | 4×24GB | 📋 分布式 |
 
 ### 推理引擎
 
-- ✅ **vLLM** — PagedAttention, 持续批处理
-- ✅ **TGI** — HuggingFace官方推理服务器
-- ✅ **SGLang** — RadixAttention, 树搜索
-- ✅ **TensorRT-LLM** — NVIDIA官方优化
-- 🔄 **更多引擎支持中...**
+- ✅ **HuggingFace Transformers** — 已验证可用
+- 🔄 **vLLM** — v0.21.0 有显存bug，待降级
+- 📋 **TGI** — 规划中
+- 📋 **SGLang** — 规划中
+- 📋 **TensorRT-LLM** — 规划中
 
 ---
 
@@ -265,65 +239,37 @@ quantumflow batch Qwen2.5-7B --file prompts.txt
 ```python
 QuantumFlow/
 ├── quantumflow/              # 🎯 核心包
-│   ├── api/                  # REST API
+│   ├── api/                  # ✅ REST API (FastAPI)
 │   │   ├── routes/          # API 路由
 │   │   ├── models/          # 请求/响应模型
 │   │   └── server.py        # FastAPI 应用
 │   │
-│   ├── scheduler/           # 🧠 调度器核心
+│   ├── scheduler/           # ✅ 调度器代码完成
 │   │   ├── scheduler.py     # 调度器主逻辑
 │   │   └── strategy/        # 调度策略
-│   │       ├── gang.py       # Gang策略
-│   │       ├── pack.py       # Pack策略
-│   │       └── adaptive.py   # 自适应策略
 │   │
-│   ├── cluster/             # 🖥️ 集群管理
-│   │   └── manager.py       # 节点管理
+│   ├── cluster/             # ✅ 集群管理（单机模式）
 │   │
-│   ├── inference/           # ⚡ 推理引擎
+│   ├── inference/           # 🔄 推理引擎
 │   │   ├── engine.py        # 引擎抽象
 │   │   └── backends/        # 引擎实现
-│   │       ├── vllm.py       # vLLM后端
-│   │       ├── tgi.py        # TGI后端
-│   │       └── sglang.py     # SGLang后端
+│   │       ├── huggingface.py # ✅ 已验证
+│   │       └── vllm.py       # 🔄 待修复
 │   │
-│   ├── worker/              # 🚀 Worker节点
-│   │   └── worker.py        # Worker实现
+│   ├── worker/              # 📋 Worker节点（待部署）
 │   │
-│   ├── storage/             # 💾 存储层
-│   │   └── redis_queue.py   # Redis队列
+│   ├── storage/             # 📋 Redis队列（待部署）
 │   │
-│   ├── models/              # 📦 模型注册表
-│   │   └── registry.py      # 模型管理
-│   │
-│   ├── monitoring/          # 📊 监控指标
-│   │   └── metrics.py       # Prometheus指标
-│   │
-│   └── utils/               # 🛠️ 工具
-│       ├── config.py        # 配置管理
-│       ├── logging.py       # 日志系统
-│       └── retry.py         # 重试机制
+│   └── cli.py               # ✅ CLI工具
 │
-├── scripts/                  # 📜 启动脚本
-│   ├── start_controller.py  # Controller启动
-│   ├── start_worker.py      # Worker启动
-│   └── quickstart.sh        # 快速启动
+├── scripts/
+│   └── qf                   # ✅ 一键启动脚本
+│
+├── tests/                    # ✅ 266个测试
 │
 ├── configs/                  # ⚙️ 配置文件
-│   ├── default.yaml         # 默认配置
-│   ├── development.yaml     # 开发配置
-│   └── production.yaml      # 生产配置
-│
-├── tests/                    # 🧪 测试
-│   ├── unit/                # 单元测试
-│   └── integration/         # 集成测试
-│
-├── docs/                     # 📚 文档
-│   └── ARCHITECTURE.md      # 架构文档
-│
-├── pyproject.toml           # 📦 项目配置
-├── README.md                 # 📖 说明文档
-└── LICENSE                  # 📜 许可证
+├── pyproject.toml
+└── README.md
 ```
 
 ---
@@ -405,58 +351,24 @@ mypy quantumflow/
 
 ---
 
-## 🏃 快速部署
+## 🏃 部署
 
-### 单节点部署
-
-```bash
-# 启动Controller（API服务器）
-quantumflow serve --host 0.0.0.0 --port 8000
-
-# 在另一终端启动Worker
-quantumflow worker --controller-url http://localhost:8000 --port 8080
-```
-
-### 多节点集群部署
+### 单机
 
 ```bash
-# 启动Controller
-quantumflow serve --host 0.0.0.0 --port 8000
-
-# 在每个GPU节点启动Worker
-quantumflow worker --controller-url http://localhost:8000 --port 8080 --backend vllm
+./scripts/qf           # 一键启动
+# 或
+python -m quantumflow.cli serve
 ```
 
-### 使用Docker Compose
+### 分布式（规划中）
 
-```yaml
-version: '3.8'
-services:
-  controller:
-    image: quantumflow/quantumflow:latest
-    command: serve --host 0.0.0.0 --port 8000
-    ports:
-      - "8000:8000"
-    depends_on:
-      - redis
-    volumes:
-      - ./configs:/app/configs
+```bash
+# Controller
+quantumflow serve --host 0.0.0.0 --port 8000
 
-  worker:
-    image: quantumflow/quantumflow:latest
-    command: worker --controller-url http://controller:8000 --port 8080
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
+# Worker节点（待实现）
+quantumflow worker --controller-url http://localhost:8000 --backend vllm
 ```
 
 ---
@@ -466,63 +378,60 @@ services:
 ### REST API
 
 ```bash
-# 健康检查
-curl http://localhost:8000/api/v1/health
-
 # 集群状态
 curl http://localhost:8000/api/v1/cluster/status
 
-# 列出模型
-curl http://localhost:8000/api/v1/models
+# 模型列表
+curl http://localhost:8000/api/v1/models/list
 
-# 部署模型
-curl -X POST http://localhost:8000/api/v1/models/deploy \
+# 已加载模型
+curl http://localhost:8000/api/v1/models/status
+
+# 加载模型
+curl -X POST http://localhost:8000/api/v1/models/load \
   -H "Content-Type: application/json" \
-  -d '{"model": "Qwen2.5-7B-Instruct", "tensor_parallel": 1}'
+  -d '{"model": "Qwen2.5-1.5B"}'
 
 # 推理
 curl -X POST http://localhost:8000/api/v1/inference/generate \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "Qwen2.5-7B-Instruct",
-    "prompt": "解释量子计算",
-    "sampling_params": {
-      "temperature": 0.7,
-      "max_tokens": 100
-    }
+    "model": "Qwen2.5-1.5B",
+    "prompt": "你好",
+    "sampling_params": {"temperature": 0.7, "max_tokens": 100}
   }'
+
+# 对话
+curl -X POST http://localhost:8000/api/v1/inference/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "Qwen2.5-1.5B",
+    "messages": [{"role": "user", "content": "你好"}]
+  }'
+
+# 流式生成
+curl -X POST http://localhost:8000/api/v1/inference/generate/stream \
+  -H "Content-Type: application/json" \
+  -d '{"model": "Qwen2.5-1.5B", "prompt": "你好", "stream": true}'
 ```
 
 ### Python SDK
 
 ```python
-from quantumflow import QuantumFlow
+import httpx
 
-# 创建客户端
-qf = QuantumFlow(api_url="http://localhost:8000")
+async with httpx.AsyncClient() as client:
+    # 推理
+    resp = await client.post("http://localhost:8000/api/v1/inference/generate",
+        json={"model": "Qwen2.5-1.5B", "prompt": "你好",
+              "sampling_params": {"max_tokens": 100}})
+    print(resp.json()["generated_text"])
 
-# 查看集群状态
-status = qf.cluster.status()
-print(f"健康节点: {status['healthy_nodes']}")
-
-# 部署模型
-qf.deploy("Qwen2.5-7B-Instruct", tensor_parallel=1)
-
-# 推理
-result = qf.generate(
-    model="Qwen2.5-7B-Instruct",
-    prompt="什么是大语言模型？",
-    temperature=0.7,
-    max_tokens=200
-)
-print(result.text)
-
-# 流式推理
-for chunk in qf.generate_stream(
-    model="Qwen2.5-7B-Instruct",
-    prompt="写一首关于AI的诗"
-):
-    print(chunk, end="", flush=True)
+    # 对话
+    resp = await client.post("http://localhost:8000/api/v1/inference/chat",
+        json={"model": "Qwen2.5-1.5B",
+              "messages": [{"role": "user", "content": "你好"}]})
+    print(resp.json()["generated_text"])
 ```
 
 ---
@@ -530,21 +439,14 @@ for chunk in qf.generate_stream(
 ## 🧪 测试
 
 ```bash
-# 运行所有测试
-pytest tests/ -v
-
-# 运行单元测试
-pytest tests/unit/ -v
-
-# 运行集成测试
-pytest tests/integration/ -v
-
-# 运行特定模块测试
-pytest tests/unit/scheduler/ -v
-
-# 生成覆盖率报告
-pytest tests/ --cov=quantumflow --cov-report=html
+pytest tests/ -v    # 266个测试，全部通过
 ```
+
+---
+
+## ⭐ Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=quantumflow/quantumflow&type=Date)](https://star-history.com/#quantumflow/quantumflow&Date)
 
 ---
 
