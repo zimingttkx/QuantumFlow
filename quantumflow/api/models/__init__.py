@@ -29,6 +29,10 @@ from quantumflow.api.models.responses import (
     ErrorDetail,
     BenchmarkResponse,
     MetricsResponse,
+    LoadModelRequest,
+    LoadModelResponse,
+    UnloadModelResponse,
+    ModelStatusResponse,
 )
 
 __all__ = [
@@ -60,4 +64,8 @@ __all__ = [
     "ErrorDetail",
     "BenchmarkResponse",
     "MetricsResponse",
+    "LoadModelRequest",
+    "LoadModelResponse",
+    "UnloadModelResponse",
+    "ModelStatusResponse",
 ]

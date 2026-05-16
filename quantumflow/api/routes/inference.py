@@ -20,6 +20,7 @@ from quantumflow.core.exceptions import (
     ModelNotFoundError,
     SchedulerError,
 )
+from quantumflow.inference import get_engine_manager, SamplingParams
 
 logger = structlog.get_logger().bind(component="api_inference")
 
@@ -28,12 +29,32 @@ router = APIRouter(prefix="/inference", tags=["Inference"])
 # 模拟请求ID生成
 _request_counter = 0
 
+# 预加载的模型映射（演示用）
+_MODEL_MAPPING = {
+    "Qwen2.5-7B": "Qwen/Qwen2.5-7B-Instruct",
+    "Qwen2.5-1.5B": "Qwen/Qwen2.5-1.5B-Instruct",
+    "Phi-3-mini": "microsoft/Phi-3-mini-4k-instruct",
+}
+
 
 def _generate_request_id() -> str:
     """生成请求ID"""
     global _request_counter
     _request_counter += 1
     return f"req_{_request_counter:08d}"
+
+
+def _convert_sampling_params(request: InferenceRequest) -> SamplingParams:
+    """转换采样参数"""
+    params = request.sampling_params or {}
+    return SamplingParams(
+        temperature=params.get("temperature", 0.7),
+        top_p=params.get("top_p", 0.9),
+        top_k=params.get("top_k", 50),
+        max_tokens=params.get("max_tokens", 2048),
+        repetition_penalty=params.get("repetition_penalty", 1.0),
+        stop=params.get("stop"),
+    )
 
 
 @router.post(
@@ -58,25 +79,67 @@ async def generate(request: InferenceRequest) -> InferenceResponse:
     )
 
     try:
-        # TODO: 调用调度器进行推理
-        # 这里暂时返回模拟数据
-        await asyncio.sleep(0.1)  # 模拟延迟
+        # 获取模型路径
+        model_path = _MODEL_MAPPING.get(request.model, request.model)
+
+        # 获取推理引擎管理器
+        engine_manager = get_engine_manager()
+
+        # 检查模型是否已加载
+        if not engine_manager.is_model_loaded(request.model):
+            # 尝试自动加载模型
+            logger.info("auto_loading_model", model=request.model, path=model_path)
+            try:
+                await engine_manager.load_model(
+                    model_name=request.model,
+                    model_path=model_path,
+                    tensor_parallel=1,
+                )
+            except Exception as e:
+                logger.warning("model_load_failed", model=request.model, error=str(e))
+                # 如果加载失败，返回提示信息
+                return InferenceResponse(
+                    request_id=request_id,
+                    model=request.model,
+                    prompt=request.prompt,
+                    generated_text=f"[注意: 模型 {request.model} 未加载。请先在服务器上加载模型。当前返回模拟数据。]\n\n用户输入: {request.prompt}",
+                    finish_reason="stop",
+                    latency_ms=(time.time() - start_time) * 1000,
+                    usage={
+                        "prompt_tokens": len(request.prompt) // 4,
+                        "completion_tokens": 50,
+                        "total_tokens": len(request.prompt) // 4 + 50,
+                    },
+                )
+
+        # 执行推理
+        sampling_params = _convert_sampling_params(request)
+        results = await engine_manager.generate(
+            model_name=request.model,
+            prompts=[request.prompt],
+            sampling_params=sampling_params,
+        )
 
         latency_ms = (time.time() - start_time) * 1000
 
-        return InferenceResponse(
-            request_id=request_id,
-            model=request.model,
-            prompt=request.prompt,
-            generated_text="这是模拟生成的回复。在实际实现中，这里会调用QuantumFlow的推理引擎来生成文本。",
-            finish_reason="stop",
-            latency_ms=latency_ms,
-            usage={
-                "prompt_tokens": len(request.prompt) // 4,  # 粗略估算
-                "completion_tokens": 100,
-                "total_tokens": len(request.prompt) // 4 + 100,
-            },
-        )
+        if results and len(results) > 0:
+            result = results[0]
+            return InferenceResponse(
+                request_id=request_id,
+                model=request.model,
+                prompt=request.prompt,
+                generated_text=result.outputs[0] if result.outputs else "",
+                finish_reason=result.finish_reason,
+                latency_ms=result.latency_ms,
+                usage={
+                    "prompt_tokens": result.prompt_tokens,
+                    "completion_tokens": result.completion_tokens,
+                    "total_tokens": result.prompt_tokens + result.completion_tokens,
+                },
+            )
+
+        # 如果没有结果，返回错误
+        raise InferenceError("Generation produced no results")
 
     except ModelNotFoundError as e:
         logger.error("model_not_found", request_id=request_id, model=request.model)
@@ -116,34 +179,55 @@ async def generate_stream(request: InferenceRequest) -> StreamingResponse:
 
     async def event_generator() -> AsyncIterator[str]:
         """生成SSE事件流"""
-        # TODO: 调用调度器进行流式推理
-        # 这里暂时发送模拟数据
+        model_path = _MODEL_MAPPING.get(request.model, request.model)
+        engine_manager = get_engine_manager()
 
-        sample_text = "这是模拟的流式回复。每个片段都会单独发送。"
-        words = sample_text.split()
+        # 检查模型是否已加载
+        if not engine_manager.is_model_loaded(request.model):
+            try:
+                await engine_manager.load_model(
+                    model_name=request.model,
+                    model_path=model_path,
+                    tensor_parallel=1,
+                )
+            except Exception as e:
+                logger.warning("model_load_failed", model=request.model, error=str(e))
+                yield f"data: {{'error': '模型加载失败: {str(e)}'}}\n\n"
+                yield "data: [DONE]\n\n"
+                return
 
-        for i, word in enumerate(words):
-            # 模拟逐词生成
-            await asyncio.sleep(0.1)
+        sampling_params = _convert_sampling_params(request)
 
-            is_final = i == len(words) - 1
+        try:
+            full_text = ""
+            async for text_chunk in engine_manager.generate_stream(
+                request.model, request.prompt, sampling_params
+            ):
+                full_text += text_chunk
+                response = StreamResponse(
+                    request_id=request_id,
+                    delta=text_chunk,
+                    is_final=False,
+                )
+                yield f"data: {response.model_dump_json()}\n\n"
 
-            response = StreamResponse(
+            # 发送最终结果
+            final_response = StreamResponse(
                 request_id=request_id,
-                delta=word + " ",
-                is_final=is_final,
+                delta="",
+                is_final=True,
+                finish_reason="stop",
+                usage={
+                    "prompt_tokens": len(request.prompt) // 4,
+                    "completion_tokens": len(full_text) // 4,
+                    "total_tokens": len(request.prompt) // 4 + len(full_text) // 4,
+                },
             )
+            yield f"data: {final_response.model_dump_json()}\n\n"
 
-            if is_final:
-                response.usage = {
-                    "prompt_tokens": 50,
-                    "completion_tokens": len(words),
-                    "total_tokens": 50 + len(words),
-                }
-                response.finish_reason = "stop"
-
-            # SSE格式
-            yield f"data: {response.model_dump_json()}\n\n"
+        except Exception as e:
+            logger.error("stream_generate_error", error=str(e))
+            yield f"data: {{'error': '{str(e)}'}}\n\n"
 
         yield "data: [DONE]\n\n"
 
@@ -175,36 +259,82 @@ async def batch_generate(request: BatchInferenceRequest) -> BatchInferenceRespon
         prompt_count=len(request.prompts),
     )
 
-    # TODO: 调用调度器进行批量推理
-    results = []
+    model_path = _MODEL_MAPPING.get(request.model, request.model)
+    engine_manager = get_engine_manager()
 
-    for i, prompt in enumerate(request.prompts):
-        await asyncio.sleep(0.05)  # 模拟延迟
-
-        results.append(
-            InferenceResponse(
-                request_id=f"{batch_id}_{i}",
-                model=request.model,
-                prompt=prompt,
-                generated_text=f"批量回复 {i + 1}",
-                finish_reason="stop",
-                latency_ms=50,
-                usage={
-                    "prompt_tokens": len(prompt) // 4,
-                    "completion_tokens": 50,
-                    "total_tokens": len(prompt) // 4 + 50,
-                },
+    # 检查模型是否已加载
+    if not engine_manager.is_model_loaded(request.model):
+        try:
+            await engine_manager.load_model(
+                model_name=request.model,
+                model_path=model_path,
+                tensor_parallel=1,
             )
+        except Exception as e:
+            logger.warning("model_load_failed", model=request.model, error=str(e))
+
+    # 从请求中提取采样参数
+    req_sampling = request.sampling_params
+    sampling_params = SamplingParams(
+        temperature=req_sampling.temperature if req_sampling else 0.7,
+        top_p=req_sampling.top_p if req_sampling else 0.9,
+        top_k=req_sampling.top_k if req_sampling else 50,
+        max_tokens=req_sampling.max_tokens if req_sampling else 500,
+        repetition_penalty=req_sampling.repetition_penalty if req_sampling else 1.0,
+        stop=req_sampling.stop if req_sampling else None,
+    )
+
+    results = []
+    total_latency = 0
+
+    try:
+        # 调用批量推理
+        inference_results = await engine_manager.generate(
+            model_name=request.model,
+            prompts=request.prompts,
+            sampling_params=sampling_params,
         )
 
-    total_latency = sum(r.latency_ms for r in results)
+        for i, result in enumerate(inference_results):
+            total_latency += result.latency_ms
+            results.append(
+                InferenceResponse(
+                    request_id=f"{batch_id}_{i}",
+                    model=request.model,
+                    prompt=request.prompts[i],
+                    generated_text=result.outputs[0] if result.outputs else "",
+                    finish_reason=result.finish_reason,
+                    latency_ms=result.latency_ms,
+                    usage={
+                        "prompt_tokens": result.prompt_tokens,
+                        "completion_tokens": result.completion_tokens,
+                        "total_tokens": result.prompt_tokens + result.completion_tokens,
+                    },
+                )
+            )
+
+    except Exception as e:
+        logger.error("batch_generate_error", error=str(e))
+        # 如果出错，返回错误结果
+        for i, prompt in enumerate(request.prompts):
+            results.append(
+                InferenceResponse(
+                    request_id=f"{batch_id}_{i}",
+                    model=request.model,
+                    prompt=prompt,
+                    generated_text=f"[错误: {str(e)}]",
+                    finish_reason="error",
+                    latency_ms=0,
+                    usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                )
+            )
 
     return BatchInferenceResponse(
         batch_id=batch_id,
         model=request.model,
         total=len(request.prompts),
         completed=len(results),
-        failed=0,
+        failed=len(request.prompts) - len(results),
         results=results,
         total_latency_ms=total_latency,
         avg_latency_ms=total_latency / len(results) if results else 0,

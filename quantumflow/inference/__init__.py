@@ -7,6 +7,7 @@ from quantumflow.inference.engine import (
     InferenceResult,
 )
 from quantumflow.inference.backends.vllm import VLLMEngine
+from quantumflow.inference.manager import EngineManager, get_engine_manager
 
 __all__ = [
     "InferenceEngine",
@@ -14,4 +15,6 @@ __all__ = [
     "SamplingParams",
     "InferenceResult",
     "VLLMEngine",
+    "EngineManager",
+    "get_engine_manager",
 ]

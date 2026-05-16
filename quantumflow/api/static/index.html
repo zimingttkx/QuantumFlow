@@ -1,0 +1,1062 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QuantumFlow - 分布式大模型推理平台</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #6366F1;
+            --primary-dark: #4F46E5;
+            --secondary: #10B981;
+            --warning: #F59E0B;
+            --danger: #EF4444;
+            --bg-dark: #0F172A;
+            --bg-card: #1E293B;
+            --bg-input: #334155;
+            --text-primary: #F8FAFC;
+            --text-secondary: #94A3B8;
+            --border: #475569;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        /* Header */
+        .header {
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+            padding: 1rem 2rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+
+        .logo-icon {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.25rem;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: var(--bg-input);
+            border-radius: 9999px;
+            font-size: 0.875rem;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--danger);
+        }
+
+        .status-dot.connected {
+            background: var(--secondary);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Main Container */
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        /* Alert */
+        .alert {
+            background: rgba(245, 158, 11, 0.15);
+            border: 1px solid var(--warning);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .alert-icon {
+            font-size: 1.5rem;
+        }
+
+        .alert-content h4 {
+            color: var(--warning);
+            margin-bottom: 0.25rem;
+        }
+
+        .alert-content p {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 1.5rem;
+            border: 1px solid var(--border);
+        }
+
+        .stat-label {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+        }
+
+        .stat-value.primary { color: var(--primary); }
+        .stat-value.secondary { color: var(--secondary); }
+        .stat-value.warning { color: var(--warning); }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .tab {
+            padding: 0.75rem 1.5rem;
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 1rem;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: all 0.2s;
+        }
+
+        .tab:hover {
+            background: var(--bg-card);
+            color: var(--text-primary);
+        }
+
+        .tab.active {
+            background: var(--primary);
+            color: white;
+        }
+
+        /* Panels */
+        .panel {
+            display: none;
+        }
+
+        .panel.active {
+            display: block;
+        }
+
+        /* Card */
+        .card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .card-title {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        /* Form */
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-label {
+            display: block;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .form-input, .form-select, .form-textarea {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 1rem;
+            transition: border-color 0.2s;
+        }
+
+        .form-input:focus, .form-select:focus, .form-textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .form-textarea {
+            min-height: 120px;
+            resize: vertical;
+            font-family: inherit;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+        }
+
+        /* Button */
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-dark);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: var(--border);
+        }
+
+        .btn-success {
+            background: var(--secondary);
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #059669;
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        /* Chat */
+        .chat-container {
+            display: flex;
+            flex-direction: column;
+            height: 500px;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+            background: var(--bg-dark);
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+
+        .message {
+            margin-bottom: 1rem;
+            padding: 1rem;
+            border-radius: 12px;
+            max-width: 80%;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message.user {
+            background: var(--primary);
+            color: white;
+            margin-left: auto;
+        }
+
+        .message.assistant {
+            background: var(--bg-input);
+        }
+
+        .message-header {
+            font-size: 0.75rem;
+            opacity: 0.7;
+            margin-bottom: 0.5rem;
+        }
+
+        .chat-input-container {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .chat-input {
+            flex: 1;
+            min-width: 200px;
+        }
+
+        /* Model List */
+        .model-list {
+            display: grid;
+            gap: 1rem;
+        }
+
+        .model-item {
+            background: var(--bg-input);
+            border-radius: 8px;
+            padding: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .model-info h4 {
+            font-size: 1rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .model-meta {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .model-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .model-status {
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .model-status.ready {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--secondary);
+        }
+
+        .model-status.loading {
+            background: rgba(245, 158, 11, 0.2);
+            color: var(--warning);
+        }
+
+        .model-status.not_loaded {
+            background: rgba(148, 163, 184, 0.2);
+            color: var(--text-secondary);
+        }
+
+        /* Node List */
+        .node-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1rem;
+        }
+
+        .node-card {
+            background: var(--bg-input);
+            border-radius: 12px;
+            padding: 1rem;
+        }
+
+        .node-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .node-name {
+            font-weight: 600;
+        }
+
+        .node-status {
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+        }
+
+        .node-status.healthy { background: rgba(16, 185, 129, 0.2); color: var(--secondary); }
+        .node-status.unhealthy { background: rgba(239, 68, 68, 0.2); color: var(--danger); }
+
+        .node-stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.5rem;
+            font-size: 0.875rem;
+        }
+
+        .node-stat {
+            background: var(--bg-dark);
+            padding: 0.5rem;
+            border-radius: 4px;
+        }
+
+        .node-stat-label {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+        }
+
+        /* GPU Bar */
+        .gpu-bar {
+            height: 4px;
+            background: var(--border);
+            border-radius: 2px;
+            margin-top: 0.25rem;
+            overflow: hidden;
+        }
+
+        .gpu-bar-fill {
+            height: 100%;
+            background: var(--primary);
+            border-radius: 2px;
+            transition: width 0.3s;
+        }
+
+        /* Response */
+        .response-box {
+            background: var(--bg-dark);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 1rem;
+            min-height: 100px;
+        }
+
+        .response-header {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+
+        .response-text {
+            line-height: 1.6;
+            white-space: pre-wrap;
+        }
+
+        .response-meta {
+            margin-top: 0.5rem;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        /* Loading */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--text-secondary);
+            border-radius: 50%;
+            border-top-color: var(--primary);
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Error */
+        .error {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid var(--danger);
+            border-radius: 8px;
+            padding: 1rem;
+            color: var(--danger);
+            margin-top: 1rem;
+        }
+
+        /* Success */
+        .success {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid var(--secondary);
+            border-radius: 8px;
+            padding: 1rem;
+            color: var(--secondary);
+            margin-top: 1rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+
+            .tabs {
+                overflow-x: auto;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="header-content">
+            <div class="logo">
+                <div class="logo-icon">⚡</div>
+                <span>QuantumFlow</span>
+            </div>
+            <div class="connection-status">
+                <div class="status-dot" id="connectionDot"></div>
+                <span id="connectionText">未连接</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="container">
+        <!-- Alert for model loading -->
+        <div class="alert" id="modelAlert">
+            <div class="alert-icon">ℹ️</div>
+            <div class="alert-content">
+                <h4>提示</h4>
+                <p>首次使用请先在"模型"标签页加载模型。模型加载需要一些时间，请耐心等待。</p>
+            </div>
+        </div>
+
+        <!-- Stats -->
+        <div class="stats-grid" id="statsGrid">
+            <div class="stat-card">
+                <div class="stat-label">总节点</div>
+                <div class="stat-value primary" id="statNodes">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">健康节点</div>
+                <div class="stat-value secondary" id="statHealthy">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">GPU 总数</div>
+                <div class="stat-value" id="statGpus">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">已加载模型</div>
+                <div class="stat-value secondary" id="statModels">0</div>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="tabs">
+            <button class="tab active" data-tab="chat">💬 对话</button>
+            <button class="tab" data-tab="generate">✍️ 文本生成</button>
+            <button class="tab" data-tab="models">🤖 模型管理</button>
+            <button class="tab" data-tab="cluster">🖥️ 集群</button>
+        </div>
+
+        <!-- Chat Panel -->
+        <div class="panel active" id="panel-chat">
+            <div class="card">
+                <div class="card-title">💬 AI 对话</div>
+                <div class="chat-container">
+                    <div class="chat-messages" id="chatMessages">
+                        <div class="message assistant">
+                            <div class="message-header">QuantumFlow 助手</div>
+                            <div class="message-content">你好！我是 QuantumFlow AI 助手。请先从下方选择并加载模型，然后开始对话。</div>
+                        </div>
+                    </div>
+                    <div class="chat-input-container">
+                        <select class="form-select" id="chatModel" style="width: 200px;">
+                            <option value="">选择模型</option>
+                            <option value="Phi-3-mini">Phi-3-mini</option>
+                            <option value="Qwen2.5-1.5B">Qwen2.5-1.5B</option>
+                            <option value="Qwen2.5-3B">Qwen2.5-3B</option>
+                        </select>
+                        <input type="text" class="form-input chat-input" id="chatInput" placeholder="输入你的问题..." onkeypress="if(event.key==='Enter')sendMessage()">
+                        <button class="btn btn-primary" id="chatSendBtn" onclick="sendMessage()">发送</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Generate Panel -->
+        <div class="panel" id="panel-generate">
+            <div class="card">
+                <div class="card-title">✍️ 文本生成</div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">模型</label>
+                        <select class="form-select" id="genModel">
+                            <option value="">选择模型</option>
+                            <option value="Phi-3-mini">Phi-3-mini</option>
+                            <option value="Qwen2.5-1.5B">Qwen2.5-1.5B</option>
+                            <option value="Qwen2.5-3B">Qwen2.5-3B</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Temperature</label>
+                        <input type="number" class="form-input" id="genTemp" value="0.7" min="0" max="2" step="0.1">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Max Tokens</label>
+                        <input type="number" class="form-input" id="genMaxTokens" value="500" min="1" max="4096">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Prompt</label>
+                    <textarea class="form-textarea" id="genPrompt" placeholder="输入你的提示词..."></textarea>
+                </div>
+                <button class="btn btn-primary" id="genBtn" onclick="generate()">生成</button>
+
+                <div id="genResponse"></div>
+            </div>
+        </div>
+
+        <!-- Models Panel -->
+        <div class="panel" id="panel-models">
+            <div class="card">
+                <div class="card-title">🤖 模型管理</div>
+                <div class="form-row" style="margin-bottom: 1rem;">
+                    <div class="form-group">
+                        <label class="form-label">选择模型</label>
+                        <select class="form-select" id="loadModelSelect">
+                            <option value="Phi-3-mini">Phi-3-mini (推荐, ~6GB显存)</option>
+                            <option value="Qwen2.5-1.5B">Qwen2.5-1.5B (~3GB显存)</option>
+                            <option value="Qwen2.5-3B">Qwen2.5-3B (~6GB显存)</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="display: flex; align-items: flex-end;">
+                        <button class="btn btn-success" id="loadModelBtn" onclick="loadModel()">加载模型</button>
+                    </div>
+                </div>
+                <div id="modelLoadStatus"></div>
+
+                <h4 style="margin: 1.5rem 0 1rem; color: var(--text-secondary);">已加载模型</h4>
+                <div class="model-list" id="loadedModelList">
+                    <div class="model-item">
+                        <div class="model-info">
+                            <h4 style="color: var(--text-secondary);">暂无加载的模型</h4>
+                            <div class="model-meta">请选择上方模型并点击"加载模型"</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Cluster Panel -->
+        <div class="panel" id="panel-cluster">
+            <div class="card">
+                <div class="card-title">🖥️ 计算节点</div>
+                <div class="node-grid" id="nodeGrid">
+                    <div class="loading">加载中...</div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // Config
+        const API_BASE = 'http://localhost:8000/api/v1';
+
+        // State
+        let models = [];
+        let nodes = [];
+        let loadedModels = [];
+
+        // Init
+        document.addEventListener('DOMContentLoaded', () => {
+            initTabs();
+            loadData();
+            // Auto refresh every 10s
+            setInterval(loadData, 10000);
+        });
+
+        // Tabs
+        function initTabs() {
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.addEventListener('click', () => {
+                    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+                    tab.classList.add('active');
+                    document.getElementById(`panel-${tab.dataset.tab}`).classList.add('active');
+                });
+            });
+        }
+
+        // Load Data
+        async function loadData() {
+            await Promise.all([
+                loadStats(),
+                loadNodes(),
+                loadModelStatus()
+            ]);
+        }
+
+        async function loadStats() {
+            try {
+                const res = await fetch(`${API_BASE}/cluster/status`);
+                if (!res.ok) throw new Error('API不可用');
+                const data = await res.json();
+
+                document.getElementById('statNodes').textContent = data.total_nodes || 0;
+                document.getElementById('statHealthy').textContent = data.healthy_nodes || 0;
+                document.getElementById('statGpus').textContent = data.total_gpus || 0;
+                document.getElementById('statModels').textContent = loadedModels.length;
+
+                updateConnection(true);
+            } catch (e) {
+                updateConnection(false);
+            }
+        }
+
+        async function loadModelStatus() {
+            try {
+                const res = await fetch(`${API_BASE}/models/status`);
+                if (res.ok) {
+                    const data = await res.json();
+                    loadedModels = data.loaded_models || [];
+                    document.getElementById('statModels').textContent = loadedModels.length;
+                    updateLoadedModelList();
+                }
+            } catch (e) {
+                // Ignore
+            }
+        }
+
+        function updateLoadedModelList() {
+            const list = document.getElementById('loadedModelList');
+            if (loadedModels.length === 0) {
+                list.innerHTML = `
+                    <div class="model-item">
+                        <div class="model-info">
+                            <h4 style="color: var(--text-secondary);">暂无加载的模型</h4>
+                            <div class="model-meta">请选择上方模型并点击"加载模型"</div>
+                        </div>
+                    </div>
+                `;
+            } else {
+                list.innerHTML = loadedModels.map(m => `
+                    <div class="model-item">
+                        <div class="model-info">
+                            <h4>${m}</h4>
+                            <div class="model-meta">已加载</div>
+                        </div>
+                        <span class="model-status ready">就绪</span>
+                    </div>
+                `).join('');
+            }
+        }
+
+        async function loadNodes() {
+            try {
+                const res = await fetch(`${API_BASE}/cluster/nodes`);
+                nodes = await res.json();
+
+                const nodeGrid = document.getElementById('nodeGrid');
+                if (nodes.length === 0) {
+                    nodeGrid.innerHTML = '<div class="message assistant">暂无节点</div>';
+                    return;
+                }
+
+                nodeGrid.innerHTML = nodes.map(n => {
+                    const gpuUsage = n.gpu_info && n.gpu_info[0]
+                        ? Math.round((n.gpu_info[0].memory_used / n.gpu_info[0].memory_total) * 100)
+                        : 0;
+
+                    return `
+                        <div class="node-card">
+                            <div class="node-header">
+                                <span class="node-name">${n.hostname}</span>
+                                <span class="node-status ${n.status}">${n.status === 'healthy' ? '健康' : '异常'}</span>
+                            </div>
+                            <div class="node-stats">
+                                <div class="node-stat">
+                                    <div class="node-stat-label">GPU</div>
+                                    <div>${n.gpu_count} × ${n.gpu_info?.[0]?.name || 'N/A'}</div>
+                                </div>
+                                <div class="node-stat">
+                                    <div class="node-stat-label">负载</div>
+                                    <div>${Math.round((n.current_load || 0) * 100)}%</div>
+                                </div>
+                                <div class="node-stat">
+                                    <div class="node-stat-label">CPU</div>
+                                    <div>${n.cpu_count} 核</div>
+                                </div>
+                                <div class="node-stat">
+                                    <div class="node-stat-label">内存</div>
+                                    <div>${Math.round((n.memory_total - n.memory_available) / n.memory_total * 100)}%</div>
+                                </div>
+                            </div>
+                            ${n.gpu_info && n.gpu_info[0] ? `
+                                <div style="margin-top: 0.75rem;">
+                                    <div class="node-stat-label">GPU 内存</div>
+                                    <div class="gpu-bar">
+                                        <div class="gpu-bar-fill" style="width: ${gpuUsage}%"></div>
+                                    </div>
+                                </div>
+                            ` : ''}
+                        </div>
+                    `;
+                }).join('');
+
+            } catch (e) {
+                document.getElementById('nodeGrid').innerHTML = '<div class="error">加载失败</div>';
+            }
+        }
+
+        // Connection Status
+        function updateConnection(connected) {
+            const dot = document.getElementById('connectionDot');
+            const text = document.getElementById('connectionText');
+            if (connected) {
+                dot.classList.add('connected');
+                text.textContent = '已连接';
+            } else {
+                dot.classList.remove('connected');
+                text.textContent = '未连接';
+            }
+        }
+
+        // Load Model
+        async function loadModel() {
+            const modelSelect = document.getElementById('loadModelSelect');
+            const model = modelSelect.value;
+            const btn = document.getElementById('loadModelBtn');
+            const status = document.getElementById('modelLoadStatus');
+
+            btn.disabled = true;
+            btn.innerHTML = '<div class="loading"></div> 加载中...';
+            status.innerHTML = '';
+
+            try {
+                const res = await fetch(`${API_BASE}/models/load`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model: model })
+                });
+
+                const data = await res.json();
+
+                if (res.ok) {
+                    status.innerHTML = `<div class="success">✓ ${data.message || '模型加载成功'}</div>`;
+                    await loadModelStatus();
+                } else {
+                    status.innerHTML = `<div class="error">加载失败: ${JSON.stringify(data.detail || data)}</div>`;
+                }
+            } catch (e) {
+                status.innerHTML = `<div class="error">请求失败: ${e.message}</div>`;
+            }
+
+            btn.disabled = false;
+            btn.innerHTML = '加载模型';
+        }
+
+        // Chat
+        async function sendMessage() {
+            const input = document.getElementById('chatInput');
+            const model = document.getElementById('chatModel').value;
+            const messagesContainer = document.getElementById('chatMessages');
+            const message = input.value.trim();
+
+            if (!message) return;
+            if (!model) {
+                alert('请先选择一个模型');
+                return;
+            }
+
+            // Add user message
+            messagesContainer.innerHTML += `
+                <div class="message user">
+                    <div class="message-header">你</div>
+                    <div class="message-content">${escapeHtml(message)}</div>
+                </div>
+            `;
+
+            input.value = '';
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+            // Add thinking indicator
+            const thinkingId = 'thinking-' + Date.now();
+            messagesContainer.innerHTML += `
+                <div class="message assistant" id="${thinkingId}">
+                    <div class="message-header">${model} 思考中...</div>
+                    <div class="message-content"><div class="loading"></div></div>
+                </div>
+            `;
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+            // Send request
+            try {
+                const res = await fetch(`${API_BASE}/inference/chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        model: model,
+                        messages: [{ role: 'user', content: message }],
+                        stream: false
+                    })
+                });
+
+                const data = await res.json();
+
+                // Remove thinking indicator
+                const thinkingEl = document.getElementById(thinkingId);
+                if (thinkingEl) thinkingEl.remove();
+
+                if (data.generated_text) {
+                    messagesContainer.innerHTML += `
+                        <div class="message assistant">
+                            <div class="message-header">${model}</div>
+                            <div class="message-content">${escapeHtml(data.generated_text)}</div>
+                            <div class="response-meta">延迟: ${Math.round(data.latency_ms)}ms | Tokens: ${data.usage?.total_tokens || 'N/A'}</div>
+                        </div>
+                    `;
+                } else {
+                    messagesContainer.innerHTML += `
+                        <div class="message assistant">
+                            <div class="message-header">Error</div>
+                            <div class="message-content">${escapeHtml(JSON.stringify(data.detail || '生成失败'))}</div>
+                        </div>
+                    `;
+                }
+            } catch (e) {
+                const thinkingEl = document.getElementById(thinkingId);
+                if (thinkingEl) thinkingEl.remove();
+
+                messagesContainer.innerHTML += `
+                    <div class="message assistant">
+                        <div class="message-header">Error</div>
+                        <div class="message-content">请求失败: ${e.message}</div>
+                    </div>
+                `;
+            }
+
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        // Generate
+        async function generate() {
+            const model = document.getElementById('genModel').value;
+            const prompt = document.getElementById('genPrompt').value.trim();
+            const temperature = parseFloat(document.getElementById('genTemp').value);
+            const maxTokens = parseInt(document.getElementById('genMaxTokens').value);
+            const container = document.getElementById('genResponse');
+            const btn = document.getElementById('genBtn');
+
+            if (!model || !prompt) {
+                alert('请填写模型和提示词');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = '<div class="loading"></div> 生成中...';
+            container.innerHTML = '';
+
+            try {
+                const startTime = Date.now();
+                const res = await fetch(`${API_BASE}/inference/generate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        model: model,
+                        prompt: prompt,
+                        sampling_params: { temperature, max_tokens: maxTokens },
+                        stream: false
+                    })
+                });
+
+                const data = await res.json();
+                const latency = Date.now() - startTime;
+
+                if (data.generated_text) {
+                    container.innerHTML = `
+                        <div class="response-box">
+                            <div class="response-header">生成结果 (${latency}ms)</div>
+                            <div class="response-text">${escapeHtml(data.generated_text)}</div>
+                            <div class="response-meta">
+                                Token: ${data.usage?.total_tokens || 'N/A'} |
+                                Prompt: ${data.usage?.prompt_tokens || 'N/A'} |
+                                Completion: ${data.usage?.completion_tokens || 'N/A'}
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    container.innerHTML = `<div class="error">生成失败: ${JSON.stringify(data.detail)}</div>`;
+                }
+            } catch (e) {
+                container.innerHTML = `<div class="error">请求失败: ${e.message}</div>`;
+            }
+
+            btn.disabled = false;
+            btn.innerHTML = '生成';
+        }
+
+        // Utils
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
