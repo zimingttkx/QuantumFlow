@@ -69,8 +69,9 @@ class Scheduler:
             strategies=self.strategies
         )
 
-        # 请求队列
+        # 请求队列（使用计数器确保可排序）
         self.pending_queue: asyncio.PriorityQueue = asyncio.PriorityQueue()
+        self._request_counter: int = 0
         self.running_requests: Dict[str, QueueItem] = {}
 
         # 节点状态
@@ -148,9 +149,11 @@ class Scheduler:
             priority=request.priority,
         )
 
-        # 加入优先级队列 (优先级, 创建时间, 请求)
+        # 加入优先级队列 (优先级, 创建时间, 序号, 请求)
+        # 序号确保相同优先级和时间戳时可以比较
         priority = request.priority
-        await self.pending_queue.put((priority, request.created_at, request))
+        self._request_counter += 1
+        await self.pending_queue.put((priority, request.created_at, self._request_counter, request))
 
         return request.request_id
 
@@ -185,7 +188,7 @@ class Scheduler:
 
         for _ in range(batch_size):
             try:
-                priority, created_at, request = self.pending_queue.get_nowait()
+                priority, created_at, counter, request = self.pending_queue.get_nowait()
                 requests_batch.append(request)
             except asyncio.QueueEmpty:
                 break
@@ -282,8 +285,9 @@ class Scheduler:
                 retry_count=item.retry_count,
             )
             # 重新加入队列
+            self._request_counter += 1
             await self.pending_queue.put(
-                (request.priority, request.created_at, request)
+                (request.priority, request.created_at, self._request_counter, request)
             )
         else:
             logger.error(
@@ -357,7 +361,7 @@ class Scheduler:
     def get_pending_requests(self) -> List[SchedulingRequest]:
         """获取待调度请求"""
         requests = []
-        for _, _, request in self.pending_queue._queue:  # type: ignore
+        for _, _, _, request in self.pending_queue._queue:  # type: ignore
             if isinstance(request, SchedulingRequest):
                 requests.append(request)
         return requests
