@@ -1,0 +1,47 @@
+# QuantumFlow Dependencies
+# Install with: pip install -r requirements.txt
+
+# Web框架
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+starlette>=0.36.0
+
+# 数据验证
+pydantic>=2.6.0
+pydantic-settings>=2.2.0
+
+# 异步
+httpx>=0.27.0
+aiofiles>=23.2.0
+
+# Redis
+redis>=5.0.0
+
+# gRPC
+grpcio>=1.62.0
+grpcio-tools>=1.62.0
+grpcio-reflection>=1.62.0
+
+# 日志
+structlog>=24.1.0
+python-json-logger>=2.0.0
+
+# 监控
+prometheus-client>=0.19.0
+prometheus-fastapi-instrumentator>=6.1.0
+
+# 配置
+pyyaml>=6.0.0
+python-dotenv>=1.0.0
+
+# 工具
+tenacity>=8.2.0
+orjson>=3.9.0
+click>=8.1.0
+rich>=13.7.0
+
+# 开发依赖
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.1.0
+pytest-mock>=3.12.0
