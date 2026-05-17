@@ -20,9 +20,11 @@ router = APIRouter(prefix="/models", tags=["Model Management"])
 
 # 模型路径映射 - HuggingFace可以直接使用Hub ID
 MODEL_PATH_MAPPING: Dict[str, str] = {
+    "Qwen2.5-0.5B": "Qwen/Qwen2.5-0.5B-Instruct",
     "Qwen2.5-1.5B": "Qwen/Qwen2.5-1.5B-Instruct",
     "Qwen2.5-3B": "Qwen/Qwen2.5-3B-Instruct",
     "Qwen2.5-7B": "Qwen/Qwen2.5-7B-Instruct",
+    "Phi-3-mini-4k": "microsoft/Phi-3-mini-4k-instruct",
 }
 
 
@@ -109,7 +111,7 @@ async def load_model(request: LoadModelRequest) -> LoadModelResponse:
     engine_manager = get_engine_manager()
 
     try:
-        success = await engine_manager.load_model(
+        success, message = await engine_manager.load_model(
             model_name=request.model,
             model_path=model_path,
             backend=InferenceBackendType(request.backend) if request.backend else InferenceBackendType.HUGGINGFACE,
@@ -125,13 +127,13 @@ async def load_model(request: LoadModelRequest) -> LoadModelResponse:
             return LoadModelResponse(
                 model=request.model,
                 status="loaded",
-                message=f"Model {request.model} loaded successfully",
+                message=message,
             )
         else:
-            logger.error("model_load_failed", model=request.model)
+            logger.error("model_load_failed", model=request.model, reason=message)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to load model {request.model}",
+                detail=message or f"Failed to load model {request.model}",
             )
 
     except HTTPException:

@@ -16,8 +16,8 @@ class ModelConfig:
     model_path: str
     tensor_parallel: int = 1
     pipeline_parallel: int = 1
-    gpu_memory_utilization: float = 0.8  # 降低显存使用率适应RTX 4080 Laptop
-    max_model_len: int = 2048  # 降低max_model_len适应显存
+    gpu_memory_utilization: float = 0.8  # 80% VRAM for vLLM (RTX 4080 12GB)
+    max_model_len: int = 2048  # 传给vLLM的max_model_len，KV cache由gpu_memory_utilization控制
     dtype: str = "auto"  # float16, bfloat16, float32, auto
     quantization: Optional[str] = None  # awq, gptq, gguf
     trust_remote_code: bool = True
@@ -28,6 +28,10 @@ class ModelConfig:
     max_num_seqs: int = 256
     enforce_eager: bool = False
     enable_chunked_prefill: bool = True
+
+    # HuggingFace 特有配置
+    prefill_chunk_size: int = 512  # 分块预填充的块大小（tokens），超过此长度自动分块
+    torch_compile: bool = True     # 是否启用 torch.compile 加速
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""

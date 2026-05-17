@@ -1,5 +1,6 @@
 """HuggingFace Hub服务 - 模型发现、搜索、验证、下载"""
 
+import json
 from typing import List, Dict, Optional
 import os
 import structlog
@@ -9,6 +10,7 @@ from huggingface_hub import (
     model_info,
     scan_cache_dir,
     snapshot_download,
+    hf_hub_download,
 )
 from huggingface_hub.utils import (
     GatedRepoError,
@@ -209,15 +211,22 @@ async def validate_model(model_id: str) -> Dict:
 
 
 async def get_model_detail(model_id: str) -> Dict:
-    """获取模型详细信息（含参数量估算等）"""
+    """获取模型详细信息（含真实参数量，优先读取 config.json）"""
     try:
         info = model_info(model_id, files_metadata=True)
-        config_files = [s.rfilename for s in (info.siblings or []) if "config.json" in s.rfilename]
 
-        # 估算参数量
-        param_count = _estimate_params(info)
+        # 优先从 config.json 获取真实参数量
+        cfg = _fetch_config_params(model_id)
+        if cfg.get("params"):
+            param_count = cfg["params"]
+            estimated_vram = _estimate_vram(param_count, cfg["hidden_size"], cfg["num_hidden_layers"])
+            source = "config.json"
+        else:
+            param_count = _estimate_params(info)
+            estimated_vram = _estimate_vram(param_count)
+            source = "name_heuristic"
 
-        return {
+        result = {
             "model_id": model_id,
             "author": getattr(info, "author", "unknown"),
             "downloads": getattr(info, "downloads", 0) or 0,
@@ -230,19 +239,100 @@ async def get_model_detail(model_id: str) -> Dict:
             "private": getattr(info, "private", False),
             "sha": getattr(info, "sha", ""),
             "estimated_params": param_count,
-            "estimated_vram_gb": _estimate_vram(param_count),
+            "estimated_params_b": round(param_count / 1e9, 1),
+            "estimated_vram_gb": estimated_vram,
+            "estimation_source": source,
         }
+        if cfg:
+            result["architecture"] = {
+                "hidden_size": cfg["hidden_size"],
+                "num_hidden_layers": cfg["num_hidden_layers"],
+                "num_attention_heads": cfg["num_attention_heads"],
+                "num_key_value_heads": cfg["num_key_value_heads"],
+                "intermediate_size": cfg["intermediate_size"],
+                "vocab_size": cfg["vocab_size"],
+            }
+        return result
     except Exception as e:
         logger.error("model_detail_error", model_id=model_id, error=str(e))
         return {"model_id": model_id, "error": str(e)}
 
 
-def _estimate_params(info) -> int:
-    """从模型标签等信息估算参数量"""
-    tags = [t.lower() for t in (getattr(info, "tags", []) or [])]
-    model_id = getattr(info, "modelId", getattr(info, "id", "")).lower()
+def _fetch_config_params(model_id: str) -> dict:
+    """从 HF config.json 获取真实架构参数。
 
-    # 常见参数量模式
+    Returns:
+        {"params": int, "hidden_size": int, ...} 或空 dict（获取失败时）
+    """
+    try:
+        config_path = hf_hub_download(repo_id=model_id, filename="config.json")
+        with open(config_path, encoding="utf-8") as f:
+            cfg = json.load(f)
+
+        hidden_size = cfg.get("hidden_size", 0)
+        num_hidden_layers = cfg.get("num_hidden_layers", 0)
+        num_attention_heads = cfg.get("num_attention_heads", 0)
+        num_key_value_heads = cfg.get("num_key_value_heads", num_attention_heads)
+        intermediate_size = cfg.get("intermediate_size", 0)
+        vocab_size = cfg.get("vocab_size", 0)
+
+        if not all([hidden_size, num_hidden_layers, num_attention_heads, intermediate_size, vocab_size]):
+            return {}
+
+        head_dim = hidden_size / num_attention_heads
+
+        # Embedding
+        embed = vocab_size * hidden_size
+
+        # Per transformer layer (LLaMA/Qwen style):
+        #   Q_proj = hidden_size * hidden_size
+        #   K_proj = hidden_size * head_dim * num_key_value_heads
+        #   V_proj = hidden_size * head_dim * num_key_value_heads
+        #   O_proj = hidden_size * hidden_size
+        #   gate_proj = hidden_size * intermediate_size
+        #   up_proj   = hidden_size * intermediate_size
+        #   down_proj = intermediate_size * hidden_size
+        #   input_layernorm = hidden_size
+        #   post_attention_layernorm = hidden_size
+        per_layer = (
+            hidden_size * hidden_size * 2  # Q + O
+            + hidden_size * int(head_dim * num_key_value_heads) * 2  # K + V
+            + hidden_size * intermediate_size * 3  # gate + up + down
+            + hidden_size * 2  # two rmsnorms
+        )
+
+        total_params = embed + num_hidden_layers * per_layer + hidden_size  # final layernorm
+        # lm_head: shares weights with embedding in most models → 0 extra
+
+        return {
+            "params": total_params,
+            "params_b": round(total_params / 1e9, 1),
+            "hidden_size": hidden_size,
+            "num_hidden_layers": num_hidden_layers,
+            "num_attention_heads": num_attention_heads,
+            "num_key_value_heads": num_key_value_heads,
+            "intermediate_size": intermediate_size,
+            "vocab_size": vocab_size,
+        }
+
+    except Exception:
+        return {}
+
+
+def _estimate_params(info) -> int:
+    """从模型标签等信息估算参数量。优先读 config.json。"""
+    model_id = getattr(info, "modelId", getattr(info, "id", ""))
+
+    # 优先从 config.json 获取真实参数量
+    if model_id:
+        cfg = _fetch_config_params(model_id)
+        if cfg.get("params"):
+            return cfg["params"]
+
+    # fallback 名称匹配
+    tags = [t.lower() for t in (getattr(info, "tags", []) or [])]
+    model_id_lower = model_id.lower()
+
     param_patterns = [
         ("8b", 8_000_000_000), ("7b", 7_000_000_000), ("13b", 13_000_000_000),
         ("70b", 70_000_000_000), ("72b", 72_000_000_000), ("34b", 34_000_000_000),
@@ -255,7 +345,7 @@ def _estimate_params(info) -> int:
     ]
 
     for pattern, count in param_patterns:
-        if pattern in model_id:
+        if pattern in model_id_lower:
             return count
 
     for tag in tags:
@@ -266,12 +356,24 @@ def _estimate_params(info) -> int:
     return 0
 
 
-def _estimate_vram(param_count: int) -> float:
-    """估算FP16显存需求（GB）"""
+def _estimate_vram(param_count: int, hidden_size: int = 0, num_hidden_layers: int = 0) -> float:
+    """估算 FP16 推理显存需求（GB），含 KV cache 估算。
+
+    KV cache 估算基于: 2 * num_layers * hidden_size * max_seq_len * 2 bytes (FP16)
+    默认 max_seq_len = 4096
+    """
     if param_count == 0:
         return 0.0
-    # FP16: 2 bytes per param + ~20% overhead
-    return round(param_count * 2 / (1024**3) * 1.2, 1)
+    # FP16 model weights: 2 bytes per param + ~20% overhead
+    model_gb = param_count * 2 / (1024**3) * 1.2
+
+    # KV cache 估算
+    kv_cache_gb = 0.0
+    if hidden_size > 0 and num_hidden_layers > 0:
+        max_seq_len = 4096
+        kv_cache_gb = 2 * num_hidden_layers * hidden_size * max_seq_len * 2 / (1024**3)
+
+    return round(model_gb + kv_cache_gb, 1)
 
 
 async def download_model(

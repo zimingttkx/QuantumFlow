@@ -6,12 +6,17 @@ conda activate DL-310
 
 cd /home/dingziming/PycharmProjects/QuantumFlow
 
-# 检查服务是否在运行
+# 检查服务是否运行，若未运行则启动
 if ! curl -s --max-time 2 http://localhost:8000/api/v1/models/status > /dev/null 2>&1; then
     echo "服务未运行，正在启动..."
-    nohup python -m uvicorn quantumflow.api.server:app --host 0.0.0.0 --port 8000 > /tmp/quantumflow_server.log 2>&1 &
+
+    # 杀掉占用 8000 端口的旧进程
+    kill $(lsof -ti:8000) 2>/dev/null
+    sleep 1
+
+    PYTHONPATH="/home/dingziming/PycharmProjects/QuantumFlow" nohup /home/dingziming/anaconda3/envs/DL-310/bin/python -m uvicorn quantumflow.api.server:app --host 0.0.0.0 --port 8000 > /tmp/quantumflow_server.log 2>&1 &
     echo -n "等待服务启动"
-    for i in $(seq 1 10); do
+    for i in $(seq 1 20); do
         if curl -s --max-time 1 http://localhost:8000/api/v1/models/status > /dev/null 2>&1; then
             echo " ✓"
             break
@@ -19,6 +24,14 @@ if ! curl -s --max-time 2 http://localhost:8000/api/v1/models/status > /dev/null
         echo -n "."
         sleep 1
     done
+    echo ""
+fi
+
+# 最终检查
+if ! curl -s --max-time 2 http://localhost:8000/api/v1/models/status > /dev/null 2>&1; then
+    echo "✗ 服务启动失败，请手动启动: python -m quantumflow.cli serve"
+    echo "  或查看日志: tail -f /tmp/quantumflow_server.log"
+    exit 1
 fi
 
 python -m quantumflow.cli interactive

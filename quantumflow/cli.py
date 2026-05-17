@@ -475,16 +475,59 @@ def download(model_id, url):
                     if not val_data.get("valid"):
                         console.print(f"[red]✗ {val_data.get('error', '模型不存在')}[/red]")
                         return
+                    if val_data.get("gated"):
+                        console.print("[yellow]⚠ 该模型需要授权访问[/yellow]")
                     console.print(f"[green]✓ 模型存在[/green]")
-
-                # 下载
-                console.print(f"[cyan]下载中... (可能需要较长时间)[/cyan]")
-                resp = await client.post(f"{url}/api/v1/hub/download", json={"model_id": model_id})
-                if resp.status_code == 200:
-                    data = resp.json()
-                    console.print(f"[green]✓ 下载完成: {data.get('local_path', '')}[/green]")
                 else:
-                    console.print(f"[red]✗ 下载失败: {resp.text}[/red]")
+                    console.print(f"[red]✗ 验证失败[/red]")
+                    return
+
+                # 触发下载
+                console.print(f"[cyan]开始下载...[/cyan]")
+                # fire and forget — 后端会异步下载
+                asyncio.create_task(client.post(f"{url}/api/v1/hub/download", json={"model_id": model_id}))
+
+                # 轮询进度
+                from rich.progress import Progress, BarColumn, TextColumn, TimeElapsedColumn
+
+                with Progress(
+                    TextColumn("[bold blue]{task.description}"),
+                    BarColumn(bar_width=40),
+                    TextColumn("{task.percentage:3.0f}%"),
+                    TimeElapsedColumn(),
+                    console=console,
+                ) as progress:
+                    task = progress.add_task(f"[cyan]下载 {model_id}", total=100)
+                    last_pct = 0
+                    stall_count = 0
+                    for _ in range(600):  # max 10 minutes
+                        await asyncio.sleep(1)
+                        try:
+                            pr = await client.get(f"{url}/api/v1/hub/download/progress", params={"model_id": model_id})
+                            if pr.status_code == 200:
+                                pd = pr.json()
+                                pct = max(0.0, pd.get("progress", -1))
+                                if pct < 0:
+                                    # error / removed from tracker
+                                    progress.update(task, description=f"[red]下载失败: {model_id}")
+                                    console.print("[red]✗ 下载失败[/red]")
+                                    return
+                                progress.update(task, completed=pct)
+                                last_pct = pct
+                                if pct >= 100:
+                                    progress.update(task, description=f"[green]✓ {model_id} 完成")
+                                    console.print(f"[green]✓ 下载完成[/green]")
+                                    return
+                            # detect stall
+                            if pct == last_pct:
+                                stall_count += 1
+                                if stall_count > 120:
+                                    console.print("[yellow]⚠ 下载似乎卡住了，仍在等待...[/yellow]")
+                                    stall_count = 0
+                        except Exception:
+                            pass
+                    console.print("[yellow]⚠ 下载超时，请检查服务器状态[/yellow]")
+
             except Exception as e:
                 console.print(f"[red]连接失败: {e}[/red]")
 
@@ -862,23 +905,48 @@ def interactive(url):
                         if not Confirm.ask("继续尝试下载?", default=False):
                             return
 
-                # 下载
-                console.print(f"[cyan]正在下载 {model_id}... (可能需要较长时间)[/cyan]")
-                resp = await client.post(f"{url}/api/v1/hub/download", json={"model_id": model_id})
-                if resp.status_code == 200:
-                    data = resp.json()
-                    console.print(f"[green]✓ 下载成功: {data.get('local_path', '')}[/green]")
-                    # 询问是否加载
-                    if Confirm.ask("是否立即加载模型?", default=True):
-                        short_name = model_id.split("/")[-1]
-                        resp = await client.post(f"{url}/api/v1/models/load",
-                            json={"model": short_name, "model_path": model_id})
-                        if resp.status_code in [200, 201]:
-                            console.print(f"[green]✓ {short_name} 加载成功[/green]")
-                        else:
-                            console.print(f"[red]加载失败: {resp.text}[/red]")
-                else:
-                    console.print(f"[red]✗ 下载失败: {resp.text}[/red]")
+                # 触发下载 (fire and forget)
+                console.print(f"[cyan]开始下载 {model_id}...[/cyan]")
+                asyncio.create_task(client.post(f"{url}/api/v1/hub/download", json={"model_id": model_id}))
+
+                # 轮询进度
+                from rich.progress import Progress, BarColumn, TextColumn, TimeElapsedColumn
+
+                with Progress(
+                    TextColumn("[bold blue]{task.description}"),
+                    BarColumn(bar_width=30),
+                    TextColumn("{task.percentage:3.0f}%"),
+                    TimeElapsedColumn(),
+                    console=console,
+                ) as progress:
+                    task = progress.add_task(f"[cyan]{model_id.split('/')[-1]}", total=100)
+                    for _ in range(600):
+                        await asyncio.sleep(1)
+                        try:
+                            pr = await client.get(f"{url}/api/v1/hub/download/progress", params={"model_id": model_id})
+                            if pr.status_code == 200:
+                                pd = pr.json()
+                                pct = max(0.0, pd.get("progress", -1))
+                                if pct < 0:
+                                    console.print(f"[red]✗ 下载失败[/red]")
+                                    return
+                                progress.update(task, completed=pct)
+                                if pct >= 100:
+                                    progress.update(task, description=f"[green]✓ {model_id.split('/')[-1]} 完成")
+                                    console.print(f"[green]✓ 下载成功[/green]")
+                                    # 询问是否加载
+                                    if Confirm.ask("是否立即加载模型?", default=True):
+                                        short_name = model_id.split("/")[-1]
+                                        resp = await client.post(f"{url}/api/v1/models/load",
+                                            json={"model": short_name, "model_path": model_id})
+                                        if resp.status_code in [200, 201]:
+                                            console.print(f"[green]✓ {short_name} 加载成功[/green]")
+                                        else:
+                                            console.print(f"[red]加载失败: {resp.text}[/red]")
+                                    return
+                        except Exception:
+                            pass
+                    console.print("[yellow]⚠ 下载超时[/yellow]")
         except Exception as e:
             console.print(f"[red]连接失败: {e}[/red]")
 

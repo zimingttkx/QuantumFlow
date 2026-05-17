@@ -546,6 +546,191 @@
             margin-top: 1rem;
         }
 
+        /* Progress Bar */
+        .progress-bar-wrap {
+            background: var(--bg-input);
+            border-radius: 8px;
+            height: 10px;
+            overflow: hidden;
+            margin-top: 0.5rem;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+            border-radius: 8px;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+
+        .progress-text {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-top: 0.25rem;
+        }
+
+        /* Download Toast */
+        .download-toast {
+            position: fixed;
+            bottom: 1rem;
+            right: 1rem;
+            background: var(--bg-card);
+            border: 1px solid var(--primary);
+            border-radius: 12px;
+            padding: 1rem;
+            z-index: 1000;
+            min-width: 320px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        }
+
+        .download-toast .toast-title {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            font-size: 0.875rem;
+        }
+
+        /* Scheduling Panel */
+        .sched-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        @media (max-width: 900px) {
+            .sched-grid { grid-template-columns: 1fr; }
+        }
+
+        .sched-vram-bar-wrap {
+            background: var(--bg-dark);
+            border-radius: 8px;
+            height: 24px;
+            overflow: hidden;
+            margin: 0.5rem 0;
+            position: relative;
+        }
+
+        .sched-vram-bar-fill {
+            height: 100%;
+            border-radius: 8px;
+            transition: width 0.5s ease;
+            position: absolute;
+            left: 0;
+            top: 0;
+        }
+
+        .sched-vram-bar-fill.used {
+            background: linear-gradient(90deg, var(--primary), #818CF8);
+            z-index: 2;
+        }
+
+        .sched-vram-bar-fill.reserved {
+            background: repeating-linear-gradient(45deg, rgba(245,158,11,0.5), rgba(245,158,11,0.5) 4px, transparent 4px, transparent 8px);
+            z-index: 3;
+        }
+
+        .sched-vram-bar-text {
+            position: relative;
+            z-index: 4;
+            font-size: 0.75rem;
+            font-weight: 600;
+            line-height: 24px;
+            padding: 0 0.75rem;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+        }
+
+        .sched-model-row {
+            display: grid;
+            grid-template-columns: 1fr 100px 80px 60px;
+            gap: 0.5rem;
+            align-items: center;
+            padding: 0.75rem;
+            background: var(--bg-dark);
+            border-radius: 8px;
+            margin-bottom: 0.5rem;
+            font-size: 0.875rem;
+        }
+
+        .sched-model-row.header {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            font-weight: 600;
+            text-transform: uppercase;
+            padding: 0.5rem 0.75rem;
+            background: transparent;
+        }
+
+        .sched-badge {
+            display: inline-block;
+            padding: 0.2rem 0.6rem;
+            border-radius: 9999px;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+
+        .sched-badge.in_use {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--secondary);
+        }
+
+        .sched-badge.idle {
+            background: rgba(148, 163, 184, 0.2);
+            color: var(--text-secondary);
+        }
+
+        .sched-badge.evict {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--danger);
+        }
+
+        .sched-evict-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .sched-evict-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.6rem 0.75rem;
+            background: var(--bg-dark);
+            border-radius: 8px;
+            margin-bottom: 0.4rem;
+            font-size: 0.85rem;
+            border-left: 3px solid var(--danger);
+        }
+
+        .sched-evict-item:nth-child(n+4) {
+            border-left-color: var(--warning);
+        }
+
+        .sched-gpu-card {
+            background: var(--bg-dark);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .sched-gpu-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+
+        .sched-empty {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            text-align: center;
+            padding: 2rem;
+        }
+
+        .sched-refresh-hint {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            text-align: right;
+            margin-top: 0.5rem;
+        }
+
         /* Responsive */
         @media (max-width: 768px) {
             .container {
@@ -612,6 +797,7 @@
             <button class="tab" data-tab="generate">✍️ 文本生成</button>
             <button class="tab" data-tab="models">🤖 模型管理</button>
             <button class="tab" data-tab="hub">🔍 模型中心</button>
+            <button class="tab" data-tab="scheduler">📊 调度</button>
             <button class="tab" data-tab="cluster">🖥️ 集群</button>
         </div>
 
@@ -679,8 +865,7 @@
                     <div class="form-group">
                         <label class="form-label">选择模型</label>
                         <select class="form-select" id="loadModelSelect">
-                            <option value="Qwen2.5-1.5B">Qwen2.5-1.5B (推荐, ~3GB)</option>
-                            <option value="Qwen2.5-3B">Qwen2.5-3B (~6GB)</option>
+                            <option value="">加载中...</option>
                         </select>
                     </div>
                     <div class="form-group" style="display: flex; align-items: flex-end;">
@@ -738,6 +923,77 @@
             </div>
         </div>
 
+        <!-- Scheduler Panel -->
+        <div class="panel" id="panel-scheduler">
+            <!-- VRAM Overview -->
+            <div class="card">
+                <div class="card-title">🧠 VRAM 状态</div>
+                <div id="schedVramBar" style="margin-bottom: 0.75rem;">
+                    <div class="loading"></div> 加载中...
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem;">
+                    <div class="stat-card" style="padding: 1rem;">
+                        <div class="stat-label">可用 VRAM</div>
+                        <div class="stat-value secondary" id="schedVramAvail">-</div>
+                    </div>
+                    <div class="stat-card" style="padding: 1rem;">
+                        <div class="stat-label">安全系数</div>
+                        <div class="stat-value" id="schedSafetyFactor">-</div>
+                    </div>
+                    <div class="stat-card" style="padding: 1rem;">
+                        <div class="stat-label">实际可用</div>
+                        <div class="stat-value primary" id="schedVramUsable">-</div>
+                    </div>
+                    <div class="stat-card" style="padding: 1rem;">
+                        <div class="stat-label">已加载模型</div>
+                        <div class="stat-value warning" id="schedLoadedCount">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sched-grid">
+                <!-- Loaded Models -->
+                <div class="card">
+                    <div class="card-title">📋 已加载模型</div>
+                    <div id="schedLoadedModels">
+                        <div class="sched-empty">暂无已加载模型</div>
+                    </div>
+                </div>
+
+                <!-- Eviction Priority -->
+                <div class="card">
+                    <div class="card-title">🔴 淘汰优先级 <span style="font-size:0.7rem;color:var(--text-secondary);">(高分优先淘汰)</span></div>
+                    <div id="schedEvictionList">
+                        <div class="sched-empty">暂无淘汰候选</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- GPU Cards -->
+            <div class="card">
+                <div class="card-title">🎮 GPU 详情</div>
+                <div id="schedGpuCards">
+                    <div class="sched-empty">暂无 GPU 数据</div>
+                </div>
+            </div>
+
+            <!-- Batch Stats -->
+            <div class="card">
+                <div class="card-title">📦 批处理统计</div>
+                <div id="schedBatchStats">
+                    <div class="sched-empty">暂无批处理数据</div>
+                </div>
+            </div>
+
+            <!-- Scheduler Queue -->
+            <div class="card" id="schedQueueCard" style="display:none;">
+                <div class="card-title">📌 调度队列</div>
+                <div id="schedQueueContent"></div>
+            </div>
+
+            <div class="sched-refresh-hint">⏱ 每 5 秒自动刷新</div>
+        </div>
+
         <!-- Cluster Panel -->
         <div class="panel" id="panel-cluster">
             <div class="card">
@@ -764,6 +1020,8 @@
             loadData();
             // Auto refresh every 10s
             setInterval(loadData, 10000);
+            // Scheduler tab refresh every 5s when active
+            setInterval(() => { if (schedAutoRefresh) loadSchedulerData(); }, 5000);
         });
 
         // Tabs
@@ -779,6 +1037,13 @@
                     if (tab.dataset.tab === 'hub') {
                         loadHubData();
                     }
+                    // Load scheduler data when scheduler tab is clicked
+                    if (tab.dataset.tab === 'scheduler') {
+                        schedAutoRefresh = true;
+                        loadSchedulerData();
+                    } else {
+                        schedAutoRefresh = false;
+                    }
                 });
             });
         }
@@ -788,7 +1053,8 @@
             await Promise.all([
                 loadStats(),
                 loadNodes(),
-                loadModelStatus()
+                loadModelStatus(),
+                loadAvailableModels()
             ]);
         }
 
@@ -820,6 +1086,31 @@
                 }
             } catch (e) {
                 // Ignore
+            }
+        }
+
+        async function loadAvailableModels() {
+            try {
+                const res = await fetch(`${API_BASE}/models/list`);
+                if (res.ok) {
+                    const data = await res.json();
+                    const available = data.available_models || [];
+                    const select = document.getElementById('loadModelSelect');
+                    select.innerHTML = available.map(m => {
+                        const sizes = { 'Qwen2.5-0.5B': '~1GB', 'Qwen2.5-1.5B': '~3GB', 'Qwen2.5-3B': '~6GB', 'Qwen2.5-7B': '~14GB', 'Phi-3-mini-4k': '~7GB' };
+                        const size = sizes[m] || '';
+                        return `<option value="${m}">${m}${size ? ' (' + size + ')' : ''}</option>`;
+                    }).join('');
+                }
+            } catch (e) {
+                // fallback to hardcoded
+                const select = document.getElementById('loadModelSelect');
+                if (select.children.length <= 1) {
+                    select.innerHTML = `
+                        <option value="Qwen2.5-1.5B">Qwen2.5-1.5B (~3GB)</option>
+                        <option value="Qwen2.5-3B">Qwen2.5-3B (~6GB)</option>
+                    `;
+                }
             }
         }
 
@@ -1286,34 +1577,72 @@
         }
 
         async function downloadFromHub(modelId) {
-            const status = document.getElementById('hubDownloadStatus');
-            try {
-                // Show status
-                if (!status) {
-                    const div = document.createElement('div');
-                    div.id = 'hubDownloadStatus';
-                    div.style.cssText = 'position:fixed;bottom:1rem;right:1rem;background:var(--bg-card);border:1px solid var(--primary);border-radius:8px;padding:1rem;z-index:1000;';
-                    document.body.appendChild(div);
-                }
-                document.getElementById('hubDownloadStatus').innerHTML = `<div class="loading"></div> 正在下载 ${modelId}...`;
+            let toast = document.getElementById('hubDownloadStatus');
+            if (!toast) {
+                toast = document.createElement('div');
+                toast.id = 'hubDownloadStatus';
+                document.body.appendChild(toast);
+            }
+            toast.className = 'download-toast';
 
-                const res = await fetch(`${API_BASE}/hub/download`, {
+            const shortName = modelId.split('/').pop();
+            toast.innerHTML = `
+                <div class="toast-title">📥 下载 ${shortName}</div>
+                <div class="progress-bar-wrap"><div class="progress-bar-fill" id="dlProgressFill" style="width:0%"></div></div>
+                <div class="progress-text" id="dlProgressText">验证模型中...</div>
+            `;
+
+            try {
+                // Step 1: Validate
+                const valRes = await fetch(`${API_BASE}/hub/validate?model_id=${encodeURIComponent(modelId)}`);
+                const valData = await valRes.json();
+                if (!valData.valid) {
+                    toast.innerHTML = `<div class="error">✗ ${valData.error || '模型不存在'}</div>`;
+                    setTimeout(() => toast.remove(), 5000);
+                    return;
+                }
+                if (valData.gated) {
+                    toast.innerHTML = `<div class="error">⚠ 模型需要授权访问</div>`;
+                    setTimeout(() => toast.remove(), 5000);
+                    return;
+                }
+
+                // Step 2: Trigger download (fire and forget)
+                document.getElementById('dlProgressText').textContent = '开始下载...';
+                fetch(`${API_BASE}/hub/download`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ model_id: modelId })
                 });
 
-                const data = await res.json();
+                // Step 3: Poll progress
+                const pollInterval = setInterval(async () => {
+                    try {
+                        const progRes = await fetch(`${API_BASE}/hub/download/progress?model_id=${encodeURIComponent(modelId)}`);
+                        const progData = await progRes.json();
+                        const pct = progData.progress;
 
-                if (data.success) {
-                    document.getElementById('hubDownloadStatus').innerHTML = `<div class="success">✓ ${modelId} 下载完成！</div>`;
-                    await loadDownloaded();
-                    setTimeout(() => document.getElementById('hubDownloadStatus').remove(), 3000);
-                } else {
-                    document.getElementById('hubDownloadStatus').innerHTML = `<div class="error">下载失败: ${data.error || data.detail || '未知错误'}</div>`;
-                }
+                        document.getElementById('dlProgressFill').style.width = pct + '%';
+                        document.getElementById('dlProgressText').textContent = `${pct.toFixed(0)}%`;
+
+                        if (pct >= 100) {
+                            clearInterval(pollInterval);
+                            toast.innerHTML = `<div class="success">✓ ${shortName} 下载完成！</div>`;
+                            await loadDownloaded();
+                            setTimeout(() => toast.remove(), 4000);
+                        } else if (pct < 0) {
+                            // -1 means not in download dict anymore (error)
+                            clearInterval(pollInterval);
+                            toast.innerHTML = `<div class="error">下载失败，请重试</div>`;
+                            setTimeout(() => toast.remove(), 5000);
+                        }
+                    } catch (e) {
+                        // keep polling on transient errors
+                    }
+                }, 800);
             } catch (e) {
-                document.getElementById('hubDownloadStatus').innerHTML = `<div class="error">下载失败: ${e.message}</div>`;
+                toast.innerHTML = `<div class="error">下载失败: ${e.message}</div>`;
+                setTimeout(() => toast.remove(), 5000);
             }
         }
 
@@ -1337,6 +1666,248 @@
             } catch (e) {
                 alert(`加载失败: ${e.message}`);
             }
+        }
+
+        // ── Scheduling Visualization ──
+
+        let schedAutoRefresh = false;
+
+        async function loadSchedulerData() {
+            try {
+                const res = await fetch(`${API_BASE}/scheduler/status`);
+                if (!res.ok) throw new Error('API unavailable');
+                const data = await res.json();
+
+                renderVramBar(data.vram);
+                renderVramStats(data.vram);
+                renderLoadedModels(data.vram);
+                renderEvictionList(data.eviction);
+                renderGpuCards(data.gpu);
+                renderBatchStats(data.batch);
+                renderSchedulerQueue(data.scheduler);
+            } catch (e) {
+                // silently fail, show stale data
+            }
+        }
+
+        function renderVramBar(vram) {
+            const el = document.getElementById('schedVramBar');
+            if (!vram) {
+                el.innerHTML = '<div style="color:var(--text-secondary);font-size:0.875rem;">VRAM 数据不可用</div>';
+                return;
+            }
+
+            // Calculate total_vram from used + available
+            const modelsVram = (vram.loaded_models || []).reduce((s, m) => s + m.estimated_vram_gb, 0);
+            const avail = vram.available_vram_gb || 0;
+            const usable = vram.usable_vram_gb || 0;
+            const safetyMargin = avail - usable;
+            const total = Math.max(avail + modelsVram, 0.1);
+            const usedPct = (modelsVram / total) * 100;
+            const marginPct = (safetyMargin / total) * 100;
+            const freePct = (usable / total) * 100;
+
+            el.innerHTML = `
+                <div style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:0.25rem;">
+                    总: ${total.toFixed(1)} GB
+                </div>
+                <div class="sched-vram-bar-wrap">
+                    <div class="sched-vram-bar-fill used" style="width:${usedPct}%"></div>
+                    <div class="sched-vram-bar-fill reserved" style="left:${usedPct}%;width:${marginPct}%"></div>
+                    <div class="sched-vram-bar-text">
+                        已用 ${modelsVram.toFixed(1)}GB | 安全预留 ${safetyMargin.toFixed(1)}GB | 可用 ${usable.toFixed(1)}GB
+                    </div>
+                </div>
+                <div style="display:flex;gap:1rem;font-size:0.7rem;color:var(--text-secondary);">
+                    <span>■ 模型占用</span><span>▨ 安全预留(30%)</span><span>□ 可用</span>
+                </div>
+            `;
+        }
+
+        function renderVramStats(vram) {
+            if (!vram) return;
+            document.getElementById('schedVramAvail').textContent = (vram.available_vram_gb || 0).toFixed(1) + ' GB';
+            document.getElementById('schedSafetyFactor').textContent = ((vram.safety_factor || 0) * 100).toFixed(0) + '%';
+            document.getElementById('schedVramUsable').textContent = (vram.usable_vram_gb || 0).toFixed(1) + ' GB';
+            document.getElementById('schedLoadedCount').textContent = vram.loaded_count || 0;
+        }
+
+        function renderLoadedModels(vram) {
+            const el = document.getElementById('schedLoadedModels');
+            const models = vram && vram.loaded_models ? vram.loaded_models : [];
+
+            if (models.length === 0) {
+                el.innerHTML = '<div class="sched-empty">暂无已加载模型</div>';
+                return;
+            }
+
+            let html = '<div class="sched-model-row header"><span>模型</span><span>VRAM</span><span>空闲</span><span>状态</span></div>';
+            models.forEach(m => {
+                const statusCls = m.in_use ? 'in_use' : 'idle';
+                const statusText = m.in_use ? '推理中' : '空闲';
+                const idleText = m.in_use ? '—' : formatIdleTime(m.idle_seconds);
+                html += `
+                    <div class="sched-model-row">
+                        <span><strong>${escapeHtml(m.model_name)}</strong></span>
+                        <span>${m.estimated_vram_gb.toFixed(1)} GB</span>
+                        <span>${idleText}</span>
+                        <span><span class="sched-badge ${statusCls}">${statusText}</span></span>
+                    </div>
+                `;
+            });
+
+            el.innerHTML = html;
+        }
+
+        function renderEvictionList(eviction) {
+            const el = document.getElementById('schedEvictionList');
+            const candidates = eviction && eviction.candidates ? eviction.candidates : [];
+            const idleToEvict = eviction && eviction.idle_to_evict ? eviction.idle_to_evict : [];
+
+            if (candidates.length === 0) {
+                el.innerHTML = '<div class="sched-empty">暂无淘汰候选</div>';
+                return;
+            }
+
+            let html = '';
+            if (idleToEvict.length > 0) {
+                html += `<div style="font-size:0.75rem;color:var(--warning);margin-bottom:0.5rem;">
+                    ⚠ 空闲超时 (TTL): ${idleToEvict.join(', ')}
+                </div>`;
+            }
+
+            html += '<div class="sched-evict-list">';
+            candidates.forEach((c, i) => {
+                const isNextEvict = idleToEvict.includes(c.model_name);
+                html += `
+                    <div class="sched-evict-item" style="${isNextEvict ? 'background:rgba(239,68,68,0.08);' : ''}">
+                        <span>
+                            <strong>#${i + 1}</strong> ${escapeHtml(c.model_name)}
+                            ${isNextEvict ? '<span class="sched-badge evict" style="margin-left:0.5rem;">即将淘汰</span>' : ''}
+                        </span>
+                        <span style="font-size:0.75rem;color:var(--text-secondary);">
+                            ${c.estimated_vram_gb.toFixed(1)}GB · 空闲${formatIdleTime(c.idle_seconds)}
+                        </span>
+                    </div>
+                `;
+            });
+            html += '</div>';
+
+            el.innerHTML = html;
+        }
+
+        function renderGpuCards(gpuList) {
+            const el = document.getElementById('schedGpuCards');
+            if (!gpuList || gpuList.length === 0) {
+                el.innerHTML = '<div class="sched-empty">暂无 GPU 数据</div>';
+                return;
+            }
+
+            let html = '';
+            gpuList.forEach(g => {
+                const totalGb = g.total_vram_gb || 0;
+                const usedGb = g.used_vram_gb || 0;
+                const freeGb = g.free_vram_gb || 0;
+                const usedPct = totalGb > 0 ? (usedGb / totalGb * 100).toFixed(1) : 0;
+                const utilPct = g.utilization_pct != null ? g.utilization_pct : 0;
+                const temp = g.temperature_c != null ? g.temperature_c + '°C' : 'N/A';
+
+                html += `
+                    <div class="sched-gpu-card">
+                        <div class="sched-gpu-header">
+                            <strong>GPU ${g.index} — ${escapeHtml(g.name)}</strong>
+                            <span style="font-size:0.8rem;">计算: ${usedPct}% | 显存带宽: ${g.memory_util_pct != null ? g.memory_util_pct.toFixed(1) : 'N/A'}%</span>
+                        </div>
+                        <div class="gpu-bar" style="height:6px;margin:0.5rem 0;">
+                            <div class="gpu-bar-fill" style="width:${usedPct}%"></div>
+                        </div>
+                        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.5rem;font-size:0.8rem;color:var(--text-secondary);">
+                            <div>总计: ${totalGb.toFixed(1)} GB</div>
+                            <div>已用: ${usedGb.toFixed(1)} GB</div>
+                            <div>空闲: ${freeGb.toFixed(1)} GB</div>
+                            <div>温度: ${temp}</div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            el.innerHTML = html;
+        }
+
+        function renderBatchStats(batchStats) {
+            const el = document.getElementById('schedBatchStats');
+            if (!batchStats || Object.keys(batchStats).length === 0) {
+                el.innerHTML = '<div class="sched-empty">暂无批处理数据</div>';
+                return;
+            }
+
+            let html = '<div style="display:grid;gap:0.5rem;">';
+            for (const [key, stats] of Object.entries(batchStats)) {
+                html += `
+                    <div style="background:var(--bg-dark);border-radius:8px;padding:0.75rem;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;">
+                            <strong style="font-size:0.85rem;">${escapeHtml(key)}</strong>
+                            <span style="font-size:0.75rem;color:var(--text-secondary);">
+                                共 ${stats.total_requests} 请求 · ${stats.total_batches} 批次 · 平均批量 ${stats.avg_batch_size}
+                            </span>
+                        </div>
+                    </div>
+                `;
+            }
+            html += '</div>';
+            el.innerHTML = html;
+        }
+
+        function renderSchedulerQueue(scheduler) {
+            const card = document.getElementById('schedQueueCard');
+            const content = document.getElementById('schedQueueContent');
+
+            if (!scheduler) {
+                card.style.display = 'none';
+                return;
+            }
+
+            card.style.display = 'block';
+
+            const pending = scheduler.pending_requests_detail || [];
+            const running = scheduler.running_requests_detail || [];
+
+            let html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">';
+
+            // Pending queue
+            html += '<div><h4 style="margin-bottom:0.5rem;color:var(--warning);">⏳ 等待中 (' + pending.length + ')</h4>';
+            if (pending.length === 0) {
+                html += '<div style="color:var(--text-secondary);font-size:0.8rem;">空</div>';
+            } else {
+                pending.forEach(r => {
+                    html += `<div style="background:var(--bg-dark);border-radius:6px;padding:0.5rem;margin-bottom:0.3rem;font-size:0.8rem;">
+                        ${escapeHtml(r.request_id)} · ${escapeHtml(r.model)} · 优先级 ${r.priority}
+                    </div>`;
+                });
+            }
+            html += '</div>';
+
+            // Running
+            html += '<div><h4 style="margin-bottom:0.5rem;color:var(--secondary);">▶ 运行中 (' + running.length + ')</h4>';
+            if (running.length === 0) {
+                html += '<div style="color:var(--text-secondary);font-size:0.8rem;">空</div>';
+            } else {
+                running.forEach(r => {
+                    html += `<div style="background:var(--bg-dark);border-radius:6px;padding:0.5rem;margin-bottom:0.3rem;font-size:0.8rem;">
+                        ${escapeHtml(r.request_id)} · ${escapeHtml(r.model)}
+                    </div>`;
+                });
+            }
+            html += '</div>';
+
+            html += '</div>';
+            content.innerHTML = html;
+        }
+
+        function formatIdleTime(seconds) {
+            if (seconds < 60) return Math.round(seconds) + 's';
+            if (seconds < 3600) return Math.round(seconds / 60) + 'm';
+            return Math.round(seconds / 3600) + 'h';
         }
 
         // Utils

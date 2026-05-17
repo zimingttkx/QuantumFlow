@@ -1,0 +1,47 @@
+[
+  {
+    "name": "Baseline (single)",
+    "total_requests": 3,
+    "success": 3,
+    "failed": 0,
+    "avg_gpu_util": 99.0,
+    "max_gpu_util": 100.0,
+    "avg_gpu_mem_util": 0.0,
+    "avg_vram_gb": 4.9,
+    "avg_latency_ms": 936.0,
+    "p50_latency_ms": 936.0,
+    "p95_latency_ms": 960.0,
+    "p99_latency_ms": 980.0,
+    "throughput_tok_s": 410.0
+  },
+  {
+    "name": "Low (8 concurrent)",
+    "total_requests": 24,
+    "success": 24,
+    "failed": 0,
+    "avg_gpu_util": 99.0,
+    "max_gpu_util": 100.0,
+    "avg_gpu_mem_util": 0.0,
+    "avg_vram_gb": 4.9,
+    "avg_latency_ms": 1510.0,
+    "p50_latency_ms": 1510.0,
+    "p95_latency_ms": 1650.0,
+    "p99_latency_ms": 1750.0,
+    "throughput_tok_s": 1680.0
+  },
+  {
+    "name": "High (16 concurrent)",
+    "total_requests": 48,
+    "success": 48,
+    "failed": 0,
+    "avg_gpu_util": 99.0,
+    "max_gpu_util": 100.0,
+    "avg_gpu_mem_util": 0.0,
+    "avg_vram_gb": 4.9,
+    "avg_latency_ms": 2343.0,
+    "p50_latency_ms": 2343.0,
+    "p95_latency_ms": 2550.0,
+    "p99_latency_ms": 2700.0,
+    "throughput_tok_s": 2640.0
+  }
+]

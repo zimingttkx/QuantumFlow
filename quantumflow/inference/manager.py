@@ -1,6 +1,7 @@
 """推理引擎管理器 - 单例模式管理所有推理后端"""
 
 from typing import Dict, Optional, AsyncIterator
+import asyncio
 import structlog
 
 from quantumflow.inference.engine import (
@@ -11,6 +12,9 @@ from quantumflow.inference.engine import (
 )
 from quantumflow.inference.backends.vllm import VLLMEngine
 from quantumflow.inference.backends.huggingface import HuggingFaceEngine
+from quantumflow.inference.vram_manager import VRAMManager
+from quantumflow.inference.batch_accumulator import BatchAccumulator
+from quantumflow.inference.gpu_monitor import GPUMonitor
 from quantumflow.core.constants import InferenceBackendType
 from quantumflow.core.exceptions import InferenceError, ModelNotFoundError
 
@@ -43,6 +47,14 @@ class EngineManager:
         self._engines: Dict[InferenceBackendType, InferenceEngine] = {}
         self._default_engine: Optional[InferenceEngine] = None
         self._loaded_models: Dict[str, InferenceEngine] = {}  # model_name -> engine
+        self._vram_manager = VRAMManager(
+            safety_factor=0.7,
+            idle_ttl_seconds=0.0,  # 默认禁用空闲卸载
+        )
+        self._batch_accumulators: Dict[str, BatchAccumulator] = {}
+        self._batch_sampling_params: Dict[str, SamplingParams] = {}
+        self._gpu_monitor = GPUMonitor(interval_seconds=5.0)
+        self._eviction_task: Optional[asyncio.Task] = None
 
     async def initialize(self, backend: InferenceBackendType = InferenceBackendType.HUGGINGFACE) -> bool:
         """
@@ -86,20 +98,30 @@ class EngineManager:
         model_path: str,
         backend: InferenceBackendType = InferenceBackendType.HUGGINGFACE,
         **kwargs,
-    ) -> bool:
+    ) -> tuple[bool, str]:
         """
-        加载模型到指定后端
-
-        Args:
-            model_name: 模型名称标识
-            model_path: 模型路径或HuggingFace ID
-            backend: 推理后端
-            **kwargs: 其他模型配置参数
+        加载模型到指定后端（VRAM感知）。
 
         Returns:
-            是否加载成功
+            (success, message) — message 描述加载结果/原因
         """
-        # 获取或创建引擎
+        max_model_len = kwargs.get("max_model_len", 2048)
+
+        # 1. VRAM预估与检查
+        required_vram = self._vram_manager.estimate_model_vram_gb(model_path, max_model_len)
+        can_load, reason, to_evict = self._vram_manager.can_load(model_name, required_vram)
+
+        if not can_load:
+            logger.warning("vram_reject", model=model_name, required_vram_gb=required_vram, reason=reason)
+            return False, reason
+
+        # 2. 如需淘汰，先淘汰LRU模型
+        if to_evict:
+            logger.info("vram_evicting", models=to_evict, reason=reason)
+            for evict_name in to_evict:
+                await self.unload_model(evict_name)
+
+        # 3. 获取或创建引擎
         engine = self._engines.get(backend)
         if not engine:
             success = await self.initialize(backend)
@@ -107,26 +129,29 @@ class EngineManager:
                 raise InferenceError(f"Failed to initialize {backend.value} engine")
             engine = self._engines[backend]
 
-        # 创建模型配置
+        # 4. 创建模型配置
         config = ModelConfig(
             model_name=model_name,
             model_path=model_path,
             tensor_parallel=kwargs.get("tensor_parallel", 1),
             pipeline_parallel=kwargs.get("pipeline_parallel", 1),
-            gpu_memory_utilization=kwargs.get("gpu_memory_utilization", 0.8),  # 降低显存使用率适应RTX 4080 Laptop
-            max_model_len=kwargs.get("max_model_len", 2048),  # 降低max_model_len适应显存
+            gpu_memory_utilization=kwargs.get("gpu_memory_utilization", 0.8),
+            max_model_len=max_model_len,
             dtype=kwargs.get("dtype", "auto"),
             quantization=kwargs.get("quantization"),
             trust_remote_code=kwargs.get("trust_remote_code", True),
         )
 
-        # 加载模型
+        # 5. 加载模型
         success = await engine.load_model(config)
         if success:
             self._loaded_models[model_name] = engine
-            logger.info("model_loaded", model=model_name, backend=backend.value)
+            self._vram_manager.record_loaded(model_name, required_vram)
+            logger.info("model_loaded", model=model_name, backend=backend.value,
+                        estimated_vram_gb=required_vram)
+            return True, reason
 
-        return success
+        return False, "引擎加载失败"
 
     async def unload_model(self, model_name: str) -> bool:
         """卸载模型"""
@@ -139,6 +164,7 @@ class EngineManager:
 
         if success:
             del self._loaded_models[model_name]
+            self._vram_manager.record_unloaded(model_name)
             logger.info("model_unloaded", model=model_name)
 
         return success
@@ -149,31 +175,23 @@ class EngineManager:
         prompts: list[str],
         sampling_params: SamplingParams,
     ) -> list[InferenceResult]:
-        """
-        生成文本
-
-        Args:
-            model_name: 模型名称
-            prompts: 提示词列表
-            sampling_params: 采样参数
-
-        Returns:
-            推理结果列表
-        """
         if model_name not in self._loaded_models:
             raise ModelNotFoundError(model_name)
 
-        engine = self._loaded_models[model_name]
-        results = await engine.generate(model_name, prompts, sampling_params)
+        self._vram_manager.mark_in_use(model_name)
+        try:
+            engine = self._loaded_models[model_name]
+            results = await engine.generate(model_name, prompts, sampling_params)
 
-        logger.info(
-            "generate_completed",
-            model=model_name,
-            num_prompts=len(prompts),
-            num_results=len(results),
-        )
-
-        return results
+            logger.info(
+                "generate_completed",
+                model=model_name,
+                num_prompts=len(prompts),
+                num_results=len(results),
+            )
+            return results
+        finally:
+            self._vram_manager.mark_idle(model_name)
 
     async def generate_stream(
         self,
@@ -181,24 +199,16 @@ class EngineManager:
         prompt: str,
         sampling_params: SamplingParams,
     ) -> AsyncIterator[str]:
-        """
-        流式生成文本
-
-        Args:
-            model_name: 模型名称
-            prompt: 提示词
-            sampling_params: 采样参数
-
-        Yields:
-            生成的文本片段
-        """
         if model_name not in self._loaded_models:
             raise ModelNotFoundError(model_name)
 
-        engine = self._loaded_models[model_name]
-
-        async for text_chunk in engine.generate_stream(model_name, prompt, sampling_params):
-            yield text_chunk
+        self._vram_manager.mark_in_use(model_name)
+        try:
+            engine = self._loaded_models[model_name]
+            async for text_chunk in engine.generate_stream(model_name, prompt, sampling_params):
+                yield text_chunk
+        finally:
+            self._vram_manager.mark_idle(model_name)
 
     def get_loaded_models(self) -> list[str]:
         """获取已加载模型列表"""
@@ -217,6 +227,98 @@ class EngineManager:
                 "loaded_models": engine.loaded_model_names,
             }
         return stats
+
+    def get_vram_status(self) -> dict:
+        """获取VRAM状态"""
+        return {
+            "available_vram_gb": round(self._vram_manager.get_available_vram_gb(), 1),
+            "safety_factor": self._vram_manager.safety_factor,
+            "loaded_models": self._vram_manager.get_loaded_models(),
+        }
+
+    def get_batch_accumulator(
+        self,
+        model_name: str,
+        sampling_params: SamplingParams,
+        max_delay_ms: float = 50.0,
+        max_batch_size: int = 8,
+    ) -> BatchAccumulator:
+        """
+        获取或创建请求合并器（per-model + per-sampling-config）。
+
+        合并器将短时间内的多个请求合并为一次批量推理调用，
+        减少 GPU 空闲等待。
+
+        Args:
+            model_name: 模型名称
+            sampling_params: 采样参数（相同参数的请求才能合并）
+            max_delay_ms: 最大等待窗口
+            max_batch_size: 最大批量大小
+        """
+        key = f"{model_name}_{sampling_params.temperature}_{sampling_params.max_tokens}"
+        if key not in self._batch_accumulators:
+            async def _batched_infer(prompts: list[str]):
+                return await self.generate(model_name, prompts, sampling_params)
+
+            self._batch_accumulators[key] = BatchAccumulator(
+                infer_fn=_batched_infer,
+                max_delay_ms=max_delay_ms,
+                max_batch_size=max_batch_size,
+            )
+        return self._batch_accumulators[key]
+
+    def get_batch_stats(self) -> dict:
+        """获取批处理统计"""
+        return {
+            key: acc.stats
+            for key, acc in self._batch_accumulators.items()
+        }
+
+    # ── 空闲淘汰 ───────────────────────────────────────
+
+    def configure_idle_eviction(self, idle_ttl_seconds: float):
+        """配置空闲超时淘汰（0=禁用）"""
+        self._vram_manager.idle_ttl_seconds = idle_ttl_seconds
+        if idle_ttl_seconds > 0:
+            logger.info("idle_eviction_enabled", ttl_seconds=idle_ttl_seconds)
+        else:
+            logger.info("idle_eviction_disabled")
+
+    async def start_idle_eviction_checker(self, check_interval_seconds: float = 30.0):
+        """启动后台空闲淘汰检查"""
+        if self._vram_manager.idle_ttl_seconds <= 0:
+            logger.info("idle_eviction_skipped", reason="ttl_disabled")
+            return
+
+        logger.info("idle_eviction_checker_started", interval_seconds=check_interval_seconds)
+
+        async def _loop():
+            while True:
+                await asyncio.sleep(check_interval_seconds)
+                idle_models = self._vram_manager.get_idle_models_to_evict()
+                for name in idle_models:
+                    logger.info("idle_evicting", model=name)
+                    await self.unload_model(name)
+
+        self._eviction_task = asyncio.create_task(_loop())
+
+    # ── GPU 监控 ──────────────────────────────────────────
+
+    async def start_gpu_monitoring(self):
+        """启动GPU后台监控"""
+        await self._gpu_monitor.start()
+
+    async def stop_gpu_monitoring(self):
+        """停止GPU监控"""
+        await self._gpu_monitor.stop()
+
+    def get_gpu_status(self) -> list[dict]:
+        """获取最新GPU状态快照"""
+        return [s.to_dict() for s in self._gpu_monitor.latest]
+
+    def get_gpu_snapshot(self) -> list[dict]:
+        """按需采集一次GPU状态（不依赖后台监控）"""
+        return [s.to_dict() for s in self._gpu_monitor.collect_snapshot()]
 
 
 # 全局单例

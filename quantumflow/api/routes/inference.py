@@ -102,13 +102,17 @@ async def generate(request: InferenceRequest) -> InferenceResponse:
                     },
                 )
 
-        # 执行推理
+        # 执行推理 — 通过 BatchAccumulator 收集并发请求，凑满/超时后批量处理
         sampling_params = _convert_sampling_params(request)
-        results = await engine_manager.generate(
-            model_name=request.model,
-            prompts=[request.prompt],
-            sampling_params=sampling_params,
+        accumulator = engine_manager.get_batch_accumulator(
+            request.model,
+            sampling_params,
+            max_delay_ms=50.0,
+            max_batch_size=8,
         )
+        results = await accumulator.submit(request.prompt)
+        if not isinstance(results, list):
+            results = [results]
 
         latency_ms = (time.time() - start_time) * 1000
 
