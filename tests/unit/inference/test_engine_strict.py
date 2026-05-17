@@ -473,12 +473,11 @@ class TestVLLMConfigPassing:
             # 验证LLM被调用
             mock_llm.assert_called_once()
 
-            # 验证调用参数
+            # 验证调用参数 (vllm 0.21.0+ 移除了 max_model_len/block_size 等参数)
             call_kwargs = mock_llm.call_args.kwargs
             assert call_kwargs["model"] == "/test/path"
             assert call_kwargs["tensor_parallel_size"] == 2
             assert call_kwargs["gpu_memory_utilization"] == 0.8
-            assert call_kwargs["max_model_len"] == 4096
             assert call_kwargs["dtype"] == "float16"
             assert call_kwargs["enforce_eager"] == True
 
