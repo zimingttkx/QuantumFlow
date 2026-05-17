@@ -29,12 +29,19 @@ router = APIRouter(prefix="/inference", tags=["Inference"])
 # 模拟请求ID生成
 _request_counter = 0
 
-# 预加载的模型映射（演示用）- 直接使用HuggingFace Hub ID
-_MODEL_MAPPING = {
-    "Qwen2.5-1.5B": "Qwen/Qwen2.5-1.5B-Instruct",
-    "Qwen2.5-3B": "Qwen/Qwen2.5-3B-Instruct",
-    "Qwen2.5-7B": "Qwen/Qwen2.5-7B-Instruct",
-}
+
+async def _ensure_model_loaded(model_name: str, start_time: float) -> tuple[bool, str]:
+    """确保模型已加载。不在推理路径中自动加载模型（会阻塞事件循环），只返回状态。"""
+    engine_manager = get_engine_manager()
+
+    if engine_manager.is_model_loaded(model_name):
+        return True, ""
+
+    # 模型未加载 — 不自动加载，返回明确错误让用户先通过 /models/load 加载
+    return False, (
+        f"模型 '{model_name}' 尚未加载。请先通过 'python -m quantumflow.cli load {model_name}' "
+        f"或在前端模型管理页面加载该模型。"
+    )
 
 
 def _generate_request_id() -> str:
@@ -75,55 +82,23 @@ async def generate(request: InferenceRequest) -> InferenceResponse:
     )
 
     try:
-        # 获取模型路径
-        model_path = _MODEL_MAPPING.get(request.model, request.model)
-
-        # 获取推理引擎管理器
         engine_manager = get_engine_manager()
 
-        # 检查模型是否已加载
+        # 确保模型已加载（含HF验证，避免死循环等待）
         if not engine_manager.is_model_loaded(request.model):
-            # 只自动加载已知的模型，未知模型直接返回mock数据避免HF Hub长时间等待
-            if request.model in _MODEL_MAPPING:
-                logger.info("auto_loading_model", model=request.model, path=model_path)
-                try:
-                    success = await engine_manager.load_model(
-                        model_name=request.model,
-                        model_path=model_path,
-                        tensor_parallel=1,
-                        gpu_memory_utilization=0.8,
-                        max_model_len=2048,
-                    )
-                    if not success:
-                        raise InferenceError(f"Failed to load model {request.model}")
-                except Exception as e:
-                    logger.warning("model_load_failed", model=request.model, error=str(e))
-                    return InferenceResponse(
-                        request_id=request_id,
-                        model=request.model,
-                        prompt=request.prompt,
-                        generated_text=f"[注意: 模型 {request.model} 未加载。当前返回模拟数据。]\n\n用户输入: {request.prompt}",
-                        finish_reason="stop",
-                        latency_ms=(time.time() - start_time) * 1000,
-                        usage={
-                            "prompt_tokens": len(request.prompt) // 4,
-                            "completion_tokens": 50,
-                            "total_tokens": len(request.prompt) // 4 + 50,
-                        },
-                    )
-            else:
-                # 未知模型：直接返回mock数据
+            ok, err = await _ensure_model_loaded(request.model, start_time)
+            if not ok:
                 return InferenceResponse(
                     request_id=request_id,
                     model=request.model,
                     prompt=request.prompt,
-                    generated_text=f"[注意: 模型 {request.model} 未加载。当前返回模拟数据。]\n\n用户输入: {request.prompt}",
-                    finish_reason="stop",
+                    generated_text=f"[模型加载失败] {err}\n\n用户输入: {request.prompt}",
+                    finish_reason="error",
                     latency_ms=(time.time() - start_time) * 1000,
                     usage={
                         "prompt_tokens": len(request.prompt) // 4,
-                        "completion_tokens": 50,
-                        "total_tokens": len(request.prompt) // 4 + 50,
+                        "completion_tokens": 0,
+                        "total_tokens": len(request.prompt) // 4,
                     },
                 )
 
@@ -194,38 +169,15 @@ async def generate_stream(request: InferenceRequest) -> StreamingResponse:
 
     async def event_generator() -> AsyncIterator[str]:
         """生成SSE事件流"""
-        model_path = _MODEL_MAPPING.get(request.model, request.model)
         engine_manager = get_engine_manager()
 
-        # 检查模型是否已加载
+        # 确保模型已加载
         if not engine_manager.is_model_loaded(request.model):
-            # 只自动加载已知模型
-            if request.model in _MODEL_MAPPING:
-                try:
-                    success = await engine_manager.load_model(
-                        model_name=request.model,
-                        model_path=model_path,
-                        tensor_parallel=1,
-                        gpu_memory_utilization=0.8,
-                        max_model_len=2048,
-                    )
-                    if not success:
-                        raise InferenceError(f"Failed to load model {request.model}")
-                except Exception as e:
-                    logger.warning("model_load_failed", model=request.model, error=str(e))
-                    error_response = StreamResponse(
-                        request_id=request_id,
-                        delta=f"模型加载失败: {str(e)}",
-                        is_final=True,
-                        finish_reason="error",
-                    )
-                    yield f"data: {error_response.model_dump_json()}\n\n"
-                    yield "data: [DONE]\n\n"
-                    return
-            else:
+            ok, err = await _ensure_model_loaded(request.model, time.time())
+            if not ok:
                 error_response = StreamResponse(
                     request_id=request_id,
-                    delta=f"模型 {request.model} 未加载",
+                    delta=f"模型加载失败: {err}",
                     is_final=True,
                     finish_reason="error",
                 )
@@ -302,48 +254,29 @@ async def batch_generate(request: BatchInferenceRequest) -> BatchInferenceRespon
         prompt_count=len(request.prompts),
     )
 
-    model_path = _MODEL_MAPPING.get(request.model, request.model)
     engine_manager = get_engine_manager()
 
-    # 检查模型是否已加载
-    model_load_failed = False
+    # 确保模型已加载
     if not engine_manager.is_model_loaded(request.model):
-        if request.model in _MODEL_MAPPING:
-            try:
-                success = await engine_manager.load_model(
-                    model_name=request.model,
-                    model_path=model_path,
-                    tensor_parallel=1,
-                    gpu_memory_utilization=0.8,
-                    max_model_len=2048,
+        ok, err = await _ensure_model_loaded(request.model, time.time())
+        if not ok:
+            mock_results = []
+            for i, prompt in enumerate(request.prompts):
+                mock_results.append(
+                    InferenceResponse(
+                        request_id=f"{batch_id}_{i}",
+                        model=request.model,
+                        prompt=prompt,
+                        generated_text=f"[模型加载失败] {err}\n\n用户输入: {prompt}",
+                        finish_reason="error",
+                        latency_ms=0,
+                        usage={
+                            "prompt_tokens": len(prompt) // 4,
+                            "completion_tokens": 0,
+                            "total_tokens": len(prompt) // 4,
+                        },
+                    )
                 )
-                if not success:
-                    raise InferenceError(f"Failed to load model {request.model}")
-            except Exception as e:
-                logger.warning("model_load_failed", model=request.model, error=str(e))
-                model_load_failed = True
-        else:
-            model_load_failed = True
-
-    # 如果模型加载失败，返回模拟数据
-    if model_load_failed:
-        mock_results = []
-        for i, prompt in enumerate(request.prompts):
-            mock_results.append(
-                InferenceResponse(
-                    request_id=f"{batch_id}_{i}",
-                    model=request.model,
-                    prompt=prompt,
-                    generated_text=f"[注意: 模型 {request.model} 未加载。当前返回模拟数据。]\n\n用户输入: {prompt}",
-                    finish_reason="stop",
-                    latency_ms=0,
-                    usage={
-                        "prompt_tokens": len(prompt) // 4,
-                        "completion_tokens": 50,
-                        "total_tokens": len(prompt) // 4 + 50,
-                    },
-                )
-            )
         return BatchInferenceResponse(
             batch_id=batch_id,
             model=request.model,

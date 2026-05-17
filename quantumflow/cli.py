@@ -388,6 +388,154 @@ def nodes(url):
 
 @cli.command()
 @click.option("--url", default="http://localhost:8000", help="API服务器地址")
+@click.option("--limit", default=20, help="返回数量")
+def hub(url, limit):
+    """浏览 HuggingFace 热门模型"""
+    async def do_hub():
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                resp = await client.get(f"{url}/api/v1/hub/trending", params={"limit": limit})
+                if resp.status_code == 200:
+                    data = resp.json()
+                    models_list = data.get("models", [])
+
+                    table = Table(show_header=True, header_style="bold magenta")
+                    table.add_column("#", style="dim")
+                    table.add_column("模型ID", style="cyan")
+                    table.add_column("下载量", style="green")
+                    table.add_column("类型", style="yellow")
+
+                    for i, m in enumerate(models_list, 1):
+                        downloads = m.get("downloads", 0) or 0
+                        dl_str = f"{downloads/1_000_000:.1f}M" if downloads >= 1_000_000 else f"{downloads/1_000:.0f}K" if downloads >= 1_000 else str(downloads)
+                        table.add_row(str(i), m.get("model_id", "")[:60], dl_str, m.get("pipeline_tag", "unknown"))
+
+                    console.print(table)
+                else:
+                    console.print(f"[red]获取失败[/red]")
+            except Exception as e:
+                console.print(f"[red]连接失败: {e}[/red]")
+
+    asyncio.run(do_hub())
+
+
+@cli.command()
+@click.argument("query")
+@click.option("--url", default="http://localhost:8000", help="API服务器地址")
+@click.option("--limit", default=15, help="返回数量")
+def search(query, url, limit):
+    """搜索 HuggingFace 模型"""
+    async def do_search():
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                console.print(f"[cyan]搜索 '{query}'...[/cyan]")
+                resp = await client.get(f"{url}/api/v1/hub/search", params={"q": query, "limit": limit})
+                if resp.status_code == 200:
+                    data = resp.json()
+                    models_list = data.get("models", [])
+
+                    if not models_list:
+                        console.print(f"[yellow]未找到匹配 '{query}' 的模型[/yellow]")
+                        return
+
+                    table = Table(show_header=True, header_style="bold magenta")
+                    table.add_column("#", style="dim")
+                    table.add_column("模型ID", style="cyan")
+                    table.add_column("下载量", style="green")
+                    table.add_column("作者", style="dim")
+
+                    for i, m in enumerate(models_list, 1):
+                        downloads = m.get("downloads", 0) or 0
+                        dl_str = f"{downloads/1_000_000:.1f}M" if downloads >= 1_000_000 else f"{downloads/1_000:.0f}K" if downloads >= 1_000 else str(downloads)
+                        table.add_row(str(i), m.get("model_id", ""), dl_str, m.get("author", "unknown"))
+
+                    console.print(table)
+                    console.print(f"\n[dim]使用 'python -m quantumflow.cli download <model_id>' 下载[/dim]")
+                else:
+                    console.print(f"[red]搜索失败[/red]")
+            except Exception as e:
+                console.print(f"[red]连接失败: {e}[/red]")
+
+    asyncio.run(do_search())
+
+
+@cli.command()
+@click.argument("model_id")
+@click.option("--url", default="http://localhost:8000", help="API服务器地址")
+def download(model_id, url):
+    """从 HuggingFace 下载模型"""
+    async def do_download():
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            try:
+                # 验证
+                console.print(f"[cyan]验证模型 '{model_id}'...[/cyan]")
+                resp = await client.get(f"{url}/api/v1/hub/validate", params={"model_id": model_id})
+                if resp.status_code == 200:
+                    val_data = resp.json()
+                    if not val_data.get("valid"):
+                        console.print(f"[red]✗ {val_data.get('error', '模型不存在')}[/red]")
+                        return
+                    console.print(f"[green]✓ 模型存在[/green]")
+
+                # 下载
+                console.print(f"[cyan]下载中... (可能需要较长时间)[/cyan]")
+                resp = await client.post(f"{url}/api/v1/hub/download", json={"model_id": model_id})
+                if resp.status_code == 200:
+                    data = resp.json()
+                    console.print(f"[green]✓ 下载完成: {data.get('local_path', '')}[/green]")
+                else:
+                    console.print(f"[red]✗ 下载失败: {resp.text}[/red]")
+            except Exception as e:
+                console.print(f"[red]连接失败: {e}[/red]")
+
+    asyncio.run(do_download())
+
+
+@cli.command()
+@click.option("--url", default="http://localhost:8000", help="API服务器地址")
+def recommend(url):
+    """基于系统配置推荐模型"""
+    async def do_recommend():
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                console.print("[cyan]检测系统配置并生成推荐...[/cyan]")
+                resp = await client.get(f"{url}/api/v1/hub/recommendations")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    sys_info = data.get("system", {})
+                    recs = data.get("recommendations", [])
+                    summary = data.get("summary", {})
+
+                    console.print("\n[bold]系统配置:[/bold]")
+                    console.print(f"  GPU: {sys_info.get('gpu_names', ['无'])[0]} × {sys_info.get('gpu_count', 0)}")
+                    console.print(f"  显存: {sys_info.get('total_vram_gb', 0)} GB (可用: {sys_info.get('free_vram_gb', 0)} GB)")
+                    console.print(f"  内存: {sys_info.get('ram_total_gb', 0)} GB")
+
+                    if recs:
+                        table = Table(show_header=True, header_style="bold magenta")
+                        table.add_column("状态", style="dim")
+                        table.add_column("模型", style="cyan")
+                        table.add_column("参数", style="yellow")
+                        table.add_column("显存需求", style="green")
+                        table.add_column("说明", style="dim")
+
+                        for m in recs[:15]:
+                            badge = "[green]✓[/green]" if m["status"] == "compatible" else "[yellow]⚠[/yellow]"
+                            table.add_row(badge, m["name"], f"{m['params']}B", f"~{m['vram_gb']}GB", m.get("description", ""))
+
+                        console.print(table)
+
+                    console.print(f"\n[dim]兼容: {summary.get('compatible_count', 0)}个 | 可跑7B: {'是' if summary.get('can_run_7b') else '否'}[/dim]")
+                else:
+                    console.print(f"[red]获取失败[/red]")
+            except Exception as e:
+                console.print(f"[red]连接失败: {e}[/red]")
+
+    asyncio.run(do_recommend())
+
+
+@cli.command()
+@click.option("--url", default="http://localhost:8000", help="API服务器地址")
 def interactive(url):
     """进入交互式终端"""
     from rich.panel import Panel
@@ -584,6 +732,156 @@ def interactive(url):
         except Exception as e:
             console.print(f"[red]连接失败: {e}[/red]")
 
+    async def do_hub_trending():
+        """显示热门模型"""
+        console.print("\n[cyan]正在获取 HuggingFace 热门模型...[/cyan]")
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(f"{url}/api/v1/hub/trending?limit=15")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    models_list = data.get("models", [])
+                    if not models_list:
+                        console.print("[yellow]无法获取热门模型[/yellow]")
+                        return
+
+                    table = Table(show_header=True, header_style="bold magenta")
+                    table.add_column("#", style="dim")
+                    table.add_column("模型ID", style="cyan")
+                    table.add_column("下载量", style="green")
+                    table.add_column("类型", style="yellow")
+
+                    for i, m in enumerate(models_list[:15], 1):
+                        downloads = m.get("downloads", 0) or 0
+                        if downloads >= 1_000_000:
+                            dl_str = f"{downloads/1_000_000:.1f}M"
+                        elif downloads >= 1_000:
+                            dl_str = f"{downloads/1_000:.0f}K"
+                        else:
+                            dl_str = str(downloads)
+                        table.add_row(
+                            str(i),
+                            m.get("model_id", "")[:60],
+                            dl_str,
+                            m.get("pipeline_tag", "unknown"),
+                        )
+
+                    console.print(table)
+                    console.print(f"\n[dim]共 {len(models_list)} 个模型[/dim]")
+                    console.print("[dim]使用 'python -m quantumflow.cli download <model_id>' 下载模型[/dim]")
+                else:
+                    console.print(f"[red]获取失败: {resp.status_code}[/red]")
+        except Exception as e:
+            console.print(f"[red]连接失败: {e}[/red]")
+
+    async def do_hub_search():
+        """搜索模型"""
+        query = Prompt.ask("[bold]输入搜索关键词[/bold]")
+        if not query.strip():
+            return
+
+        console.print(f"\n[cyan]正在搜索 '{query}'...[/cyan]")
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(f"{url}/api/v1/hub/search", params={"q": query, "limit": 15})
+                if resp.status_code == 200:
+                    data = resp.json()
+                    models_list = data.get("models", [])
+                    if not models_list:
+                        console.print(f"[yellow]未找到与 '{query}' 匹配的模型[/yellow]")
+                        return
+
+                    console.print(f"\n[bold]搜索结果 ({len(models_list)} 个):[/bold]")
+                    for i, m in enumerate(models_list, 1):
+                        downloads = m.get("downloads", 0) or 0
+                        dl_str = f"{downloads/1_000_000:.1f}M" if downloads >= 1_000_000 else f"{downloads/1_000:.0f}K" if downloads >= 1_000 else str(downloads)
+                        console.print(f"  {i}. [cyan]{m.get('model_id', '')}[/cyan] [dim]↓{dl_str}[/dim]")
+
+                    choice = Prompt.ask("输入编号下载 (Q返回)", default="Q")
+                    if choice.upper() == "Q":
+                        return
+                    try:
+                        idx = int(choice) - 1
+                        if 0 <= idx < len(models_list):
+                            await do_download_model(models_list[idx]["model_id"])
+                    except (ValueError, IndexError):
+                        console.print("[red]无效选择[/red]")
+                else:
+                    console.print(f"[red]搜索失败: {resp.status_code}[/red]")
+        except Exception as e:
+            console.print(f"[red]连接失败: {e}[/red]")
+
+    async def do_hub_recommend():
+        """显示推荐模型"""
+        console.print("[cyan]正在检测系统配置...[/cyan]")
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(f"{url}/api/v1/hub/recommendations")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    sys_info = data.get("system", {})
+                    recs = data.get("recommendations", [])
+                    summary = data.get("summary", {})
+
+                    console.print("\n[bold]系统配置:[/bold]")
+                    console.print(f"  GPU: {sys_info.get('gpu_names', ['无'])[0]} × {sys_info.get('gpu_count', 0)}")
+                    console.print(f"  总显存: {sys_info.get('total_vram_gb', 0)} GB | 可用: {sys_info.get('free_vram_gb', 0)} GB")
+                    console.print(f"  系统内存: {sys_info.get('ram_total_gb', 0)} GB")
+
+                    if recs:
+                        console.print(f"\n[bold green]推荐模型 ({len(recs)} 个):[/bold green]")
+                        for i, m in enumerate(recs[:10], 1):
+                            badge = "[green]✓[/green]" if m["status"] == "compatible" else "[yellow]⚠[/yellow]"
+                            console.print(f"  {badge} {i}. [cyan]{m['name']}[/cyan] - {m['description']} [dim]({m['params']}B, ~{m['vram_gb']}GB)[/dim]")
+
+                    console.print(f"\n[dim]兼容模型: {summary.get('compatible_count', 0)} 个 | 支持7B: {'是' if summary.get('can_run_7b') else '否'}[/dim]")
+                else:
+                    console.print(f"[red]获取推荐失败[/red]")
+        except Exception as e:
+            console.print(f"[red]连接失败: {e}[/red]")
+
+    async def do_download_model(model_id: str = None):
+        """下载模型"""
+        if not model_id:
+            model_id = Prompt.ask("[bold]输入 HuggingFace 模型ID[/bold] (如 Qwen/Qwen2.5-1.5B-Instruct)")
+        if not model_id or not model_id.strip():
+            return
+
+        console.print(f"[cyan]正在验证模型 '{model_id}'...[/cyan]")
+        try:
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                # 先验证
+                resp = await client.get(f"{url}/api/v1/hub/validate", params={"model_id": model_id})
+                if resp.status_code == 200:
+                    val_data = resp.json()
+                    if not val_data.get("valid"):
+                        console.print(f"[red]✗ {val_data.get('error', '模型不存在')}[/red]")
+                        return
+                    if val_data.get("gated"):
+                        console.print(f"[yellow]⚠ 该模型需要授权访问[/yellow]")
+                        if not Confirm.ask("继续尝试下载?", default=False):
+                            return
+
+                # 下载
+                console.print(f"[cyan]正在下载 {model_id}... (可能需要较长时间)[/cyan]")
+                resp = await client.post(f"{url}/api/v1/hub/download", json={"model_id": model_id})
+                if resp.status_code == 200:
+                    data = resp.json()
+                    console.print(f"[green]✓ 下载成功: {data.get('local_path', '')}[/green]")
+                    # 询问是否加载
+                    if Confirm.ask("是否立即加载模型?", default=True):
+                        short_name = model_id.split("/")[-1]
+                        resp = await client.post(f"{url}/api/v1/models/load",
+                            json={"model": short_name, "model_path": model_id})
+                        if resp.status_code in [200, 201]:
+                            console.print(f"[green]✓ {short_name} 加载成功[/green]")
+                        else:
+                            console.print(f"[red]加载失败: {resp.text}[/red]")
+                else:
+                    console.print(f"[red]✗ 下载失败: {resp.text}[/red]")
+        except Exception as e:
+            console.print(f"[red]连接失败: {e}[/red]")
+
     async def main_loop():
         if not await check_connection():
             console.print(f"\n[red]✗ 无法连接到 {url}[/red]")
@@ -597,8 +895,12 @@ def interactive(url):
             "2": ("文本生成 (Generate)", do_generate),
             "3": ("加载模型", do_load_model),
             "4": ("卸载模型", do_unload_model),
-            "5": ("查看状态", lambda: show_status()),
-            "6": ("退出", None),
+            "5": ("模型中心 (Hub)", do_hub_trending),
+            "6": ("搜索模型", do_hub_search),
+            "7": ("智能推荐", do_hub_recommend),
+            "8": ("下载模型", do_download_model),
+            "9": ("查看状态", lambda: show_status()),
+            "0": ("退出", None),
         }
 
         while True:

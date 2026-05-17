@@ -12,6 +12,7 @@ from quantumflow.api.models import (
 )
 from quantumflow.inference import get_engine_manager
 from quantumflow.core.constants import InferenceBackendType
+from quantumflow.api.services.hub_service import validate_model, get_downloaded_models
 
 logger = structlog.get_logger().bind(component="api_model_management")
 
@@ -23,6 +24,21 @@ MODEL_PATH_MAPPING: Dict[str, str] = {
     "Qwen2.5-3B": "Qwen/Qwen2.5-3B-Instruct",
     "Qwen2.5-7B": "Qwen/Qwen2.5-7B-Instruct",
 }
+
+
+def _resolve_model_path(model_name: str, model_path: str = None) -> str:
+    """解析模型路径"""
+    if model_path:
+        return model_path
+    # 检查已知映射
+    if model_name in MODEL_PATH_MAPPING:
+        return MODEL_PATH_MAPPING[model_name]
+    # 检查本地下载的模型
+    downloaded = {m["model_id"]: m for m in get_downloaded_models()}
+    if model_name in downloaded:
+        return downloaded[model_name]["local_path"]
+    # 直接返回用户输入（可能已经是合法HF ID）
+    return model_name
 
 
 @router.post(
@@ -40,10 +56,57 @@ async def load_model(request: LoadModelRequest) -> LoadModelResponse:
         backend=request.backend,
     )
 
-    engine_manager = get_engine_manager()
+    # 解析模型路径
+    model_path = _resolve_model_path(request.model, request.model_path)
 
-    # 获取模型路径
-    model_path = request.model_path or MODEL_PATH_MAPPING.get(request.model, request.model)
+    # 检查模型名是否可能是有效的HF模型
+    is_known = request.model in MODEL_PATH_MAPPING
+    is_hf_id = "/" in model_path
+    if not is_known and not is_hf_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": {
+                    "code": "INVALID_MODEL_NAME",
+                    "message": (
+                        f"模型 '{request.model}' 不在已知模型列表中，也不是有效的HuggingFace模型ID。"
+                        f"请使用 'org/model_name' 格式指定HuggingFace模型，或先通过模型中心搜索和下载。"
+                    ),
+                }
+            },
+        )
+
+    # 验证模型是否存在（在HF上），避免陷入等待死循环
+    # 已知的内置映射模型跳过HF验证
+    if not is_known and is_hf_id:
+        try:
+            validation = await validate_model(model_path)
+            if not validation["valid"]:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "error": {
+                            "code": "MODEL_NOT_FOUND",
+                            "message": validation["error"] or f"模型 '{model_path}' 在HuggingFace上不存在",
+                        }
+                    },
+                )
+            if validation["gated"]:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "error": {
+                            "code": "MODEL_GATED",
+                            "message": f"模型 '{model_path}' 需要授权，请先在HuggingFace上申请权限并登录",
+                        }
+                    },
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            pass  # HF验证不可用时跳过，直接尝试加载
+
+    engine_manager = get_engine_manager()
 
     try:
         success = await engine_manager.load_model(
@@ -71,6 +134,8 @@ async def load_model(request: LoadModelRequest) -> LoadModelResponse:
                 detail=f"Failed to load model {request.model}",
             )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("model_load_error", model=request.model, error=str(e))
         raise HTTPException(
@@ -138,11 +203,14 @@ async def get_model_status() -> ModelStatusResponse:
     "/list",
     response_model=Dict,
     summary="可用模型列表",
-    description="获取支持的模型列表",
+    description="获取支持的模型列表（含已下载的模型）",
 )
 async def list_available_models() -> Dict:
     """获取可用模型列表"""
+    downloaded = get_downloaded_models()
     return {
         "available_models": list(MODEL_PATH_MAPPING.keys()),
         "mappings": MODEL_PATH_MAPPING,
+        "downloaded_models": [m["model_id"] for m in downloaded],
+        "downloaded_count": len(downloaded),
     }

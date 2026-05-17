@@ -611,6 +611,7 @@
             <button class="tab active" data-tab="chat">💬 对话</button>
             <button class="tab" data-tab="generate">✍️ 文本生成</button>
             <button class="tab" data-tab="models">🤖 模型管理</button>
+            <button class="tab" data-tab="hub">🔍 模型中心</button>
             <button class="tab" data-tab="cluster">🖥️ 集群</button>
         </div>
 
@@ -700,6 +701,43 @@
             </div>
         </div>
 
+        <!-- Hub Panel -->
+        <div class="panel" id="panel-hub">
+            <!-- Recommendations -->
+            <div class="card">
+                <div class="card-title">🎯 智能推荐 <span style="font-size:0.75rem;color:var(--text-secondary);">基于你的系统配置</span></div>
+                <div id="recommendationsSection">
+                    <div class="loading"></div> 检测系统配置中...
+                </div>
+            </div>
+
+            <!-- Search -->
+            <div class="card">
+                <div class="card-title">🔎 搜索模型</div>
+                <div style="display:flex;gap:0.5rem;margin-bottom:1rem;">
+                    <input type="text" class="form-input" id="hubSearchInput" placeholder="输入模型名搜索 HuggingFace..." style="flex:1;" onkeypress="if(event.key==='Enter')searchHub()">
+                    <button class="btn btn-primary" id="hubSearchBtn" onclick="searchHub()">搜索</button>
+                </div>
+                <div id="hubSearchResults"></div>
+            </div>
+
+            <!-- Trending -->
+            <div class="card">
+                <div class="card-title">🔥 HuggingFace 热门模型</div>
+                <div id="trendingSection">
+                    <div class="loading"></div> 加载中...
+                </div>
+            </div>
+
+            <!-- Downloaded -->
+            <div class="card">
+                <div class="card-title">📦 本地已下载模型</div>
+                <div id="downloadedSection">
+                    <div class="loading"></div> 加载中...
+                </div>
+            </div>
+        </div>
+
         <!-- Cluster Panel -->
         <div class="panel" id="panel-cluster">
             <div class="card">
@@ -736,6 +774,11 @@
                     document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
                     tab.classList.add('active');
                     document.getElementById(`panel-${tab.dataset.tab}`).classList.add('active');
+
+                    // Load hub data when hub tab is clicked
+                    if (tab.dataset.tab === 'hub') {
+                        loadHubData();
+                    }
                 });
             });
         }
@@ -1054,7 +1097,260 @@
             btn.innerHTML = '生成';
         }
 
+        // Hub
+        let hubModelsCache = [];
+
+        async function loadHubData() {
+            await Promise.all([
+                loadRecommendations(),
+                loadTrending(),
+                loadDownloaded()
+            ]);
+        }
+
+        async function loadRecommendations() {
+            try {
+                const res = await fetch(`${API_BASE}/hub/recommendations`);
+                const data = await res.json();
+                const section = document.getElementById('recommendationsSection');
+
+                if (!data.recommendations || data.recommendations.length === 0) {
+                    section.innerHTML = '<div style="color:var(--text-secondary);">暂无推荐</div>';
+                    return;
+                }
+
+                const sys = data.system;
+                const summary = data.summary;
+
+                let html = `<div style="background:var(--bg-input);border-radius:8px;padding:1rem;margin-bottom:1rem;">
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:0.75rem;">
+                        <div><span style="color:var(--text-secondary);font-size:0.75rem;">GPU</span><br>${sys.gpu_names?.[0] || '无'} × ${sys.gpu_count}</div>
+                        <div><span style="color:var(--text-secondary);font-size:0.75rem;">总显存</span><br>${sys.total_vram_gb} GB</div>
+                        <div><span style="color:var(--text-secondary);font-size:0.75rem;">可用显存</span><br>${sys.free_vram_gb} GB</div>
+                        <div><span style="color:var(--text-secondary);font-size:0.75rem;">系统内存</span><br>${sys.ram_total_gb} GB</div>
+                    </div>
+                </div>`;
+
+                html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:0.75rem;">';
+                data.recommendations.slice(0, 8).forEach(m => {
+                    const badge = m.status === 'compatible' ? '<span class="model-status ready">✓ 可运行</span>'
+                        : m.status === 'tight' ? '<span class="model-status loading">⚠ 勉强</span>'
+                        : '<span class="model-status not_loaded">✗ 超限</span>';
+                    const downloadBtn = m.from_hub ? `<button class="btn btn-success" style="font-size:0.75rem;padding:0.25rem 0.75rem;" onclick="downloadFromHub('${m.model_id}')">下载</button>` : '';
+                    html += `
+                        <div style="background:var(--bg-input);border-radius:8px;padding:1rem;">
+                            <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:0.5rem;">
+                                <strong style="font-size:0.9rem;">${m.name}</strong>
+                                ${badge}
+                            </div>
+                            <div style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:0.5rem;">${m.description}</div>
+                            <div style="font-size:0.75rem;display:flex;justify-content:space-between;align-items:center;">
+                                <span>${m.params}B 参数 · ~${m.vram_gb}GB 显存</span>
+                                ${downloadBtn}
+                            </div>
+                        </div>`;
+                });
+                html += '</div>';
+
+                section.innerHTML = html;
+            } catch (e) {
+                document.getElementById('recommendationsSection').innerHTML = `<div class="error">加载失败: ${e.message}</div>`;
+            }
+        }
+
+        async function loadTrending() {
+            try {
+                const res = await fetch(`${API_BASE}/hub/trending?limit=20`);
+                const data = await res.json();
+                const section = document.getElementById('trendingSection');
+
+                if (!data.models || data.models.length === 0) {
+                    section.innerHTML = '<div style="color:var(--text-secondary);">无法获取热门模型</div>';
+                    return;
+                }
+
+                hubModelsCache = data.models;
+
+                let html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:0.75rem;">';
+                data.models.forEach(m => {
+                    const downloads = formatNumber(m.downloads || 0);
+                    const likes = m.likes ? '❤️ ' + formatNumber(m.likes) : '';
+                    html += `
+                        <div style="background:var(--bg-input);border-radius:8px;padding:1rem;">
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+                                <strong style="font-size:0.9rem;" title="${m.model_id}">${truncateName(m.model_id, 35)}</strong>
+                            </div>
+                            <div style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:0.5rem;">
+                                下载: ${downloads} · 类型: ${m.pipeline_tag || 'unknown'} ${likes ? '· ' + likes : ''}
+                            </div>
+                            <div style="font-size:0.75rem;display:flex;gap:0.5rem;">
+                                <button class="btn btn-secondary" style="font-size:0.75rem;padding:0.25rem 0.75rem;" onclick="validateHubModel('${m.model_id}')">验证</button>
+                                <button class="btn btn-success" style="font-size:0.75rem;padding:0.25rem 0.75rem;" onclick="downloadFromHub('${m.model_id}')">下载</button>
+                                <button class="btn btn-primary" style="font-size:0.75rem;padding:0.25rem 0.75rem;" onclick="loadHubModel('${m.model_id}')">加载</button>
+                            </div>
+                        </div>`;
+                });
+                html += '</div>';
+
+                section.innerHTML = html;
+            } catch (e) {
+                document.getElementById('trendingSection').innerHTML = `<div class="error">加载失败: ${e.message}</div>`;
+            }
+        }
+
+        async function loadDownloaded() {
+            try {
+                const res = await fetch(`${API_BASE}/hub/downloaded`);
+                const data = await res.json();
+                const section = document.getElementById('downloadedSection');
+
+                if (!data.models || data.models.length === 0) {
+                    section.innerHTML = '<div style="color:var(--text-secondary);">暂无本地下载的模型。从上方热门列表或搜索中下载模型。</div>';
+                    return;
+                }
+
+                let html = '<div style="display:grid;gap:0.75rem;">';
+                data.models.forEach(m => {
+                    html += `
+                        <div style="background:var(--bg-input);border-radius:8px;padding:1rem;display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <strong>${m.model_id}</strong>
+                                <div style="font-size:0.75rem;color:var(--text-secondary);">${m.size_gb} GB</div>
+                            </div>
+                            <button class="btn btn-primary" style="font-size:0.75rem;padding:0.25rem 0.75rem;" onclick="loadHubModel('${m.model_id}')">加载</button>
+                        </div>`;
+                });
+                html += '</div>';
+
+                section.innerHTML = html;
+            } catch (e) {
+                document.getElementById('downloadedSection').innerHTML = `<div class="error">加载失败: ${e.message}</div>`;
+            }
+        }
+
+        async function searchHub() {
+            const query = document.getElementById('hubSearchInput').value.trim();
+            if (!query) return;
+
+            const btn = document.getElementById('hubSearchBtn');
+            const section = document.getElementById('hubSearchResults');
+
+            btn.disabled = true;
+            btn.innerHTML = '<div class="loading"></div> 搜索中...';
+            section.innerHTML = '';
+
+            try {
+                const res = await fetch(`${API_BASE}/hub/search?q=${encodeURIComponent(query)}&limit=20`);
+                const data = await res.json();
+
+                if (!data.models || data.models.length === 0) {
+                    section.innerHTML = '<div style="color:var(--text-secondary);margin-top:1rem;">未找到匹配的模型</div>';
+                } else {
+                    let html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:0.75rem;margin-top:1rem;">';
+                    data.models.forEach(m => {
+                        html += `
+                            <div style="background:var(--bg-input);border-radius:8px;padding:1rem;">
+                                <strong style="font-size:0.9rem;" title="${m.model_id}">${truncateName(m.model_id, 35)}</strong>
+                                <div style="font-size:0.75rem;color:var(--text-secondary);margin:0.5rem 0;">下载: ${formatNumber(m.downloads || 0)}</div>
+                                <div style="font-size:0.75rem;display:flex;gap:0.5rem;">
+                                    <button class="btn btn-secondary" style="font-size:0.75rem;padding:0.25rem 0.75rem;" onclick="validateHubModel('${m.model_id}')">验证</button>
+                                    <button class="btn btn-success" style="font-size:0.75rem;padding:0.25rem 0.75rem;" onclick="downloadFromHub('${m.model_id}')">下载</button>
+                                    <button class="btn btn-primary" style="font-size:0.75rem;padding:0.25rem 0.75rem;" onclick="loadHubModel('${m.model_id}')">加载</button>
+                                </div>
+                            </div>`;
+                    });
+                    html += '</div>';
+                    section.innerHTML = html;
+                }
+            } catch (e) {
+                section.innerHTML = `<div class="error">搜索失败: ${e.message}</div>`;
+            }
+
+            btn.disabled = false;
+            btn.innerHTML = '搜索';
+        }
+
+        async function validateHubModel(modelId) {
+            try {
+                const res = await fetch(`${API_BASE}/hub/validate?model_id=${encodeURIComponent(modelId)}`);
+                const data = await res.json();
+
+                if (data.valid) {
+                    alert(`✓ 模型 "${modelId}" 在 HuggingFace 上存在${data.gated ? ' (需要授权)' : ''}`);
+                } else {
+                    alert(`✗ ${data.error || '模型不存在'}`);
+                }
+            } catch (e) {
+                alert(`验证失败: ${e.message}`);
+            }
+        }
+
+        async function downloadFromHub(modelId) {
+            const status = document.getElementById('hubDownloadStatus');
+            try {
+                // Show status
+                if (!status) {
+                    const div = document.createElement('div');
+                    div.id = 'hubDownloadStatus';
+                    div.style.cssText = 'position:fixed;bottom:1rem;right:1rem;background:var(--bg-card);border:1px solid var(--primary);border-radius:8px;padding:1rem;z-index:1000;';
+                    document.body.appendChild(div);
+                }
+                document.getElementById('hubDownloadStatus').innerHTML = `<div class="loading"></div> 正在下载 ${modelId}...`;
+
+                const res = await fetch(`${API_BASE}/hub/download`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model_id: modelId })
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+                    document.getElementById('hubDownloadStatus').innerHTML = `<div class="success">✓ ${modelId} 下载完成！</div>`;
+                    await loadDownloaded();
+                    setTimeout(() => document.getElementById('hubDownloadStatus').remove(), 3000);
+                } else {
+                    document.getElementById('hubDownloadStatus').innerHTML = `<div class="error">下载失败: ${data.error || data.detail || '未知错误'}</div>`;
+                }
+            } catch (e) {
+                document.getElementById('hubDownloadStatus').innerHTML = `<div class="error">下载失败: ${e.message}</div>`;
+            }
+        }
+
+        async function loadHubModel(modelId) {
+            const shortName = modelId.split('/').pop();
+            try {
+                const res = await fetch(`${API_BASE}/models/load`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model: shortName, model_path: modelId })
+                });
+
+                const data = await res.json();
+
+                if (res.ok) {
+                    alert(`✓ 模型 ${shortName} 加载成功！`);
+                    await loadModelStatus();
+                } else {
+                    alert(`加载失败: ${JSON.stringify(data.detail || data)}`);
+                }
+            } catch (e) {
+                alert(`加载失败: ${e.message}`);
+            }
+        }
+
         // Utils
+        function formatNumber(n) {
+            if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+            if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+            return n.toString();
+        }
+
+        function truncateName(name, maxLen) {
+            if (name.length <= maxLen) return name;
+            return name.substring(0, maxLen - 3) + '...';
+        }
+
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
