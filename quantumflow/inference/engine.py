@@ -27,7 +27,7 @@ class ModelConfig:
     max_num_batched_tokens: int = 8192
     max_num_seqs: int = 256
     enforce_eager: bool = False
-    enable_chunked_prefill: bool = True
+    enable_chunked_prefill: bool = False  # 默认禁用（有 bug，需配合模型的 chunked prefill 支持）
 
     # HuggingFace 特有配置
     prefill_chunk_size: int = 512  # 分块预填充的块大小（tokens），超过此长度自动分块

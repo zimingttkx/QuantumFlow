@@ -97,3 +97,5 @@
 | **7B 模型测试** | Qwen2.5-7B 推理性能测试 | 📋 规划中 |
 | **FlashAttention 对比** | 安装 FlashAttention 后与标准 Attention 对比 | 📋 规划中 |
 | **多 GPU 测试** | 多卡并行推理性能测试 | 📋 规划中 |
+| **长 Prompt 场景** | 2048+ tokens 的长上下文推理测试 | 📋 规划中 |
+| **Chunked Prefill 完善** | 当前实现有 bug，正确实现需参考 vLLM 的分块预填充逻辑 | 📋 规划中 |

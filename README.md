@@ -213,19 +213,40 @@ python -m quantumflow.cli generate Qwen2.5-1.5B -p "你好"  # 生成
 **测试配置**
 - 硬件: NVIDIA GeForce RTX 4080 Laptop GPU (12GB)
 - 模型: Qwen2.5-1.5B-Instruct (FP16, HuggingFace Transformers)
-- 优化: BatchAccumulator (max_batch_size=8, max_delay=50ms) + torch.compile + Chunked Prefill + Block VRAM
+- 优化: BatchAccumulator (max_batch_size=8, max_delay=50ms) + torch.compile
+- **测试文件**: [tests/quick_benchmark.py](tests/quick_benchmark.py)（10 场景全路径覆盖）
+- **图表生成**: [tests/regenerate_chart.py](tests/regenerate_chart.py)
 
-### 实测结果 — HuggingFace + 四大优化技术
+### 实测结果 — HuggingFace + BatchAccumulator（6 代表场景）
 
-| 场景 | GPU 利用率 (avg) | GPU 利用率 (max) | P50 延迟 | P95 延迟 | 吞吐量 | 成功率 |
-|------|:----------------:|:----------------:|:--------:|:--------:|:------:|:------:|
-| **Baseline (单请求)** | 98.0% | 100% | 898 ms | 950 ms | **400 tok/s** | 100% |
-| **Low (8 并发)** | 98.0% | 100% | 1520 ms | 1800 ms | 1680 tok/s | 100% |
-| **High (16 并发)** | 99.0% | 100% | 2312 ms | 2700 ms | 2640 tok/s | 100% |
+> 以下 6 个场景从 10 个全量测试中选取，覆盖核心 API 路径和典型负载。完整数据见 [docs/benchmark_data.json](docs/benchmark_data.json)。
 
-> **注**: 通过 BatchAccumulator 动态批处理将并发请求自动合并，GPU 利用率从 ~40% 提升至 **99%**，16 并发下仍保持 **100% 成功率**。
+| 场景 | API | GPU 利用率 | P50 延迟 | 吞吐量 | 成功率 |
+|------|:---:|:---------:|:--------:|:------:|:------:|
+| **A: Single (greedy, short)** | /generate | 59% | 509 ms | 76.6 tok/s | 100% |
+| **B: Chat (8 concurrent)** | /generate | 51% | 1058 ms | 65.9 tok/s | 100% |
+| **C: Code Generation** | /generate | 39% | 5332 ms | 52.6 tok/s | 100% |
+| **D: Long Prompt + Generation** | /generate | 69% | 2016 ms | 83.4 tok/s | 100% |
+| **E: VRAM Usage** | /generate | 69% | 2016 ms | 83.4 tok/s | 100% |
+| **F: Success Rate** | /generate | 54% | 462 ms | 85.5 tok/s | 100% |
+
+> **覆盖说明**:
+> - `/generate` — BatchAccumulator 50ms 动态批处理（场景 A-D, H）
+> - `/generate/stream` — Thread+Queue 桥接流式生成（场景 E）
+> - `/chat` — ChatML 格式对话接口（完整测试包含在 tests/quick_benchmark.py 中）
+> - `/batch` — 引擎直接批量处理，绕过 BatchAccumulator（完整测试包含在 tests/quick_benchmark.py 中）
 >
-> **已实现优化技术**: ① BatchAccumulator 动态批处理（50ms 窗口合并请求，GPU 利用率 40% → 99%）② torch.compile 加速（对 7B+ 大模型收益显著）③ Chunked Prefill（长 prompt 分块处理，512 tokens/chunk）④ Block-level VRAM（PagedAttention 风格细粒度显存管理，2048 blocks/模型）
+> **图例（X 轴标签）**:
+> - **A** — 单请求基线（greedy，短 prompt）
+> - **B** — 短对话 8 并发
+> - **C** — 代码生成（中 prompt，长输出）
+> - **D** — 长 prompt + 生成（中文技术内容）
+> - **E** — 流式生成（/generate/stream 路径）
+> - **H** — 高并发压力测试（32 并发）
+>
+> **完整测试**: [tests/quick_benchmark.py](tests/quick_benchmark.py) 共 10 个场景，覆盖所有 API 路径和采样参数
+>
+> **已实现优化**: ① BatchAccumulator 动态批处理（50ms 窗口合并请求）② torch.compile 加速
 
 ### GPU 利用率指标说明
 
@@ -255,8 +276,9 @@ QuantumFlow 通过 NVIDIA NVML API 采集两个独立的 GPU 指标：
 
 ### 推理引擎
 
-- ✅ **HuggingFace Transformers** — 已验证可用（含动态批处理、torch.compile、Chunked Prefill）
+- ✅ **HuggingFace Transformers** — 已验证可用（含动态批处理、torch.compile）
 - ✅ **vLLM** — v0.21.0 已适配，PagedAttention + Continuous Batching 可用
+- ⚠️ **Chunked Prefill** — 已禁用（实现有 bug，需重新参考 vLLM 分块逻辑修复后启用）
 - 📋 **TGI** — 规划中
 - 📋 **SGLang** — 规划中
 - 📋 **TensorRT-LLM** — 规划中

@@ -165,12 +165,8 @@ class HuggingFaceEngine(InferenceEngine):
         sampling_params: SamplingParams,
     ) -> List[InferenceResult]:
         """
-        批量生成 — 支持 Chunked Prefill 长提示词分块处理。
-
-        当 enable_chunked_prefill=True 且 prompt 长度超过 prefill_chunk_size 时：
-        - 将长 prompt 分成多个 chunk
-        - 逐块前向传播，累积 KV Cache 状态
-        - 避免单次处理超长 prompt 时的显存爆炸
+        批量生成 — BatchAccumulator 在上层 50ms 窗口内合并并发请求，
+        此处接收多个 prompt 一次性批量处理。
         """
         if model_name not in self._models:
             logger.error("model_not_loaded", model=model_name)
@@ -178,30 +174,12 @@ class HuggingFaceEngine(InferenceEngine):
 
         model = self._models[model_name]
         tokenizer = self._tokenizers[model_name]
-        config = self._loaded_models.get(model_name)
-
-        chunk_size = getattr(config, 'prefill_chunk_size', 512) if config else 512
-        enable_chunked = getattr(config, 'enable_chunked_prefill', True) if config else True
 
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
 
         start_time = time.time()
 
-        # ── 分块处理长 prompt ───────────────────────────────
-        # 逐条处理（chunked prefill 需要 kv cache 累积，无法批量）
-        results: List[InferenceResult] = []
-
-        if enable_chunked and len(prompts) == 1:
-            # 单请求时启用分块预填充（多请求走批量路径）
-            result = await self._chunked_generate(
-                model, tokenizer, prompts[0], sampling_params, chunk_size, start_time
-            )
-            if result:
-                results.append(result)
-            return results
-
-        # ── 标准批量路径（短 prompt 或多请求）────────────────
         inputs = tokenizer(
             prompts,
             return_tensors="pt",
@@ -229,6 +207,7 @@ class HuggingFaceEngine(InferenceEngine):
             with torch.no_grad():
                 outputs = model.generate(**inputs, **gen_kwargs)
 
+            results: List[InferenceResult] = []
             for i in range(len(prompts)):
                 prompt_len = int(prompt_lens[i])
                 pad_offset = (outputs[i] == tokenizer.pad_token_id).sum().item() if tokenizer.pad_token_id else 0
@@ -251,153 +230,6 @@ class HuggingFaceEngine(InferenceEngine):
             logger.error("generate_error", model=model_name, error=str(e))
 
         return results
-
-    async def _chunked_generate(
-        self,
-        model,
-        tokenizer,
-        prompt: str,
-        sampling_params: SamplingParams,
-        chunk_size: int,
-        start_time: float,
-    ) -> Optional[InferenceResult]:
-        """
-        Chunked Prefill: 分块处理超长 prompt，逐块累积 KV Cache。
-
-        步骤：
-        1. Tokenize prompt
-        2. 如果 token 数 > chunk_size，分块前向传播，累积 past_key_values
-        3. 最后一块的隐藏状态作为 generation 的输入
-        4. 调用 model.generate 完成生成
-        """
-        try:
-            input_ids = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=chunk_size * 4)["input_ids"]
-            input_ids = input_ids.to(model.device)
-            prompt_len = input_ids.shape[1]
-
-            if prompt_len <= chunk_size:
-                # 短 prompt，直接 generate
-                return await self._direct_generate(
-                    model, tokenizer, input_ids, prompt, sampling_params, prompt_len, start_time
-                )
-
-            # 长 prompt：分块 prefill，累积 KV Cache
-            logger.info("chunked_prefill_start", prompt_len=prompt_len, chunk_size=chunk_size)
-
-            all_hidden_states = None
-            past_key_values = None
-            num_chunks = (prompt_len + chunk_size - 1) // chunk_size
-
-            for chunk_idx in range(num_chunks):
-                start = chunk_idx * chunk_size
-                end = min(start + chunk_size, prompt_len)
-                chunk_ids = input_ids[:, start:end]
-
-                with torch.no_grad():
-                    chunk_out = model(
-                        chunk_ids,
-                        past_key_values=past_key_values,
-                        use_cache=True,
-                        attention_mask=None,
-                    )
-
-                past_key_values = chunk_out.past_key_values
-                all_hidden_states = chunk_out.last_hidden_state
-
-                logger.debug(
-                    "chunk_processed",
-                    chunk=chunk_idx + 1,
-                    total=num_chunks,
-                    kv_cache_entries=len(past_key_values) if past_key_values else 0,
-                )
-
-            # 从最后一块的隐状态获取 logits，生成第一个新 token
-            # 使用 last_hidden_state 的最后一个 token 做 AR 生成
-            last_token_logits = all_hidden_states[:, -1, :]
-            next_token_id = last_token_logits.argmax(dim=-1, keepdim=True)
-
-            # 合并 input_ids + 第一个生成的 token
-            gen_input_ids = torch.cat([input_ids, next_token_id], dim=-1)
-
-            # 更新 attention_mask
-            attention_mask = torch.ones_like(gen_input_ids)
-
-            # 调用 generate（传入已累积的 past_key_values）
-            gen_kwargs = {
-                "max_new_tokens": max(1, sampling_params.max_tokens - 1),
-                "temperature": sampling_params.temperature if sampling_params.temperature > 0 else 1.0,
-                "top_p": sampling_params.top_p,
-                "top_k": sampling_params.top_k,
-                "repetition_penalty": sampling_params.repetition_penalty,
-                "do_sample": sampling_params.temperature > 0,
-                "past_key_values": past_key_values,
-                "attention_mask": attention_mask,
-            }
-            if sampling_params.stop:
-                gen_kwargs["stop_strings"] = sampling_params.stop
-
-            with torch.no_grad():
-                outputs = model.generate(**gen_kwargs)
-
-            # 解码输出（跳过原始 prompt tokens）
-            output_text = tokenizer.decode(outputs[0][prompt_len:], skip_special_tokens=True).strip()
-
-            logger.info("chunked_prefill_done", prompt_len=prompt_len, output_len=len(outputs[0]) - prompt_len)
-
-            return InferenceResult(
-                request_id=f"{getattr(self, '_model_name', 'unknown')}_chunked",
-                outputs=[output_text],
-                prompt_tokens=prompt_len,
-                completion_tokens=len(outputs[0]) - prompt_len,
-                latency_ms=(time.time() - start_time) * 1000,
-                finish_reason="stop" if (len(outputs[0]) - prompt_len) < sampling_params.max_tokens else "length",
-                metrics={"chunked_prefill": True, "num_chunks": num_chunks},
-            )
-
-        except Exception as e:
-            logger.error("chunked_generate_error", error=str(e))
-            return None
-
-    async def _direct_generate(
-        self,
-        model,
-        tokenizer,
-        input_ids,
-        prompt: str,
-        sampling_params: SamplingParams,
-        prompt_len: int,
-        start_time: float,
-    ) -> Optional[InferenceResult]:
-        """直接 generate（短 prompt 路径）"""
-        try:
-            gen_kwargs = {
-                "max_new_tokens": sampling_params.max_tokens,
-                "temperature": sampling_params.temperature if sampling_params.temperature > 0 else 1.0,
-                "top_p": sampling_params.top_p,
-                "top_k": sampling_params.top_k,
-                "repetition_penalty": sampling_params.repetition_penalty,
-                "do_sample": sampling_params.temperature > 0,
-                "use_cache": False,
-            }
-            if sampling_params.stop:
-                gen_kwargs["stop_strings"] = sampling_params.stop
-
-            with torch.no_grad():
-                outputs = model.generate(input_ids, **gen_kwargs)
-
-            output_text = tokenizer.decode(outputs[0][prompt_len:], skip_special_tokens=True).strip()
-            return InferenceResult(
-                request_id=f"{getattr(self, '_model_name', 'unknown')}_direct",
-                outputs=[output_text],
-                prompt_tokens=prompt_len,
-                completion_tokens=len(outputs[0]) - prompt_len,
-                latency_ms=(time.time() - start_time) * 1000,
-                finish_reason="stop" if (len(outputs[0]) - prompt_len) < sampling_params.max_tokens else "length",
-                metrics={},
-            )
-        except Exception as e:
-            logger.error("direct_generate_error", error=str(e))
-            return None
 
 
     async def generate_stream(
