@@ -1,9 +1,16 @@
-"""深度验证测试：模型加载 → 推理 → 流式 → 卸载 全流程"""
+"""深度验证测试：模型加载 → 推理 → 流式 → 卸载 全流程
+
+注意：本脚本是手动运行集成测试，不是 pytest 测试文件。
+用法: python tests/deep_test.py
+"""
 import asyncio
 import time
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import pytest
+pytestmark = pytest.mark.skip(reason="手动集成测试脚本，需 GPU + 模型下载，通过 python tests/deep_test.py 运行")
 
 from quantumflow.inference.engine import ModelConfig, SamplingParams, InferenceResult
 from quantumflow.inference.backends.huggingface import HuggingFaceEngine

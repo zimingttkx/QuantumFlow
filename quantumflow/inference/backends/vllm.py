@@ -32,6 +32,7 @@ def _build_vllm_llm(config: ModelConfig):
         quantization=config.quantization,
         trust_remote_code=config.trust_remote_code,
         enforce_eager=getattr(config, 'enforce_eager', False),
+        # vLLM 0.21+ 的 Chunked Prefill 是内置默认行为，无需显式开关
     )
 
 
@@ -120,7 +121,15 @@ class VLLMEngine(InferenceEngine):
     ) -> List[InferenceResult]:
         if model_name not in self._llm_instances:
             logger.error("model_not_loaded", model=model_name)
-            return []
+            return [
+                InferenceResult(
+                    request_id=f"{model_name}_{i}",
+                    outputs=[f"[vLLM错误: 模型未加载]"],
+                    prompt_tokens=0, completion_tokens=0, latency_ms=0,
+                    finish_reason="error", metrics={},
+                )
+                for i in range(len(prompts))
+            ]
 
         try:
             from vllm import SamplingParams as VLLMSamplingParams
@@ -148,12 +157,14 @@ class VLLMEngine(InferenceEngine):
             for i, output in enumerate(outputs):
                 output_text = output.outputs[0].text
                 finish_reason = output.outputs[0].finish_reason or "stop"
+                prompt_tokens = len(output.prompt_token_ids) if output.prompt_token_ids is not None else 0
+                completion_tokens = len(output.outputs[0].token_ids) if output.outputs[0].token_ids is not None else 0
                 results.append(
                     InferenceResult(
                         request_id=f"{model_name}_{i}",
                         outputs=[output_text],
-                        prompt_tokens=len(output.prompt_token_ids),
-                        completion_tokens=len(output.outputs[0].token_ids),
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
                         latency_ms=latency_ms,
                         finish_reason=finish_reason,
                         metrics={},
@@ -164,7 +175,15 @@ class VLLMEngine(InferenceEngine):
 
         except Exception as e:
             logger.error("generate_error", model=model_name, error=str(e))
-            return []
+            return [
+                InferenceResult(
+                    request_id=f"{model_name}_{i}",
+                    outputs=[f"[vLLM错误: {str(e)}]"],
+                    prompt_tokens=0, completion_tokens=0, latency_ms=0,
+                    finish_reason="error", metrics={},
+                )
+                for i in range(len(prompts))
+            ]
 
     async def generate_stream(
         self,
@@ -175,7 +194,7 @@ class VLLMEngine(InferenceEngine):
         """流式生成 — 在 executor 中完成推理，逐词 yield 以模拟 token 级流式输出"""
         if model_name not in self._llm_instances:
             logger.error("model_not_loaded", model=model_name)
-            return
+            return  # async generator 提前结束，async for 会正常结束
 
         try:
             from vllm import SamplingParams as VLLMSamplingParams
@@ -217,13 +236,11 @@ class VLLMEngine(InferenceEngine):
             return {}
 
         try:
-            llm = self._llm_instances[model_name]
-            stats = llm.get_stats()
-            return {
-                "num_requests": stats.get("num_requests", 0),
-                "num_running": stats.get("num_running", 0),
-                "num_waiting": stats.get("num_waiting", 0),
-                "gpu_memory_usage": stats.get("gpu_memory_usage", 0),
-            }
+            import torch
+            stats: Dict[str, float] = {}
+            if torch.cuda.is_available():
+                stats["gpu_memory_allocated"] = torch.cuda.memory_allocated() / (1024**3)
+                stats["gpu_memory_reserved"] = torch.cuda.memory_reserved() / (1024**3)
+            return stats
         except Exception:
             return {}

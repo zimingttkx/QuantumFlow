@@ -266,7 +266,15 @@ class Scheduler:
 
         # TODO: 实际发送到Worker
         # 这里暂时模拟
-        asyncio.create_task(self._simulate_execution(request_id))
+        # 注意：fire-and-forget 模式下，任务失败会被静默忽略
+        # 后续应接入真正的 Worker 通信并跟踪任务状态
+        task = asyncio.create_task(self._simulate_execution(request_id))
+        # 临时方案：添加任务完成回调以便观察状态
+        task.add_done_callback(
+            lambda t: logger.debug("simulated_execution_done", request_id=request_id)
+            if not t.exception()
+            else logger.error("simulated_execution_failed", request_id=request_id, error=str(t.exception()))
+        )
 
     async def _handle_scheduling_failure(
         self, request: SchedulingRequest, result: SchedulingResult
@@ -274,15 +282,15 @@ class Scheduler:
         """处理调度失败"""
         request_id = request.request_id
 
-        # 重试逻辑
-        item = QueueItem(request=request, result=result, retry_count=1)
+        # 重试逻辑：递增 retry_count
+        request.retry_count += 1
 
-        if item.retry_count < self.max_retries:
+        if request.retry_count < self.max_retries:
             logger.warning(
                 "scheduling_retry",
                 request_id=request_id,
                 reason=result.reason,
-                retry_count=item.retry_count,
+                retry_count=request.retry_count,
             )
             # 重新加入队列
             self._request_counter += 1

@@ -118,7 +118,7 @@ class BlockPool:
             num_tokens -= self._blocks[block_id].num_tokens
             allocated.append(block_id)
 
-        self.stats["allocated_blocks"] = len(allocated)
+        self.stats["allocated_blocks"] += len(allocated)
         self.stats["total_requests"] += 1
         self.stats["peak_allocated"] = max(self.stats["peak_allocated"], self.stats["allocated_blocks"])
 
@@ -133,6 +133,8 @@ class BlockPool:
 
     def release(self, block_ids: List[int], request_id: str):
         """释放指定 blocks"""
+        if block_ids is None:
+            return
         for block_id in block_ids:
             if block_id in self._blocks and not self._blocks[block_id].is_free:
                 if self._blocks[block_id].owner_request_id == request_id:
@@ -481,7 +483,6 @@ class VRAMManager:
     @staticmethod
     def _estimate_param_count(model_path: str) -> int:
         """从模型名称估算参数量"""
-        # 长模式优先，避免 "1b" 误匹配 "13b"
         patterns = [
             ("0.5b", 500_000_000), ("1.5b", 1_500_000_000),
             ("2.6b", 2_600_000_000), ("3.8b", 3_800_000_000),
@@ -497,7 +498,8 @@ class VRAMManager:
         for pattern, count in patterns:
             if pattern in path_lower:
                 return count
-        return 0
+        # 无法识别时返回保守估计（约 7B），避免 VRAM 估算返回 0 从而拒绝加载
+        return 7_000_000_000
 
     @staticmethod
     def _estimate_architecture(model_path: str) -> tuple[int, int]:

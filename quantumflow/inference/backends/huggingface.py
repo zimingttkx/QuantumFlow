@@ -1,7 +1,7 @@
 """HuggingFace推理后端"""
 
 import asyncio
-from typing import List, Dict, Optional, Any, AsyncIterator
+from typing import List, Dict, Optional, Any, AsyncIterator, Tuple
 import time
 import structlog
 import torch
@@ -15,6 +15,9 @@ from quantumflow.inference.engine import (
 from quantumflow.core.constants import InferenceBackendType
 
 logger = structlog.get_logger().bind(component="hf_backend")
+
+# Chunked Prefill 阈值：超过此长度自动使用分块预填充
+CHUNKED_PREFILL_THRESHOLD_TOKENS = 512
 
 
 class HuggingFaceEngine(InferenceEngine):
@@ -82,13 +85,14 @@ class HuggingFaceEngine(InferenceEngine):
             device = "cuda" if config.dtype != "cpu" else "cpu"
             torch_dtype = self._get_torch_dtype(config.dtype)
 
-            # use trust_remote_code=False for built‑in modeling code
-            # (more reliable than cached custom code, handles rope_scaling correctly)
+            # use trust_remote_code=config.trust_remote_code
+            # 注意：某些模型需要 remote code (如 Qwen/ChatGLM 等国产模型)
+            # 但 cached custom code 可能与本地版本不一致，需要根据实际情况选择
             model = AutoModelForCausalLM.from_pretrained(
                 config.model_path,
                 dtype=torch_dtype,
                 device_map="auto" if device == "cuda" else None,
-                trust_remote_code=False,
+                trust_remote_code=config.trust_remote_code,
                 low_cpu_mem_usage=True,
             )
 
@@ -135,6 +139,76 @@ class HuggingFaceEngine(InferenceEngine):
         }
         return dtype_map.get(dtype_str, torch.float16)
 
+    def _sample_token(
+        self,
+        logits: torch.Tensor,
+        temperature: float,
+        top_p: float,
+        top_k: int,
+        repetition_penalty: float,
+    ) -> torch.Tensor:
+        """
+        从 logits 中采样下一个 token。
+
+        Args:
+            logits: [vocab_size] - 最后一个位置的 logits
+            temperature: 温度参数（0 表示 greedy）
+            top_p: Nucleus sampling 的阈值
+            top_k: Top-k 采样的 k 值
+            repetition_penalty: 重复惩罚
+
+        Returns:
+            选中的 token id [1]
+        """
+        # 应用 repetition_penalty（每个 token 只惩罚一次）
+        if repetition_penalty != 1.0:
+            prev_tokens = getattr(self, '_generated_tokens', {})
+            for tok_id in set(prev_tokens.values()):  # 使用 set 去重，避免同一 token 被多次惩罚
+                logits[tok_id] /= repetition_penalty
+
+        # Temperature 为 0 使用 greedy
+        if temperature == 0:
+            return logits.argmax().unsqueeze(0)
+
+        # 保存 greedy token 作为 fallback（当所有 token 被过滤时使用）
+        greedy_token = logits.argmax().unsqueeze(0)
+
+        # 应用 temperature
+        logits = logits / temperature
+
+        # Top-k filtering
+        if top_k > 0:
+            top_k = min(top_k, logits.size(-1))
+            topk_values, _ = torch.topk(logits, top_k)
+            threshold = topk_values[-1]
+            indices_to_remove = logits < threshold
+            logits[indices_to_remove] = float('-inf')
+
+        # Top-p (Nucleus) filtering
+        if top_p < 1.0:
+            sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+            cumsum = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
+            mask = cumsum <= top_p
+            if not mask.all():
+                first_exceed_idx = (~mask).nonzero()[0].item()
+                mask[first_exceed_idx + 1:] = False
+            indices_to_remove = sorted_indices[~mask]
+            logits[indices_to_remove] = float('-inf')
+
+        # 采样 — 如果所有 token 被过滤则回退到 greedy
+        probs = torch.softmax(logits, dim=-1)
+        if torch.isnan(probs).any():
+            return greedy_token
+        return torch.multinomial(probs, num_samples=1)
+
+    def _build_attention_mask(self, seq_len: int, past_len: int, device: torch.device) -> torch.Tensor:
+        """构建 attention mask"""
+        # 返回 [1, 1, past_len, seq_len] 的 4D mask
+        # 对于 causal LM，这应该是一个下三角矩阵（past_len 部分全 1，当前位置只看 past）
+        import inspect
+        model_cls = self.__class__
+        return None  # HuggingFace 模型内部自动处理 attention mask
+
     async def unload_model(self, model_name: str) -> bool:
         """卸载模型"""
         if model_name in self._models:
@@ -158,6 +232,141 @@ class HuggingFaceEngine(InferenceEngine):
 
         return False
 
+    async def _chunked_generate_impl(
+        self,
+        model_name: str,
+        prompt: str,
+        sampling_params: SamplingParams,
+    ) -> Tuple[str, int, int, float]:
+        """
+        Chunked Prefill 核心实现 — 使用手动 forward pass 进行自回归生成。
+
+        工作流程：
+        1. Prefill 阶段：将输入 token 分块处理，累积 past_key_values（KV cache）
+        2. Decode 阶段：使用累积的 past_key_values 逐 token 自回归生成
+
+        关键区别于旧实现：
+        - 旧实现（bug）：Prefill 累积 past_key_values 后传给 model.generate()，
+          导致 generate() 重新处理完整序列，手动累积的 KV cache 被忽略
+        - 新实现：Prefill 和 Decode 都使用 model.forward() 手动控制，
+          past_key_values 在整个生成过程中正确传递和使用
+
+        Args:
+            model_name: 模型名称
+            prompt: 输入文本
+            sampling_params: 采样参数
+
+        Returns:
+            (generated_text, prompt_tokens, completion_tokens, latency_ms)
+        """
+        start_time = time.time()
+
+        model = self._models[model_name]
+        tokenizer = self._tokenizers[model_name]
+        model_config = self._loaded_models[model_name]
+
+        device = next(model.parameters()).device
+        chunk_size = getattr(model_config, 'prefill_chunk_size', 512)
+
+        # Tokenize
+        inputs = tokenizer(prompt, return_tensors="pt")
+        input_ids = inputs["input_ids"].to(device)
+        prompt_lens = input_ids.shape[1]
+
+        if prompt_lens == 0:
+            return "", 0, 0, (time.time() - start_time) * 1000
+
+        # 追踪已生成的 token（用于 repetition penalty）
+        self._generated_tokens = {}
+
+        # ── Phase 1: Prefill（分块处理输入，累积 KV cache）──────────────
+        past_key_values = None
+        num_chunks = (prompt_lens + chunk_size - 1) // chunk_size
+
+        for chunk_idx in range(num_chunks):
+            start_pos = chunk_idx * chunk_size
+            end_pos = min(start_pos + chunk_size, prompt_lens)
+            chunk_ids = input_ids[:, start_pos:end_pos]
+
+            with torch.no_grad():
+                outputs = model(
+                    chunk_ids,
+                    past_key_values=past_key_values,
+                    use_cache=True,
+                )
+            past_key_values = outputs.past_key_values
+
+            logger.debug(
+                "chunked_prefill_chunk",
+                model=model_name,
+                chunk_idx=chunk_idx + 1,
+                num_chunks=num_chunks,
+                start_pos=start_pos,
+                end_pos=end_pos,
+            )
+
+        # ── Phase 2: Decode（自回归生成，使用累积的 KV cache）──────────
+        # 从最后一个 prefill chunk 的 logits 采样第一个 token
+        # (prefill 已经处理了全部输入，logits[:,-1,:] 即下一个 token 的分布)
+        generated_ids = []
+
+        if sampling_params.max_tokens <= 0:
+            latency_ms = (time.time() - start_time) * 1000
+            return "", prompt_lens, 0, latency_ms
+
+        first_logits = outputs.logits[:, -1, :].squeeze(0)
+        next_token_id = self._sample_token(
+            first_logits,
+            temperature=sampling_params.temperature,
+            top_p=sampling_params.top_p,
+            top_k=sampling_params.top_k,
+            repetition_penalty=1.0,
+        ).item()
+
+        if next_token_id == tokenizer.eos_token_id:
+            latency_ms = (time.time() - start_time) * 1000
+            return "", prompt_lens, 0, latency_ms
+
+        generated_ids.append(next_token_id)
+        self._generated_tokens[0] = next_token_id
+
+        for step in range(1, sampling_params.max_tokens):
+            cur_token = torch.tensor([[generated_ids[-1]]], device=device)
+
+            with torch.no_grad():
+                outputs = model(
+                    cur_token,
+                    past_key_values=past_key_values,
+                    use_cache=True,
+                )
+            past_key_values = outputs.past_key_values
+
+            logits = outputs.logits[:, -1, :].squeeze(0)
+
+            if sampling_params.repetition_penalty != 1.0:
+                for tok_id in set(generated_ids):
+                    logits[tok_id] /= sampling_params.repetition_penalty
+
+            next_token_id = self._sample_token(
+                logits,
+                temperature=sampling_params.temperature,
+                top_p=sampling_params.top_p,
+                top_k=sampling_params.top_k,
+                repetition_penalty=1.0,
+            ).item()
+
+            if next_token_id == tokenizer.eos_token_id:
+                break
+
+            generated_ids.append(next_token_id)
+            self._generated_tokens[step] = next_token_id
+
+        # Decode 生成结果
+        generated_text = tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
+        latency_ms = (time.time() - start_time) * 1000
+
+        return generated_text, prompt_lens, len(generated_ids), latency_ms
+
     async def generate(
         self,
         model_name: str,
@@ -167,67 +376,156 @@ class HuggingFaceEngine(InferenceEngine):
         """
         批量生成 — BatchAccumulator 在上层 50ms 窗口内合并并发请求，
         此处接收多个 prompt 一次性批量处理。
+
+        策略：
+        - 短 prompt（<= CHUNKED_PREFILL_THRESHOLD_TOKENS）：使用 model.generate()（HuggingFace 优化路径）
+        - 长 prompt（> CHUNKED_PREFILL_THRESHOLD_TOKENS）且启用 Chunked Prefill：
+          使用手动 forward 路径，避免 model.generate() 的重复处理开销
         """
         if model_name not in self._models:
             logger.error("model_not_loaded", model=model_name)
-            return []
+            return [
+                InferenceResult(
+                    request_id=f"{model_name}_{i}",
+                    outputs=[f"[模型未加载: {model_name}]"],
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    latency_ms=0,
+                    finish_reason="error",
+                    metrics={"error": "model_not_loaded"},
+                )
+                for i in range(len(prompts))
+            ]
 
         model = self._models[model_name]
         tokenizer = self._tokenizers[model_name]
+        model_config = self._loaded_models.get(model_name)
+        enable_chunked = getattr(model_config, 'enable_chunked_prefill', False) if model_config else False
 
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
 
         start_time = time.time()
+        results: List[InferenceResult] = []
 
+        # ── 决策：哪些 prompt 使用 Chunked Prefill ───────────────────────
+        # Tokenize 统计各 prompt 长度
         inputs = tokenizer(
             prompts,
             return_tensors="pt",
             padding=True,
             truncation=True,
+            add_special_tokens=False,  # 不自动添加 EOS/BOS，准确统计
         )
-        if hasattr(model, 'device'):
-            inputs = {k: v.to(model.device) for k, v in inputs.items()}
-
         prompt_lens = inputs["attention_mask"].sum(dim=1).tolist()
 
-        gen_kwargs = {
-            "max_new_tokens": sampling_params.max_tokens,
-            "temperature": sampling_params.temperature if sampling_params.temperature > 0 else 1.0,
-            "top_p": sampling_params.top_p,
-            "top_k": sampling_params.top_k,
-            "repetition_penalty": sampling_params.repetition_penalty,
-            "do_sample": sampling_params.temperature > 0,
-            "use_cache": False,
-        }
-        if sampling_params.stop:
-            gen_kwargs["stop_strings"] = sampling_params.stop
+        use_chunked = [
+            enable_chunked and length > CHUNKED_PREFILL_THRESHOLD_TOKENS
+            for length in prompt_lens
+        ]
 
-        try:
-            with torch.no_grad():
-                outputs = model.generate(**inputs, **gen_kwargs)
+        # ── 短 prompt：使用 model.generate() 批量处理 ──────────────────
+        short_indices = [i for i, uc in enumerate(use_chunked) if not uc]
+        if short_indices:
+            short_prompts = [prompts[i] for i in short_indices]
+            short_lens = [prompt_lens[i] for i in short_indices]
 
-            results: List[InferenceResult] = []
-            for i in range(len(prompts)):
-                prompt_len = int(prompt_lens[i])
-                pad_offset = (outputs[i] == tokenizer.pad_token_id).sum().item() if tokenizer.pad_token_id else 0
-                start_idx = pad_offset + prompt_len
-                new_tokens = outputs[i][start_idx:]
-                output_text = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+            short_inputs = tokenizer(
+                short_prompts,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                add_special_tokens=False,
+            )
+            if hasattr(model, 'device'):
+                short_inputs = {k: v.to(model.device) for k, v in short_inputs.items()}
 
-                results.append(
-                    InferenceResult(
-                        request_id=f"{model_name}_{i}",
-                        outputs=[output_text],
-                        prompt_tokens=prompt_len,
-                        completion_tokens=max(len(new_tokens), 0),
-                        latency_ms=(time.time() - start_time) * 1000,
-                        finish_reason="stop" if len(new_tokens) < sampling_params.max_tokens else "length",
-                        metrics={},
+            gen_kwargs = {
+                "max_new_tokens": sampling_params.max_tokens,
+                "temperature": sampling_params.temperature if sampling_params.temperature > 0 else 1.0,
+                "top_p": sampling_params.top_p,
+                "top_k": sampling_params.top_k,
+                "repetition_penalty": sampling_params.repetition_penalty,
+                "do_sample": sampling_params.temperature > 0,
+                "use_cache": False,
+            }
+            if sampling_params.stop:
+                gen_kwargs["stop_strings"] = sampling_params.stop
+
+            try:
+                with torch.no_grad():
+                    outputs = model.generate(**short_inputs, **gen_kwargs)
+
+                for idx, i in enumerate(short_indices):
+                    prompt_len = int(short_lens[idx])
+                    output_ids = outputs[idx]
+                    # model.generate 返回完整序列 (prompt + generated)，跳过 prompt 部分
+                    new_tokens = output_ids[prompt_len:]
+                    new_tokens = [t for t in new_tokens.tolist() if t != tokenizer.pad_token_id]
+                    gen_len = len(new_tokens)
+                    output_text = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+
+                    results.append(
+                        InferenceResult(
+                            request_id=f"{model_name}_{i}",
+                            outputs=[output_text],
+                            prompt_tokens=prompt_len,
+                            completion_tokens=gen_len,
+                            latency_ms=(time.time() - start_time) * 1000,
+                            finish_reason="stop" if gen_len < sampling_params.max_tokens else "length",
+                            metrics={"path": "generate"},
+                        )
                     )
-                )
-        except Exception as e:
-            logger.error("generate_error", model=model_name, error=str(e))
+            except Exception as e:
+                logger.error("generate_error", model=model_name, error=str(e))
+                for idx, i in enumerate(short_indices):
+                    results.append(
+                        InferenceResult(
+                            request_id=f"{model_name}_{i}",
+                            outputs=[f"[生成错误: {str(e)}]"],
+                            prompt_tokens=int(short_lens[idx]),
+                            completion_tokens=0,
+                            latency_ms=(time.time() - start_time) * 1000,
+                            finish_reason="error",
+                            metrics={"path": "generate", "error": str(e)},
+                        )
+                    )
+
+        # ── 长 prompt：使用 Chunked Prefill（手动 forward）──────────────
+        long_indices = [i for i, uc in enumerate(use_chunked) if uc]
+        if long_indices:
+            for i in long_indices:
+                try:
+                    gen_text, prompt_len, completion_len, chunked_latency = await self._chunked_generate_impl(
+                        model_name, prompts[i], sampling_params
+                    )
+                    results.append(
+                        InferenceResult(
+                            request_id=f"{model_name}_{i}",
+                            outputs=[gen_text],
+                            prompt_tokens=prompt_len,
+                            completion_tokens=completion_len,
+                            latency_ms=chunked_latency,
+                            finish_reason="stop" if completion_len < sampling_params.max_tokens else "length",
+                            metrics={"path": "chunked_prefill"},
+                        )
+                    )
+                except Exception as e:
+                    logger.error("chunked_generate_error", model=model_name, prompt_idx=i, error=str(e))
+                    results.append(
+                        InferenceResult(
+                            request_id=f"{model_name}_{i}",
+                            outputs=[f"[分块预填充错误: {str(e)}]"],
+                            prompt_tokens=0,
+                            completion_tokens=0,
+                            latency_ms=(time.time() - start_time) * 1000,
+                            finish_reason="error",
+                            metrics={"path": "chunked_prefill", "error": str(e)},
+                        )
+                    )
+
+        # 按原始顺序排序结果
+        results.sort(key=lambda r: int(r.request_id.split("_")[-1]))
 
         return results
 
@@ -238,83 +536,221 @@ class HuggingFaceEngine(InferenceEngine):
         prompt: str,
         sampling_params: SamplingParams,
     ) -> AsyncIterator[str]:
-        """流式生成 — 使用 asyncio 队列桥接后台生成线程，不阻塞事件循环"""
+        """
+        流式生成 — 支持 Chunked Prefill 和标准生成两种路径。
+
+        策略：
+        - 短 prompt：使用 TextIteratorStreamer（model.generate() 的标准流式输出）
+        - 长 prompt 且启用 Chunked Prefill：使用手动 forward，在 decode 阶段逐 token yield
+        """
         if model_name not in self._models:
             logger.error("model_not_loaded", model=model_name)
-            return
+            return  # async generator 提前结束，async for 会正常结束
 
-        try:
-            from transformers import TextIteratorStreamer
-            from threading import Thread
+        model = self._models[model_name]
+        tokenizer = self._tokenizers[model_name]
+        model_config = self._loaded_models.get(model_name)
+        enable_chunked = getattr(model_config, 'enable_chunked_prefill', False) if model_config else False
 
-            model = self._models[model_name]
-            tokenizer = self._tokenizers[model_name]
+        # 检查是否使用 Chunked Prefill
+        inputs_check = tokenizer(prompt, return_tensors="pt", add_special_tokens=False)
+        prompt_len = inputs_check["input_ids"].shape[1]
+        use_chunked = enable_chunked and prompt_len > CHUNKED_PREFILL_THRESHOLD_TOKENS
 
-            inputs = tokenizer(prompt, return_tensors="pt")
-            if hasattr(model, 'device'):
-                inputs = {k: v.to(model.device) for k, v in inputs.items()}
+        if use_chunked:
+            # Chunked Prefill 流式：手动 forward，逐 token yield
+            async for token_text in self._chunked_generate_stream_impl(
+                model_name, prompt, sampling_params
+            ):
+                yield token_text
+        else:
+            # 标准流式：使用 TextIteratorStreamer
+            async for text in self._stream_with_streamer(model_name, prompt, sampling_params, tokenizer, model, inputs_check):
+                yield text
 
-            streamer = TextIteratorStreamer(
-                tokenizer,
-                skip_prompt=True,
-                skip_special_tokens=True,
+
+    async def _chunked_generate_stream_impl(
+        self,
+        model_name: str,
+        prompt: str,
+        sampling_params: SamplingParams,
+    ) -> AsyncIterator[str]:
+        """
+        Chunked Prefill 流式实现 — 逐 token yield。
+
+        工作流程：
+        1. Prefill 阶段：分块处理输入，累积 past_key_values（无输出）
+        2. Decode 阶段：逐 token 生成，每生成一个就 yield
+        """
+        model = self._models[model_name]
+        tokenizer = self._tokenizers[model_name]
+        model_config = self._loaded_models[model_name]
+
+        device = next(model.parameters()).device
+        chunk_size = getattr(model_config, 'prefill_chunk_size', 512)
+
+        # Tokenize
+        inputs = tokenizer(prompt, return_tensors="pt")
+        input_ids = inputs["input_ids"].to(device)
+        prompt_lens = input_ids.shape[1]
+
+        # ── Phase 1: Prefill（不输出，累积 KV cache）──────────────
+        past_key_values = None
+        num_chunks = (prompt_lens + chunk_size - 1) // chunk_size
+
+        for chunk_idx in range(num_chunks):
+            start_pos = chunk_idx * chunk_size
+            end_pos = min(start_pos + chunk_size, prompt_lens)
+            chunk_ids = input_ids[:, start_pos:end_pos]
+
+            with torch.no_grad():
+                outputs = model(
+                    chunk_ids,
+                    past_key_values=past_key_values,
+                    use_cache=True,
+                )
+            past_key_values = outputs.past_key_values
+
+            logger.debug(
+                "chunked_prefill_stream_chunk",
+                model=model_name,
+                chunk_idx=chunk_idx + 1,
+                num_chunks=num_chunks,
             )
 
-            generation_kwargs = {
-                "input_ids": inputs["input_ids"],
-                "attention_mask": inputs.get("attention_mask"),
-                "max_new_tokens": sampling_params.max_tokens,
-                "temperature": sampling_params.temperature if sampling_params.temperature > 0 else 1.0,
-                "top_p": sampling_params.top_p,
-                "top_k": sampling_params.top_k,
-                "repetition_penalty": sampling_params.repetition_penalty,
-                "streamer": streamer,
-                "do_sample": sampling_params.temperature > 0,
-                "use_cache": False,
-            }
+        # ── Phase 2: Decode（逐 token yield）──────────
+        # 从最后一个 prefill chunk 的 logits 采样第一个 token
+        first_logits = outputs.logits[:, -1, :].squeeze(0)
+        next_token_id = self._sample_token(
+            first_logits,
+            temperature=sampling_params.temperature,
+            top_p=sampling_params.top_p,
+            top_k=sampling_params.top_k,
+            repetition_penalty=1.0,
+        ).item()
 
-            # 后台线程跑 model.generate，通过 streamer 传递 token
-            thread = Thread(target=model.generate, kwargs=generation_kwargs)
-            thread.start()
+        generated_ids = []
+        if next_token_id == tokenizer.eos_token_id:
+            return
 
-            # 通过 async queue 桥接同步 streamer → async generator
-            import queue
-            q: queue.Queue = queue.Queue()
+        generated_ids.append(next_token_id)
+        cur_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
+        if cur_text:
+            yield cur_text
+        prev_text_len = len(cur_text)
 
-            def _enqueue():
-                try:
-                    for text in streamer:
-                        q.put(('token', text))
-                    q.put(('done', None))
-                except Exception as exc:
-                    q.put(('error', exc))
+        for step in range(1, sampling_params.max_tokens):
+            cur_token = torch.tensor([[generated_ids[-1]]], device=device)
 
-            import concurrent.futures
-            loop = asyncio.get_running_loop()
-            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-            fut = loop.run_in_executor(executor, _enqueue)
+            with torch.no_grad():
+                outputs = model(
+                    cur_token,
+                    past_key_values=past_key_values,
+                    use_cache=True,
+                )
 
-            while True:
-                try:
-                    kind, value = await loop.run_in_executor(None, q.get, True, 0.1)
-                except queue.Empty:
-                    await asyncio.sleep(0.01)
-                    continue
+            past_key_values = outputs.past_key_values
+            logits = outputs.logits[:, -1, :].squeeze(0)
 
-                if kind == 'token':
-                    yield value
-                elif kind == 'error':
-                    logger.error("stream_generate_error", model=model_name, error=str(value))
-                    break
-                elif kind == 'done':
-                    break
+            if sampling_params.repetition_penalty != 1.0:
+                for tok_id in set(generated_ids):
+                    logits[tok_id] /= sampling_params.repetition_penalty
 
-            await fut
-            thread.join()
-            executor.shutdown(wait=False)
+            next_token_id = self._sample_token(
+                logits,
+                temperature=sampling_params.temperature,
+                top_p=sampling_params.top_p,
+                top_k=sampling_params.top_k,
+                repetition_penalty=1.0,
+            ).item()
 
-        except Exception as e:
-            logger.error("stream_generate_error", model=model_name, error=str(e))
+            if next_token_id == tokenizer.eos_token_id:
+                break
+
+            generated_ids.append(next_token_id)
+
+            cur_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
+            new_text = cur_text[prev_text_len:]
+            if new_text:
+                yield new_text
+                prev_text_len = len(cur_text)
+
+            await asyncio.sleep(0)
+
+
+    async def _stream_with_streamer(
+        self,
+        model_name: str,
+        prompt: str,
+        sampling_params: SamplingParams,
+        tokenizer,
+        model,
+        inputs,
+    ) -> AsyncIterator[str]:
+        """标准流式生成（使用 TextIteratorStreamer）"""
+        from transformers import TextIteratorStreamer
+        from threading import Thread
+        import queue
+
+        inputs = tokenizer(prompt, return_tensors="pt")
+        if hasattr(model, 'device'):
+            inputs = {k: v.to(model.device) for k, v in inputs.items()}
+
+        streamer = TextIteratorStreamer(
+            tokenizer,
+            skip_prompt=True,
+            skip_special_tokens=True,
+        )
+
+        generation_kwargs = {
+            "input_ids": inputs["input_ids"],
+            "attention_mask": inputs.get("attention_mask"),
+            "max_new_tokens": sampling_params.max_tokens,
+            "temperature": sampling_params.temperature if sampling_params.temperature > 0 else 1.0,
+            "top_p": sampling_params.top_p,
+            "top_k": sampling_params.top_k,
+            "repetition_penalty": sampling_params.repetition_penalty,
+            "streamer": streamer,
+            "do_sample": sampling_params.temperature > 0,
+            "use_cache": False,
+        }
+
+        thread = Thread(target=model.generate, kwargs=generation_kwargs)
+        thread.start()
+
+        q: queue.Queue = queue.Queue()
+
+        def _enqueue():
+            try:
+                for text in streamer:
+                    q.put(('token', text))
+                q.put(('done', None))
+            except Exception as exc:
+                q.put(('error', exc))
+
+        import concurrent.futures
+        loop = asyncio.get_running_loop()
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        fut = loop.run_in_executor(executor, _enqueue)
+
+        while True:
+            try:
+                kind, value = await loop.run_in_executor(None, q.get, True, 0.1)
+            except queue.Empty:
+                await asyncio.sleep(0.01)
+                continue
+
+            if kind == 'token':
+                yield value
+            elif kind == 'error':
+                logger.error("stream_generate_error", model=model_name, error=str(value))
+                break
+            elif kind == 'done':
+                break
+
+        await fut
+        thread.join()
+        executor.shutdown(wait=False)
 
     async def get_stats(self, model_name: str) -> Dict[str, float]:
         """获取引擎统计"""

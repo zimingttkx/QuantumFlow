@@ -61,6 +61,14 @@ class GPUMonitor:
             self._pynvml_available = True
             self._gpu_count = pynvml.nvmlDeviceGetCount()
         except Exception:
+            # nvmlInit 可能成功但后续操作失败，确保清理
+            if self._pynvml_available:
+                try:
+                    import pynvml
+                    pynvml.nvmlShutdown()
+                except Exception:
+                    pass
+                self._pynvml_available = False
             self._gpu_count = 0
 
     # ── public API ─────────────────────────────────────────

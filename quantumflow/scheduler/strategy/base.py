@@ -30,6 +30,7 @@ class SchedulingRequest:
     tags: Dict[str, str] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
     deadline: Optional[float] = None
+    retry_count: int = 0  # 追踪重试次数
 
     @property
     def model_size(self) -> int:

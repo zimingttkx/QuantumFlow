@@ -285,8 +285,8 @@ async def batch_generate(request: BatchInferenceRequest) -> BatchInferenceRespon
             batch_id=batch_id,
             model=request.model,
             total=len(request.prompts),
-            completed=len(mock_results),
-            failed=0,
+            completed=0,  # 所有请求都失败了，没有成功完成
+            failed=len(request.prompts),
             results=mock_results,
             total_latency_ms=0,
             avg_latency_ms=0,

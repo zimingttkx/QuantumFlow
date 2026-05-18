@@ -147,6 +147,8 @@ class EngineManager:
         if success:
             self._loaded_models[model_name] = engine
             self._vram_manager.record_loaded(model_name, required_vram)
+            # 记录实际显存占用（加载后立即读取）
+            self._vram_manager.update_actual_vram(model_name)
             logger.info("model_loaded", model=model_name, backend=backend.value,
                         estimated_vram_gb=required_vram)
             return True, reason
@@ -179,9 +181,22 @@ class EngineManager:
             raise ModelNotFoundError(model_name)
 
         self._vram_manager.mark_in_use(model_name)
+
+        # BlockPool: 分配 KV Cache blocks（基于预估 token 数）
+        # prompt_tokens 估算 + max_tokens = 本次推理预估总 token 数
+        import uuid
+        request_id = str(uuid.uuid4())
+        # 简单估算：每 token ≈ 4 字符
+        est_prompt_tokens = sum(len(p) // 4 for p in prompts)
+        est_total_tokens = est_prompt_tokens + sampling_params.max_tokens
+        block_ids = self._vram_manager.allocate_blocks(model_name, est_total_tokens, request_id)
+
         try:
             engine = self._loaded_models[model_name]
             results = await engine.generate(model_name, prompts, sampling_params)
+
+            # 更新实际显存
+            self._vram_manager.update_actual_vram(model_name)
 
             logger.info(
                 "generate_completed",
@@ -192,6 +207,9 @@ class EngineManager:
             return results
         finally:
             self._vram_manager.mark_idle(model_name)
+            # BlockPool: 释放 blocks
+            if block_ids is not None:
+                self._vram_manager.release_blocks(model_name, block_ids, request_id)
 
     async def generate_stream(
         self,
@@ -203,12 +221,21 @@ class EngineManager:
             raise ModelNotFoundError(model_name)
 
         self._vram_manager.mark_in_use(model_name)
+
+        # BlockPool: 分配
+        import uuid
+        request_id = str(uuid.uuid4())
+        est_tokens = len(prompt) // 4 + sampling_params.max_tokens
+        block_ids = self._vram_manager.allocate_blocks(model_name, est_tokens, request_id)
+
         try:
             engine = self._loaded_models[model_name]
             async for text_chunk in engine.generate_stream(model_name, prompt, sampling_params):
                 yield text_chunk
         finally:
             self._vram_manager.mark_idle(model_name)
+            if block_ids is not None:
+                self._vram_manager.release_blocks(model_name, block_ids, request_id)
 
     def get_loaded_models(self) -> list[str]:
         """获取已加载模型列表"""

@@ -73,6 +73,10 @@ class TGIEngine(InferenceEngine):
 
         注意：TGI服务器需要在外部启动，此方法用于跟踪模型状态
         """
+        if not self._client:
+            logger.error("tgi_client_not_initialized")
+            return False
+
         try:
             # 检查模型是否可用
             response = await self._client.get("/info")
@@ -121,6 +125,17 @@ class TGIEngine(InferenceEngine):
         """同步生成"""
         if not self._client:
             logger.error("tgi_client_not_initialized")
+            return [
+                InferenceResult(
+                    request_id=f"{model_name}_{i}",
+                    outputs=[f"[TGI错误: 客户端未初始化]"],
+                    prompt_tokens=0, completion_tokens=0, latency_ms=0,
+                    finish_reason="error", metrics={},
+                )
+                for i in range(len(prompts))
+            ]
+
+        if not prompts:
             return []
 
         try:
@@ -138,7 +153,7 @@ class TGIEngine(InferenceEngine):
             }
 
             if sampling_params.top_k > 0:
-                payload["parameters"]["truncate"] = sampling_params.top_k
+                payload["parameters"]["top_k"] = sampling_params.top_k
 
             if sampling_params.stop:
                 payload["parameters"]["stop"] = sampling_params.stop
@@ -168,17 +183,31 @@ class TGIEngine(InferenceEngine):
             # 解析响应
             results = []
             if isinstance(result.get("generated_text"), list):
-                for i, text in enumerate(result["generated_text"]):
+                generated_texts = result["generated_text"]
+                prompt_tokens_val = result.get("prompt_tokens", 0)
+                generated_tokens_val = result.get("generated_tokens", 0)
+
+                for i, text in enumerate(generated_texts):
+                    if isinstance(prompt_tokens_val, list) and i < len(prompt_tokens_val):
+                        pt = prompt_tokens_val[i]
+                    elif isinstance(prompt_tokens_val, (int, float)) and len(generated_texts) > 0:
+                        pt = int(prompt_tokens_val) // len(generated_texts)
+                    else:
+                        pt = len(prompts[i]) // 4 if i < len(prompts) else 0
+
+                    if isinstance(generated_tokens_val, list) and i < len(generated_tokens_val):
+                        ct = generated_tokens_val[i]
+                    elif isinstance(generated_tokens_val, (int, float)) and len(generated_texts) > 0:
+                        ct = int(generated_tokens_val) // len(generated_texts)
+                    else:
+                        ct = len(text.split())
+
                     results.append(
                         InferenceResult(
                             request_id=f"{model_name}_{i}",
                             outputs=[text],
-                            prompt_tokens=result.get("prompt_tokens", [0])[i]
-                            if isinstance(result.get("prompt_tokens"), list)
-                            else 0,
-                            completion_tokens=result.get("generated_tokens", [0])[i]
-                            if isinstance(result.get("generated_tokens"), list)
-                            else len(text.split()),
+                            prompt_tokens=pt,
+                            completion_tokens=ct,
                             latency_ms=latency_ms,
                             finish_reason="stop",
                             metrics={},
@@ -201,14 +230,30 @@ class TGIEngine(InferenceEngine):
 
         except asyncio.TimeoutError:
             logger.error("tgi_request_timeout", model=model_name)
-            return []
+            return [
+                InferenceResult(
+                    request_id=f"{model_name}_{i}",
+                    outputs=[f"[TGI超时]"],
+                    prompt_tokens=0, completion_tokens=0, latency_ms=0,
+                    finish_reason="error", metrics={},
+                )
+                for i in range(len(prompts))
+            ]
         except Exception as e:
             logger.error(
                 "generate_error",
                 model=model_name,
                 error=str(e),
             )
-            return []
+            return [
+                InferenceResult(
+                    request_id=f"{model_name}_{i}",
+                    outputs=[f"[TGI错误: {str(e)}]"],
+                    prompt_tokens=0, completion_tokens=0, latency_ms=0,
+                    finish_reason="error", metrics={},
+                )
+                for i in range(len(prompts))
+            ]
 
     async def generate_stream(
         self,
@@ -228,9 +273,14 @@ class TGIEngine(InferenceEngine):
                     "temperature": sampling_params.temperature,
                     "top_p": sampling_params.top_p,
                     "max_new_tokens": sampling_params.max_tokens,
-                    "truncate": sampling_params.top_k if sampling_params.top_k > 0 else 512,
+                    "repetition_penalty": sampling_params.repetition_penalty,
                 },
             }
+
+            if sampling_params.top_k > 0:
+                payload["parameters"]["top_k"] = sampling_params.top_k
+            if sampling_params.stop:
+                payload["parameters"]["stop"] = sampling_params.stop
 
             async with self._client.stream(
                 "POST",
@@ -278,12 +328,9 @@ class TGIEngine(InferenceEngine):
         try:
             response = await self._client.get("/info")
             if response.status_code == 200:
-                info = response.json()
-                return {
-                    "model_id": info.get("model_id", ""),
-                    "device": info.get("device", ""),
-                    "dtype": info.get("dtype", ""),
-                }
+                return {"healthy": 1.0}
+
+            return {}
 
             return {}
 

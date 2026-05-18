@@ -73,6 +73,10 @@ class SGLangEngine(InferenceEngine):
 
         注意：SGLang服务器需要在外部启动，此方法用于跟踪模型状态
         """
+        if not self._client:
+            logger.error("sglang_client_not_initialized")
+            return False
+
         try:
             # 检查服务器状态
             response = await self._client.get("/v1/models")
@@ -115,88 +119,124 @@ class SGLangEngine(InferenceEngine):
         """同步生成"""
         if not self._client:
             logger.error("sglang_client_not_initialized")
-            return []
+            return [
+                InferenceResult(
+                    request_id=f"{model_name}_{i}",
+                    outputs=[f"[SGLang错误: 客户端未初始化]"],
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    latency_ms=0,
+                    finish_reason="error",
+                    metrics={},
+                )
+                for i in range(len(prompts))
+            ]
 
         try:
             start_time = time.time()
 
-            # 构建请求（兼容OpenAI API格式）
-            if len(prompts) == 1:
+            async def _single_generate(prompt: str, index: int) -> InferenceResult:
+                """发送单个推理请求"""
+                req_start = time.time()
                 payload = {
                     "model": model_name,
-                    "prompt": prompts[0],
+                    "prompt": prompt,
                     "max_tokens": sampling_params.max_tokens,
                     "temperature": sampling_params.temperature,
                     "top_p": sampling_params.top_p,
                 }
-                endpoint = "/v1/completions"
-            else:
-                # 批量请求
-                payload = {
-                    "model": model_name,
-                    "prompt": prompts,
-                    "max_tokens": sampling_params.max_tokens,
-                    "temperature": sampling_params.temperature,
-                    "top_p": sampling_params.top_p,
-                }
-                endpoint = "/v1/batch completions"
+                if sampling_params.stop:
+                    payload["stop"] = sampling_params.stop
 
-            if sampling_params.stop:
-                payload["stop"] = sampling_params.stop
-
-            response = await self._client.post(endpoint, json=payload)
-
-            if response.status_code != 200:
-                logger.error(
-                    "sglang_generate_failed",
-                    status_code=response.status_code,
-                    detail=response.text,
-                )
-                return []
-
-            result = response.json()
-            latency_ms = (time.time() - start_time) * 1000
-
-            # 解析响应
-            results = []
-            if len(prompts) == 1:
-                results.append(
-                    InferenceResult(
-                        request_id=f"{model_name}_0",
-                        outputs=[result.get("choices", [{}])[0].get("text", "")],
-                        prompt_tokens=result.get("usage", {}).get("prompt_tokens", 0),
-                        completion_tokens=result.get("usage", {}).get("completion_tokens", 0),
-                        latency_ms=latency_ms,
-                        finish_reason=result.get("choices", [{}])[0].get("finish_reason", "stop"),
-                        metrics={},
-                    )
-                )
-            else:
-                for i, choice in enumerate(result.get("choices", [])):
-                    results.append(
-                        InferenceResult(
-                            request_id=f"{model_name}_{i}",
-                            outputs=[choice.get("text", "")],
-                            prompt_tokens=result.get("usage", {}).get("prompt_tokens", 0) // len(prompts),
-                            completion_tokens=result.get("usage", {}).get("completion_tokens", 0) // len(prompts),
-                            latency_ms=latency_ms,
-                            finish_reason=choice.get("finish_reason", "stop"),
+                try:
+                    response = await self._client.post("/v1/completions", json=payload)
+                    if response.status_code != 200:
+                        logger.error(
+                            "sglang_generate_failed",
+                            status_code=response.status_code,
+                            detail=response.text,
+                        )
+                        return InferenceResult(
+                            request_id=f"{model_name}_{index}",
+                            outputs=[f"[SGLang错误: HTTP {response.status_code}]"],
+                            prompt_tokens=0,
+                            completion_tokens=0,
+                            latency_ms=(time.time() - req_start) * 1000,
+                            finish_reason="error",
                             metrics={},
                         )
+
+                    result = response.json()
+                    choices = result.get("choices", [])
+                    if not choices:
+                        return InferenceResult(
+                            request_id=f"{model_name}_{index}",
+                            outputs=[f"[SGLang错误: 空响应]"],
+                            prompt_tokens=0,
+                            completion_tokens=0,
+                            latency_ms=(time.time() - req_start) * 1000,
+                            finish_reason="error",
+                            metrics={},
+                        )
+
+                    choice = choices[0]
+                    return InferenceResult(
+                        request_id=f"{model_name}_{index}",
+                        outputs=[choice.get("text", "")],
+                        prompt_tokens=result.get("usage", {}).get("prompt_tokens", 0),
+                        completion_tokens=result.get("usage", {}).get("completion_tokens", 0),
+                        latency_ms=(time.time() - req_start) * 1000,
+                        finish_reason=choice.get("finish_reason", "stop"),
+                        metrics={},
+                    )
+                except asyncio.TimeoutError:
+                    return InferenceResult(
+                        request_id=f"{model_name}_{index}",
+                        outputs=[f"[SGLang超时]"],
+                        prompt_tokens=0,
+                        completion_tokens=0,
+                        latency_ms=(time.time() - req_start) * 1000,
+                        finish_reason="error",
+                        metrics={},
                     )
 
-            return results
+            # 并行发送所有请求
+            tasks = [_single_generate(prompts[i], i) for i in range(len(prompts))]
+            results = await asyncio.gather(*tasks)
+            return list(results)
 
         except asyncio.TimeoutError:
             logger.error("sglang_request_timeout", model=model_name)
-            return []
+            return [
+                InferenceResult(
+                    request_id=f"{model_name}_{i}",
+                    outputs=[f"[SGLang超时]"],
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    latency_ms=0,
+                    finish_reason="error",
+                    metrics={},
+                )
+                for i in range(len(prompts))
+            ]
         except Exception as e:
             logger.error(
                 "generate_error",
                 model=model_name,
                 error=str(e),
             )
-            return []
+            return [
+                InferenceResult(
+                    request_id=f"{model_name}_{i}",
+                    outputs=[f"[SGLang错误: {str(e)}]"],
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    latency_ms=0,
+                    finish_reason="error",
+                    metrics={},
+                )
+                for i in range(len(prompts))
+            ]
 
     async def generate_stream(
         self,
@@ -207,7 +247,7 @@ class SGLangEngine(InferenceEngine):
         """流式生成"""
         if not self._client:
             logger.error("sglang_client_not_initialized")
-            return
+            return  # async generator 提前结束，async for 会正常结束
 
         try:
             payload = {
@@ -244,8 +284,13 @@ class SGLangEngine(InferenceEngine):
 
                         try:
                             chunk = json.loads(data)
-                            delta = chunk.get("choices", [{}])[0].get("delta", {})
-                            text = delta.get("text", "")
+                            choices = chunk.get("choices", [])
+                            if not choices:
+                                continue
+                            choice = choices[0]
+                            # /v1/completions SSE: text 在 choice.text
+                            # /v1/chat/completions SSE: text 在 choice.delta.text
+                            text = choice.get("text", "") or choice.get("delta", {}).get("text", "")
                             if text:
                                 yield text
                         except json.JSONDecodeError:
@@ -268,7 +313,7 @@ class SGLangEngine(InferenceEngine):
         try:
             response = await self._client.get("/v1/models")
             if response.status_code == 200:
-                return {"status": "healthy"}
+                return {"healthy": 1.0}
 
             return {}
 
@@ -296,7 +341,15 @@ class SGLangEngine(InferenceEngine):
         """
         if not self._client:
             logger.error("sglang_client_not_initialized")
-            return None
+            return InferenceResult(
+                request_id=f"{model_name}_chat",
+                outputs=[f"[SGLang错误: 客户端未初始化]"],
+                prompt_tokens=0,
+                completion_tokens=0,
+                latency_ms=0,
+                finish_reason="error",
+                metrics={},
+            )
 
         try:
             start_time = time.time()
@@ -316,7 +369,15 @@ class SGLangEngine(InferenceEngine):
 
             if response.status_code != 200:
                 logger.error("sglang_chat_failed", status_code=response.status_code)
-                return None
+                return InferenceResult(
+                    request_id=f"{model_name}_chat",
+                    outputs=[f"[SGLang错误: HTTP {response.status_code}]"],
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    latency_ms=(time.time() - start_time) * 1000,
+                    finish_reason="error",
+                    metrics={},
+                )
 
             result = response.json()
             latency_ms = (time.time() - start_time) * 1000
@@ -336,4 +397,12 @@ class SGLangEngine(InferenceEngine):
 
         except Exception as e:
             logger.error("chat_error", model=model_name, error=str(e))
-            return None
+            return InferenceResult(
+                request_id=f"{model_name}_chat",
+                outputs=[f"[SGLang错误: {str(e)}]"],
+                prompt_tokens=0,
+                completion_tokens=0,
+                latency_ms=0,
+                finish_reason="error",
+                metrics={},
+            )
