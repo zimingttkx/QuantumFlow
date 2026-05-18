@@ -249,11 +249,13 @@ class TestVLLMEngineStrict:
 
     @pytest.mark.asyncio
     async def test_generate_model_not_loaded(self):
-        """验证模型未加载时生成"""
+        """验证模型未加载时生成 — 返回错误结果而非空列表"""
         engine = VLLMEngine()
         engine._is_initialized = True
         results = await engine.generate("nonexistent", ["prompt"], SamplingParams())
-        assert results == []
+        assert len(results) == 1
+        assert results[0].finish_reason == "error"
+        assert "模型未加载" in results[0].outputs[0]
 
     @pytest.mark.asyncio
     async def test_generate_stream_model_not_loaded(self):
@@ -335,9 +337,9 @@ class TestEngineManagerStrict:
                 model_path="/test/autoload",
                 tensor_parallel=1,
             )
-            # 结果可能是True(成功)或False(vllm未安装或路径无效)
-            # 但不应该抛出异常
-            assert isinstance(result, bool)
+            # load_model 返回 (bool, str) 元组
+            assert isinstance(result, tuple)
+            assert isinstance(result[0], bool)
         except InferenceError:
             # 如果初始化失败，可能抛出InferenceError
             pass

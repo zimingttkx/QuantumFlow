@@ -97,6 +97,8 @@ class TestE2EInferenceWorkflow:
 
     def test_batch_inference(self, client):
         """测试批量推理"""
+        # 注意：测试环境中模型未加载，所以所有请求都会失败
+        # 正确的语义是 completed=0, failed=3（错误响应不算"完成"）
         response = client.post(
             "/api/v1/inference/batch",
             json={
@@ -113,8 +115,10 @@ class TestE2EInferenceWorkflow:
         data = response.json()
         assert data["total"] == 3
         assert len(data["results"]) == 3
-        assert data["completed"] == 3
-        assert data["failed"] == 0
+        # 模型未加载时，所有请求都失败（completed=0, failed=3）
+        # 之前的错误行为是 completed=3, failed=0（把错误响应算作"完成"）
+        assert data["completed"] == 0
+        assert data["failed"] == 3
 
     def test_chat(self, client):
         """测试对话"""

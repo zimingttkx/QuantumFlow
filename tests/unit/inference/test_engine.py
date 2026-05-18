@@ -1,7 +1,7 @@
 """推理引擎测试"""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from quantumflow.inference.engine import (
     InferenceEngine,
@@ -143,16 +143,21 @@ class TestEngineManager:
 
     @pytest.mark.asyncio
     async def test_load_model_without_engine(self):
-        """测试在引擎未初始化时加载模型"""
-        # 创建一个新的 Manager 实例进行测试
+        """测试在引擎初始化失败时抛出异常"""
         manager = EngineManager.__new__(EngineManager)
         manager._initialized = False
         manager._engines = {}
         manager._loaded_models = {}
+        # load_model 需要 _vram_manager 进行 VRAM 预估
+        manager._vram_manager = Mock()
+        manager._vram_manager.estimate_model_vram_gb = Mock(return_value=5.0)
+        manager._vram_manager.can_load = Mock(return_value=(True, "ok", []))
+        manager._vram_manager.record_loaded = Mock()
+        manager._vram_manager.update_actual_vram = Mock()
 
-        # mock initialize 返回 False (需要 AsyncMock)
+        # mock initialize 返回 False
         with patch.object(manager, "initialize", new_callable=AsyncMock, return_value=False):
-            # 由于没有引擎，应该抛出异常
+            # 引擎初始化失败，应该抛出 InferenceError
             with pytest.raises(InferenceError):
                 await manager.load_model(
                     model_name="test-model",

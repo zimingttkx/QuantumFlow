@@ -58,6 +58,7 @@ def test_snapshot_creation():
         index=0, name="GPU-0", total_vram_gb=16.0,
         used_vram_gb=4.5, free_vram_gb=11.5,
         utilization_pct=75.0, temperature_c=65.0,
+        memory_util_pct=50.0,
     )
     check("index", s.index == 0)
     check("name", s.name == "GPU-0")
@@ -76,6 +77,7 @@ def test_snapshot_timestamp_custom():
         index=0, name="G", total_vram_gb=1.0,
         used_vram_gb=0.5, free_vram_gb=0.5,
         utilization_pct=0.0, temperature_c=0.0,
+        memory_util_pct=0.0,
         timestamp=1234567890.0,
     )
     check("自定义ts", s.timestamp == 1234567890.0)
@@ -88,6 +90,7 @@ def test_snapshot_to_dict():
         index=0, name="Test GPU", total_vram_gb=16.0,
         used_vram_gb=4.56, free_vram_gb=11.46,
         utilization_pct=75.51, temperature_c=65.44,
+        memory_util_pct=50.0,
         timestamp=1234567890.0,
     )
     d = s.to_dict()
@@ -112,6 +115,7 @@ def test_snapshot_to_dict_zero_values():
         index=0, name="", total_vram_gb=0.0,
         used_vram_gb=0.0, free_vram_gb=0.0,
         utilization_pct=0.0, temperature_c=0.0,
+        memory_util_pct=0.0,
     )
     d = s.to_dict()
     check("零值total", d["total_vram_gb"] == 0.0)
@@ -126,6 +130,7 @@ def test_snapshot_to_dict_rounding_edge():
         index=0, name="X", total_vram_gb=1.05,
         used_vram_gb=1.04, free_vram_gb=0.95,
         utilization_pct=0.95, temperature_c=0.0,
+        memory_util_pct=0.0,
     )
     d = s.to_dict()
     # 1.05 → 1.1 (round to 1 decimal)
