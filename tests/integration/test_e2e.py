@@ -218,6 +218,37 @@ class TestE2EClusterManagement:
         app = create_app()
         return TestClient(app)
 
+    @pytest.fixture
+    def registered_node(self, client):
+        """注册一个测试节点"""
+        node_info = {
+            "node_id": "local-node",
+            "hostname": "test-host",
+            "ip": "127.0.0.1",
+            "port": 8000,
+            "gpu_count": 1,
+            "gpu_info": [{
+                "gpu_id": 0,
+                "name": "Test GPU",
+                "memory_total": 16 * 1024**3,
+                "memory_used": 4 * 1024**3,
+                "utilization": 0.3,
+                "temperature": 45.0,
+            }],
+            "status": "healthy",
+            "cpu_count": 8,
+            "memory_total": 32 * 1024**3,
+            "memory_available": 16 * 1024**3,
+            "disk_total": 512 * 1024**3,
+            "disk_available": 256 * 1024**3,
+            "current_load": 0.5,
+            "labels": {"platform": "Linux", "host": "local"},
+            "version": "1.0.0",
+            "loaded_models": [],
+        }
+        client.post("/api/v1/cluster/heartbeat", json=node_info)
+        return "local-node"
+
     def test_cluster_status(self, client):
         """测试集群状态"""
         response = client.get("/api/v1/cluster/status")
@@ -229,7 +260,7 @@ class TestE2EClusterManagement:
         assert "total_gpus" in data
         assert "available_gpus" in data
 
-    def test_list_nodes(self, client):
+    def test_list_nodes(self, client, registered_node):
         """测试列出节点"""
         response = client.get("/api/v1/cluster/nodes")
 
@@ -238,7 +269,7 @@ class TestE2EClusterManagement:
         assert isinstance(data, list)
         assert len(data) > 0
 
-    def test_get_node(self, client):
+    def test_get_node(self, client, registered_node):
         """测试获取节点详情"""
         response = client.get("/api/v1/cluster/nodes/local-node")
 
@@ -253,7 +284,7 @@ class TestE2EClusterManagement:
 
         assert response.status_code == 404
 
-    def test_node_action_drain(self, client):
+    def test_node_action_drain(self, client, registered_node):
         """测试节点drain操作"""
         response = client.post(
             "/api/v1/cluster/nodes/local-node/action?action=drain"
@@ -264,7 +295,7 @@ class TestE2EClusterManagement:
         assert data["action"] == "drain"
         assert data["status"] == "completed"
 
-    def test_node_action_uncordon(self, client):
+    def test_node_action_uncordon(self, client, registered_node):
         """测试节点uncordon操作"""
         response = client.post(
             "/api/v1/cluster/nodes/local-node/action?action=uncordon"
@@ -272,7 +303,7 @@ class TestE2EClusterManagement:
 
         assert response.status_code == 200
 
-    def test_filter_nodes_by_status(self, client):
+    def test_filter_nodes_by_status(self, client, registered_node):
         """测试按状态过滤节点"""
         response = client.get("/api/v1/cluster/nodes?status_filter=healthy")
 

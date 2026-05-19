@@ -103,6 +103,38 @@ class TestModelsEndpoint:
 class TestClusterEndpoint:
     """集群管理接口测试"""
 
+    @pytest.fixture
+    def registered_node(self, client):
+        """注册一个测试节点"""
+        # 通过心跳接口注册节点
+        node_info = {
+            "node_id": "local-node",
+            "hostname": "test-host",
+            "ip": "127.0.0.1",
+            "port": 8000,
+            "gpu_count": 1,
+            "gpu_info": [{
+                "gpu_id": 0,
+                "name": "Test GPU",
+                "memory_total": 16 * 1024**3,
+                "memory_used": 4 * 1024**3,
+                "utilization": 0.3,
+                "temperature": 45.0,
+            }],
+            "status": "healthy",
+            "cpu_count": 8,
+            "memory_total": 32 * 1024**3,
+            "memory_available": 16 * 1024**3,
+            "disk_total": 512 * 1024**3,
+            "disk_available": 256 * 1024**3,
+            "current_load": 0.5,
+            "labels": {"platform": "Linux", "host": "local"},
+            "version": "1.0.0",
+            "loaded_models": [],
+        }
+        client.post("/api/v1/cluster/heartbeat", json=node_info)
+        return "local-node"
+
     def test_cluster_status(self, client):
         """测试集群状态"""
         response = client.get("/api/v1/cluster/status")
@@ -118,7 +150,7 @@ class TestClusterEndpoint:
         data = response.json()
         assert isinstance(data, list)
 
-    def test_get_node(self, client):
+    def test_get_node(self, client, registered_node):
         """测试获取节点信息"""
         response = client.get("/api/v1/cluster/nodes/local-node")
         assert response.status_code == 200
