@@ -1,12 +1,11 @@
 """调度器单元测试"""
 
-import pytest
 import asyncio
-from datetime import datetime
-from unittest.mock import Mock, AsyncMock, MagicMock, patch, PropertyMock
-from collections import deque
+from unittest.mock import Mock
 
-from quantumflow.scheduler import Scheduler, SchedulingRequest, NodeResource, GPUResource
+import pytest
+
+from quantumflow.scheduler import GPUResource, NodeResource, Scheduler, SchedulingRequest
 
 
 class TestScheduler:

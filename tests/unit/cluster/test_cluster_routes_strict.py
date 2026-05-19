@@ -7,17 +7,17 @@
 4. 重点测试核心功能、易错细节、状态变更
 """
 
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
-from fastapi.testclient import TestClient
-from datetime import datetime
-
 import sys
-sys.path.insert(0, '/home/dingziming/PycharmProjects/QuantumFlow')
+from unittest.mock import AsyncMock
 
-from quantumflow.cluster import ClusterManager, Node, NodeStatus, set_cluster_manager, get_cluster_manager
+import pytest
+from fastapi.testclient import TestClient
+
+sys.path.insert(0, "/home/dingziming/PycharmProjects/QuantumFlow")
+
+from quantumflow.api.routes.cluster import _node_to_node_info, router
+from quantumflow.cluster import ClusterManager, Node, NodeStatus, set_cluster_manager
 from quantumflow.core.constants import NodeStatus as NodeStatusEnum
-from quantumflow.api.routes.cluster import router, _node_to_node_info
 
 
 class TestNodeConversion:
@@ -121,7 +121,9 @@ class TestNodeConversion:
                 status=node_status,
             )
             node_info = _node_to_node_info(node)
-            assert node_info.status == expected_value, f"Expected {expected_value}, got {node_info.status}"
+            assert (
+                node_info.status == expected_value
+            ), f"Expected {expected_value}, got {node_info.status}"
 
 
 class TestClusterStatusEndpoint:
@@ -140,6 +142,7 @@ class TestClusterStatusEndpoint:
     def client(self, mock_cluster_manager):
         """创建测试客户端"""
         from fastapi import FastAPI
+
         app = FastAPI()
         app.include_router(router)
         return TestClient(app)
@@ -281,6 +284,7 @@ class TestListNodesEndpoint:
     def client(self, mock_cluster_manager):
         """创建测试客户端"""
         from fastapi import FastAPI
+
         app = FastAPI()
         app.include_router(router)
         return TestClient(app)
@@ -449,6 +453,7 @@ class TestGetNodeEndpoint:
     def client(self, mock_cluster_manager):
         """创建测试客户端"""
         from fastapi import FastAPI
+
         app = FastAPI()
         app.include_router(router)
         return TestClient(app)
@@ -525,6 +530,7 @@ class TestHeartbeatEndpoint:
     def client(self, mock_cluster_manager):
         """创建测试客户端"""
         from fastapi import FastAPI
+
         app = FastAPI()
         app.include_router(router)
         return TestClient(app)
@@ -577,14 +583,16 @@ class TestHeartbeatEndpoint:
             "ip": "192.168.1.100",
             "port": 8080,
             "gpu_count": 1,
-            "gpu_info": [{
-                "gpu_id": 0,
-                "name": "A100",
-                "memory_total": 80 * 1024**3,
-                "memory_used": 40 * 1024**3,
-                "utilization": 0.5,
-                "temperature": 65.0,
-            }],
+            "gpu_info": [
+                {
+                    "gpu_id": 0,
+                    "name": "A100",
+                    "memory_total": 80 * 1024**3,
+                    "memory_used": 40 * 1024**3,
+                    "utilization": 0.5,
+                    "temperature": 65.0,
+                }
+            ],
             "status": "healthy",
             "labels": {},
             "version": "1.0.0",
@@ -604,7 +612,6 @@ class TestHeartbeatEndpoint:
 
     def test_heartbeat_update_existing_node(self, client, mock_cluster_manager):
         """[正常用例] 更新已存在节点"""
-        from quantumflow.cluster.manager import GPUInfo
 
         existing_node = Node(
             node_id="node-1",
@@ -634,14 +641,16 @@ class TestHeartbeatEndpoint:
             "ip": "192.168.1.100",
             "port": 8080,
             "gpu_count": 1,
-            "gpu_info": [{
-                "gpu_id": 0,
-                "name": "A100",
-                "memory_total": 80 * 1024**3,
-                "memory_used": 50 * 1024**3,
-                "utilization": 0.6,
-                "temperature": 70.0,
-            }],
+            "gpu_info": [
+                {
+                    "gpu_id": 0,
+                    "name": "A100",
+                    "memory_total": 80 * 1024**3,
+                    "memory_used": 50 * 1024**3,
+                    "utilization": 0.6,
+                    "temperature": 70.0,
+                }
+            ],
             "current_load": 0.5,
             "loaded_models": ["model-a", "model-b"],
         }
@@ -674,13 +683,13 @@ class TestNodeActionEndpoint:
     def client(self, mock_cluster_manager):
         """创建测试客户端"""
         from fastapi import FastAPI
+
         app = FastAPI()
         app.include_router(router)
         return TestClient(app)
 
     def test_action_drain_existing_node(self, client, mock_cluster_manager):
         """[正常用例] drain 操作"""
-        from quantumflow.cluster.manager import GPUInfo
 
         node = Node(
             node_id="node-1",
@@ -710,11 +719,12 @@ class TestNodeActionEndpoint:
         assert data["node_id"] == "node-1"
         assert data["action"] == "drain"
         assert data["status"] == "completed"
-        mock_cluster_manager.update_node_status.assert_called_once_with("node-1", NodeStatusEnum.DRAINING)
+        mock_cluster_manager.update_node_status.assert_called_once_with(
+            "node-1", NodeStatusEnum.DRAINING
+        )
 
     def test_action_uncordon_existing_node(self, client, mock_cluster_manager):
         """[正常用例] uncordon 操作"""
-        from quantumflow.cluster.manager import GPUInfo
 
         node = Node(
             node_id="node-1",
@@ -743,11 +753,12 @@ class TestNodeActionEndpoint:
         data = response.json()
         assert data["node_id"] == "node-1"
         assert data["action"] == "uncordon"
-        mock_cluster_manager.update_node_status.assert_called_once_with("node-1", NodeStatusEnum.HEALTHY)
+        mock_cluster_manager.update_node_status.assert_called_once_with(
+            "node-1", NodeStatusEnum.HEALTHY
+        )
 
     def test_action_restart_existing_node(self, client, mock_cluster_manager):
         """[正常用例] restart 操作（只返回成功）"""
-        from quantumflow.cluster.manager import GPUInfo
 
         node = Node(
             node_id="node-1",
@@ -780,7 +791,6 @@ class TestNodeActionEndpoint:
 
     def test_action_invalid_action(self, client, mock_cluster_manager):
         """[错误处理] 无效操作返回 400"""
-        from quantumflow.cluster.manager import GPUInfo
 
         node = Node(
             node_id="node-1",
@@ -837,13 +847,13 @@ class TestUnregisterNodeEndpoint:
     def client(self, mock_cluster_manager):
         """创建测试客户端"""
         from fastapi import FastAPI
+
         app = FastAPI()
         app.include_router(router)
         return TestClient(app)
 
     def test_unregister_existing_node(self, client, mock_cluster_manager):
         """[正常用例] 注销存在的节点"""
-        from quantumflow.cluster.manager import GPUInfo
 
         node = Node(
             node_id="node-1",

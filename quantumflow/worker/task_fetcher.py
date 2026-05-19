@@ -4,13 +4,15 @@ Worker从Redis队列拉取任务执行，实现与Controller的解耦。
 """
 
 import asyncio
-from typing import Optional, Callable, Any, Dict
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
+
 import structlog
 
-from quantumflow.storage.redis_queue import RedisQueue, QueuedRequest
-from quantumflow.storage.connection import get_redis_manager
 from quantumflow.inference.engine import InferenceEngine, SamplingParams
+from quantumflow.storage.connection import get_redis_manager
+from quantumflow.storage.redis_queue import QueuedRequest, RedisQueue
 
 logger = structlog.get_logger().bind(component="task_fetcher")
 
@@ -44,18 +46,18 @@ class TaskFetcher:
     def __init__(
         self,
         config: TaskFetcherConfig,
-        engine: Optional[InferenceEngine] = None,
+        engine: InferenceEngine | None = None,
     ):
         self.config = config
         self.engine = engine
 
-        self._redis_queue: Optional[RedisQueue] = None
+        self._redis_queue: RedisQueue | None = None
         self._running = False
-        self._fetch_task: Optional[asyncio.Task] = None
-        self._active_tasks: Dict[str, asyncio.Task] = {}
+        self._fetch_task: asyncio.Task | None = None
+        self._active_tasks: dict[str, asyncio.Task] = {}
 
         # 任务处理函数
-        self._task_handlers: Dict[str, Callable] = {}
+        self._task_handlers: dict[str, Callable] = {}
 
         # 统计
         self.stats = {
@@ -185,9 +187,7 @@ class TaskFetcher:
         self._active_tasks[request_id] = task
 
         # 添加完成回调
-        task.add_done_callback(
-            lambda t, req_id=request_id: self._on_task_done(req_id, t)
-        )
+        task.add_done_callback(lambda t, req_id=request_id: self._on_task_done(req_id, t))
 
     async def _execute_task(self, request: QueuedRequest) -> bool:
         """执行任务"""
@@ -195,9 +195,7 @@ class TaskFetcher:
 
         try:
             # 找到处理器
-            handler = self._task_handlers.get(
-                request.model_name
-            ) or self._task_handlers.get("*")
+            handler = self._task_handlers.get(request.model_name) or self._task_handlers.get("*")
 
             if not handler:
                 # 默认处理：使用引擎执行推理
@@ -324,7 +322,7 @@ class TaskFetcher:
                 error=str(task.exception()),
             )
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """获取统计信息"""
         return {
             **self.stats,

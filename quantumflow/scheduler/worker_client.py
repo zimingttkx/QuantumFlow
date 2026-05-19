@@ -4,10 +4,11 @@
 """
 
 import asyncio
-from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
-import structlog
+from typing import Any
+
 import httpx
+import structlog
 
 logger = structlog.get_logger().bind(component="worker_client")
 
@@ -15,6 +16,7 @@ logger = structlog.get_logger().bind(component="worker_client")
 @dataclass
 class WorkerEndpoint:
     """Worker节点端点信息"""
+
     node_id: str
     host: str
     port: int
@@ -38,7 +40,7 @@ class WorkerClient:
 
     def __init__(self, timeout: float = 30.0):
         self.timeout = timeout
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         """获取或创建 HTTP 客户端"""
@@ -58,8 +60,8 @@ class WorkerClient:
         request_id: str,
         model_name: str,
         prompt: str,
-        sampling_params: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        sampling_params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """
         向 Worker 发送推理请求
 
@@ -79,7 +81,8 @@ class WorkerClient:
             "request_id": request_id,
             "model_name": model_name,
             "prompts": [prompt],
-            "sampling_params": sampling_params or {
+            "sampling_params": sampling_params
+            or {
                 "temperature": 0.7,
                 "top_p": 0.9,
                 "top_k": 50,
@@ -153,10 +156,10 @@ class WorkerClient:
         self,
         endpoint: WorkerEndpoint,
         model_name: str,
-        model_path: Optional[str] = None,
+        model_path: str | None = None,
         tensor_parallel: int = 1,
         gpu_memory_utilization: float = 0.9,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         请求 Worker 加载模型
 
@@ -197,7 +200,7 @@ class WorkerClient:
             )
             return {"status": "error", "error": str(e)}
 
-    async def get_status(self, endpoint: WorkerEndpoint) -> Dict[str, Any]:
+    async def get_status(self, endpoint: WorkerEndpoint) -> dict[str, Any]:
         """
         获取 Worker 状态
 
@@ -234,7 +237,7 @@ class WorkerRegistry:
     """
 
     def __init__(self):
-        self._workers: Dict[str, WorkerEndpoint] = {}
+        self._workers: dict[str, WorkerEndpoint] = {}
         self._lock = asyncio.Lock()
 
     async def register(self, endpoint: WorkerEndpoint):
@@ -254,12 +257,12 @@ class WorkerRegistry:
                 del self._workers[node_id]
                 logger.info("worker_unregistered", node_id=node_id)
 
-    async def get_worker(self, node_id: str) -> Optional[WorkerEndpoint]:
+    async def get_worker(self, node_id: str) -> WorkerEndpoint | None:
         """获取指定节点"""
         async with self._lock:
             return self._workers.get(node_id)
 
-    async def get_all_workers(self) -> List[WorkerEndpoint]:
+    async def get_all_workers(self) -> list[WorkerEndpoint]:
         """获取所有 Worker"""
         async with self._lock:
             return list(self._workers.values())
@@ -277,7 +280,7 @@ class WorkerRegistry:
 
 
 # 全局 Worker 注册表
-_registry: Optional[WorkerRegistry] = None
+_registry: WorkerRegistry | None = None
 
 
 def get_worker_registry() -> WorkerRegistry:

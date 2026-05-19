@@ -1,18 +1,11 @@
 """端到端测试"""
 
-import pytest
-import asyncio
 import time
-from datetime import datetime
-from typing import Generator
 
+import pytest
 from fastapi.testclient import TestClient
-from httpx import AsyncClient, ASGITransport
 
 from quantumflow.api.server import create_app
-from quantumflow.scheduler import Scheduler, SchedulingRequest, NodeResource, GPUResource
-from quantumflow.cluster import ClusterManager, Node, NodeStatus, GPUInfo
-from quantumflow.inference import VLLMEngine, ModelConfig, SamplingParams
 
 
 class TestE2EInferenceWorkflow:
@@ -227,14 +220,16 @@ class TestE2EClusterManagement:
             "ip": "127.0.0.1",
             "port": 8000,
             "gpu_count": 1,
-            "gpu_info": [{
-                "gpu_id": 0,
-                "name": "Test GPU",
-                "memory_total": 16 * 1024**3,
-                "memory_used": 4 * 1024**3,
-                "utilization": 0.3,
-                "temperature": 45.0,
-            }],
+            "gpu_info": [
+                {
+                    "gpu_id": 0,
+                    "name": "Test GPU",
+                    "memory_total": 16 * 1024**3,
+                    "memory_used": 4 * 1024**3,
+                    "utilization": 0.3,
+                    "temperature": 45.0,
+                }
+            ],
             "status": "healthy",
             "cpu_count": 8,
             "memory_total": 32 * 1024**3,
@@ -286,9 +281,7 @@ class TestE2EClusterManagement:
 
     def test_node_action_drain(self, client, registered_node):
         """测试节点drain操作"""
-        response = client.post(
-            "/api/v1/cluster/nodes/local-node/action?action=drain"
-        )
+        response = client.post("/api/v1/cluster/nodes/local-node/action?action=drain")
 
         assert response.status_code == 200
         data = response.json()
@@ -297,9 +290,7 @@ class TestE2EClusterManagement:
 
     def test_node_action_uncordon(self, client, registered_node):
         """测试节点uncordon操作"""
-        response = client.post(
-            "/api/v1/cluster/nodes/local-node/action?action=uncordon"
-        )
+        response = client.post("/api/v1/cluster/nodes/local-node/action?action=uncordon")
 
         assert response.status_code == 200
 

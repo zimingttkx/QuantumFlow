@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
 from functools import lru_cache
+from pathlib import Path
+from typing import Any
+
 import yaml
 from pydantic import BaseModel, Field, field_validator
-from pydantic_settings import BaseSettings
 from typing_extensions import Self
-
-from quantumflow.core.constants import DEFAULT_CONFIG
 
 
 class APIConfig(BaseModel):
@@ -22,7 +20,7 @@ class APIConfig(BaseModel):
     workers: int = 4
     timeout: int = 300
     cors_enabled: bool = True
-    cors_origins: List[str] = ["*"]
+    cors_origins: list[str] = ["*"]
     rate_limit_enabled: bool = True
     rate_limit_requests_per_minute: int = 100
     rate_limit_burst: int = 20
@@ -49,7 +47,7 @@ class ClusterConfig(BaseModel):
 
     heartbeat_interval_seconds: int = 5
     heartbeat_timeout_seconds: int = 30
-    node_labels: List[str] = ["type", "zone", "gpu_type"]
+    node_labels: list[str] = ["type", "zone", "gpu_type"]
 
 
 class WorkerConfig(BaseModel):
@@ -91,8 +89,8 @@ class InferenceConfig(BaseModel):
     """推理配置"""
 
     default_backend: str = "vllm"
-    backends: Dict[str, InferenceBackendConfig] = {}
-    defaults: Dict[str, Any] = {
+    backends: dict[str, InferenceBackendConfig] = {}
+    defaults: dict[str, Any] = {
         "temperature": 0.7,
         "top_p": 0.9,
         "top_k": 50,
@@ -113,7 +111,7 @@ class RedisConfig(BaseModel):
     host: str = "localhost"
     port: int = 6379
     db: int = 0
-    password: Optional[str] = None
+    password: str | None = None
     pool_size: int = 20
     socket_timeout: int = 5
     socket_connect_timeout: int = 5
@@ -140,7 +138,7 @@ class MonitoringConfig(BaseModel):
 class ModelConfig(BaseModel):
     """模型配置"""
 
-    allowed_download_sources: List[str] = ["hf://", "modelscope://"]
+    allowed_download_sources: list[str] = ["hf://", "modelscope://"]
     cache_dir: str = "/root/.cache/huggingface"
     download_timeout_seconds: int = 3600
 
@@ -168,13 +166,13 @@ class QuantumFlowConfig(BaseModel):
     models: ModelConfig = Field(default_factory=ModelConfig)
 
     @classmethod
-    def from_file(cls, path: Union[str, Path]) -> Self:
+    def from_file(cls, path: str | Path) -> Self:
         """从YAML文件加载配置"""
         path = Path(path)
         if not path.exists():
             return cls()
 
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
 
         return cls(**data) if data else cls()
@@ -184,11 +182,11 @@ class QuantumFlowConfig(BaseModel):
         """从环境变量加载配置"""
         return cls()
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """转换为字典"""
         return self.model_dump()
 
-    def to_yaml(self, path: Union[str, Path]) -> None:
+    def to_yaml(self, path: str | Path) -> None:
         """保存为YAML文件"""
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -198,7 +196,7 @@ class QuantumFlowConfig(BaseModel):
 
 
 # 全局配置实例
-_config: Optional[QuantumFlowConfig] = None
+_config: QuantumFlowConfig | None = None
 
 
 def get_config() -> QuantumFlowConfig:
@@ -210,8 +208,8 @@ def get_config() -> QuantumFlowConfig:
 
 
 def load_config(
-    config_file: Optional[Union[str, Path]] = None,
-    environment: Optional[str] = None,
+    config_file: str | Path | None = None,
+    environment: str | None = None,
 ) -> QuantumFlowConfig:
     """加载配置
 

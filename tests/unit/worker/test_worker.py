@@ -1,13 +1,12 @@
 """Worker测试"""
 
-import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime
+from unittest.mock import AsyncMock
 
-from quantumflow.worker import WorkerNode, WorkerConfig
-from quantumflow.inference.engine import ModelConfig, SamplingParams
+import pytest
+
 from quantumflow.core.constants import NodeStatus
+from quantumflow.inference.engine import ModelConfig, SamplingParams
+from quantumflow.worker import WorkerConfig, WorkerNode
 
 
 class TestWorkerConfig:
@@ -96,14 +95,25 @@ class TestWorkerNode:
     async def test_inference_success(self, worker, mock_engine):
         """测试成功推理"""
         from quantumflow.inference.engine import InferenceResult
+
         mock_engine.is_model_loaded = AsyncMock(return_value=True)
-        mock_engine.generate = AsyncMock(return_value=[
-            InferenceResult(request_id="req-1", outputs=["Hello"], prompt_tokens=5,
-                          completion_tokens=3, latency_ms=100, finish_reason="stop")
-        ])
+        mock_engine.generate = AsyncMock(
+            return_value=[
+                InferenceResult(
+                    request_id="req-1",
+                    outputs=["Hello"],
+                    prompt_tokens=5,
+                    completion_tokens=3,
+                    latency_ms=100,
+                    finish_reason="stop",
+                )
+            ]
+        )
         result = await worker.inference(
-            request_id="req-1", model_name="test-model", prompts=["Hi"],
-            sampling_params=SamplingParams(max_tokens=100)
+            request_id="req-1",
+            model_name="test-model",
+            prompts=["Hi"],
+            sampling_params=SamplingParams(max_tokens=100),
         )
         assert result["status"] == "success"
         assert worker.completed_requests == 1
@@ -113,8 +123,10 @@ class TestWorkerNode:
         """测试模型未加载"""
         mock_engine.is_model_loaded = AsyncMock(return_value=False)
         result = await worker.inference(
-            request_id="req-1", model_name="test-model", prompts=["Hi"],
-            sampling_params=SamplingParams()
+            request_id="req-1",
+            model_name="test-model",
+            prompts=["Hi"],
+            sampling_params=SamplingParams(),
         )
         assert result["status"] == "error"
         assert worker.failed_requests == 1

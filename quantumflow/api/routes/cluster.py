@@ -1,19 +1,19 @@
 """集群管理路由"""
 
-from typing import List, Optional
-from datetime import datetime
-from fastapi import APIRouter, HTTPException, status, Query
+import os
 import platform
 import socket
-import os
 import time
+from datetime import datetime
+
 import psutil
 import structlog
+from fastapi import APIRouter, HTTPException, Query, status
 
 from quantumflow.api.models import (
-    NodeInfo,
     ClusterStatus,
     GPUInfo,
+    NodeInfo,
 )
 from quantumflow.cluster import get_cluster_manager
 from quantumflow.core.constants import NodeStatus as NodeStatusEnum
@@ -23,11 +23,12 @@ logger = structlog.get_logger().bind(component="api_cluster")
 router = APIRouter(prefix="/cluster", tags=["Cluster"])
 
 
-def _get_gpu_info() -> List[GPUInfo]:
+def _get_gpu_info() -> list[GPUInfo]:
     """获取真实GPU信息"""
     gpus = []
     try:
         import pynvml
+
         pynvml.nvmlInit()
         count = pynvml.nvmlDeviceGetCount()
         for i in range(count):
@@ -38,15 +39,17 @@ def _get_gpu_info() -> List[GPUInfo]:
             mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
             util = pynvml.nvmlDeviceGetUtilizationRates(handle)
             temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
-            gpus.append(GPUInfo(
-                gpu_id=i,
-                name=name,
-                memory_total=mem.total,
-                memory_used=mem.used,
-                memory_free=mem.free,
-                utilization=util.gpu / 100.0,
-                temperature=float(temp),
-            ))
+            gpus.append(
+                GPUInfo(
+                    gpu_id=i,
+                    name=name,
+                    memory_total=mem.total,
+                    memory_used=mem.used,
+                    memory_free=mem.free,
+                    utilization=util.gpu / 100.0,
+                    temperature=float(temp),
+                )
+            )
         pynvml.nvmlShutdown()
     except Exception:
         pass
@@ -54,20 +57,23 @@ def _get_gpu_info() -> List[GPUInfo]:
     if not gpus:
         try:
             import torch
+
             if torch.cuda.is_available():
                 for i in range(torch.cuda.device_count()):
                     props = torch.cuda.get_device_properties(i)
                     total = props.total_memory
                     allocated = torch.cuda.memory_allocated(i)
-                    gpus.append(GPUInfo(
-                        gpu_id=i,
-                        name=props.name,
-                        memory_total=total,
-                        memory_used=allocated,
-                        memory_free=total - allocated,
-                        utilization=0.0,
-                        temperature=0.0,
-                    ))
+                    gpus.append(
+                        GPUInfo(
+                            gpu_id=i,
+                            name=props.name,
+                            memory_total=total,
+                            memory_used=allocated,
+                            memory_free=total - allocated,
+                            utilization=0.0,
+                            temperature=0.0,
+                        )
+                    )
         except Exception:
             pass
 
@@ -83,6 +89,7 @@ def _build_local_node() -> NodeInfo:
     uptime = time.time() - psutil.boot_time()
 
     from quantumflow.inference import get_engine_manager
+
     engine_manager = get_engine_manager()
     loaded_models = engine_manager.get_loaded_models()
 
@@ -117,18 +124,22 @@ def _node_to_node_info(node) -> NodeInfo:
         port=node.port,
         status=node.status.value,
         gpu_count=node.gpu_count,
-        gpu_info=[
-            GPUInfo(
-                gpu_id=gpu.gpu_id,
-                name=gpu.name,
-                memory_total=gpu.memory_total,
-                memory_used=gpu.memory_used,
-                memory_free=gpu.memory_total - gpu.memory_used,
-                utilization=gpu.utilization,
-                temperature=gpu.temperature,
-            )
-            for gpu in node.gpu_info
-        ] if node.gpu_info else [],
+        gpu_info=(
+            [
+                GPUInfo(
+                    gpu_id=gpu.gpu_id,
+                    name=gpu.name,
+                    memory_total=gpu.memory_total,
+                    memory_used=gpu.memory_used,
+                    memory_free=gpu.memory_total - gpu.memory_used,
+                    utilization=gpu.utilization,
+                    temperature=gpu.temperature,
+                )
+                for gpu in node.gpu_info
+            ]
+            if node.gpu_info
+            else []
+        ),
         cpu_count=node.cpu_count,
         memory_total=node.memory_total,
         memory_available=node.memory_available,
@@ -167,12 +178,16 @@ async def get_cluster_status() -> ClusterStatus:
         draining_nodes=0,
         total_gpus=total_gpus,
         available_gpus=available_gpus,
-        active_models=len(set(m for n in nodes for m in n.loaded_models)),
+        active_models=len({m for n in nodes for m in n.loaded_models}),
         pending_jobs=0,
         running_jobs=0,
         system_metrics={
             "cpu_usage": psutil.cpu_percent(interval=0.1) / 100.0,
-            "memory_usage": 1.0 - (psutil.virtual_memory().available / psutil.virtual_memory().total) if psutil.virtual_memory().total else 0,
+            "memory_usage": (
+                1.0 - (psutil.virtual_memory().available / psutil.virtual_memory().total)
+                if psutil.virtual_memory().total
+                else 0
+            ),
             "gpu_usage": 0.0,
         },
         uptime_seconds=int(time.time() - psutil.boot_time()),
@@ -181,14 +196,14 @@ async def get_cluster_status() -> ClusterStatus:
 
 @router.get(
     "/nodes",
-    response_model=List[NodeInfo],
+    response_model=list[NodeInfo],
     summary="列出节点",
     description="列出所有计算节点",
 )
 async def list_nodes(
-    status_filter: Optional[str] = Query(None, description="状态过滤"),
-    zone: Optional[str] = Query(None, description="可用区过滤"),
-) -> List[NodeInfo]:
+    status_filter: str | None = Query(None, description="状态过滤"),
+    zone: str | None = Query(None, description="可用区过滤"),
+) -> list[NodeInfo]:
     """列出所有节点"""
     cluster_mgr = get_cluster_manager()
 

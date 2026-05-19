@@ -1,25 +1,22 @@
 """调度器核心"""
 
-from typing import Dict, List, Optional, Callable, Any
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from collections import defaultdict
+from typing import Any
+
 import structlog
 
+from quantumflow.scheduler.strategy.adaptive import AdaptiveSchedulingStrategy
 from quantumflow.scheduler.strategy.base import (
+    NodeResource,
     SchedulingRequest,
     SchedulingResult,
-    NodeResource,
     SchedulingStrategy,
 )
 from quantumflow.scheduler.strategy.gang import GangSchedulingStrategy
 from quantumflow.scheduler.strategy.pack import PackSchedulingStrategy
-from quantumflow.scheduler.strategy.adaptive import AdaptiveSchedulingStrategy
-from quantumflow.core.exceptions import (
-    SchedulerError,
-    SchedulerNodeUnavailableError,
-)
 from quantumflow.utils.config import get_config
 
 logger = structlog.get_logger().bind(component="scheduler")
@@ -31,8 +28,8 @@ class QueueItem:
 
     request: SchedulingRequest
     created_at: datetime = field(default_factory=datetime.now)
-    scheduled_at: Optional[datetime] = None
-    result: Optional[SchedulingResult] = None
+    scheduled_at: datetime | None = None
+    result: SchedulingResult | None = None
     retry_count: int = 0
 
 
@@ -61,25 +58,23 @@ class Scheduler:
         self.max_retries = max_retries
 
         # 策略注册
-        self.strategies: Dict[str, SchedulingStrategy] = {}
+        self.strategies: dict[str, SchedulingStrategy] = {}
         self._init_strategies()
 
         # 自适应策略
-        self.adaptive_strategy = AdaptiveSchedulingStrategy(
-            strategies=self.strategies
-        )
+        self.adaptive_strategy = AdaptiveSchedulingStrategy(strategies=self.strategies)
 
         # 请求队列（使用计数器确保可排序）
         self.pending_queue: asyncio.PriorityQueue = asyncio.PriorityQueue()
         self._request_counter: int = 0
-        self.running_requests: Dict[str, QueueItem] = {}
+        self.running_requests: dict[str, QueueItem] = {}
 
         # 节点状态
-        self.available_nodes: Dict[str, NodeResource] = {}
-        self.node_update_callbacks: List[Callable] = []
+        self.available_nodes: dict[str, NodeResource] = {}
+        self.node_update_callbacks: list[Callable] = []
 
         # 调度循环
-        self._scheduling_task: Optional[asyncio.Task] = None
+        self._scheduling_task: asyncio.Task | None = None
         self._running = False
 
         # 统计
@@ -93,14 +88,10 @@ class Scheduler:
     def _init_strategies(self):
         """初始化调度策略"""
         # Gang调度 - 大模型
-        self.strategies["gang"] = GangSchedulingStrategy(
-            config=self.config.scheduler.model_dump()
-        )
+        self.strategies["gang"] = GangSchedulingStrategy(config=self.config.scheduler.model_dump())
 
         # Pack调度 - 小模型
-        self.strategies["pack"] = PackSchedulingStrategy(
-            config=self.config.scheduler.model_dump()
-        )
+        self.strategies["pack"] = PackSchedulingStrategy(config=self.config.scheduler.model_dump())
 
     async def start(self):
         """启动调度器"""
@@ -207,9 +198,7 @@ class Scheduler:
                 self.stats["failed_requests"] += 1
                 await self._handle_scheduling_failure(request, result)
 
-    async def _schedule_request(
-        self, request: SchedulingRequest
-    ) -> SchedulingResult:
+    async def _schedule_request(self, request: SchedulingRequest) -> SchedulingResult:
         """调度单个请求"""
         # 获取可用节点列表
         nodes = list(self.available_nodes.values())
@@ -234,17 +223,15 @@ class Scheduler:
         return result
 
     def _get_strategy(
-        self, request: SchedulingRequest, nodes: List[NodeResource]
-    ) -> Optional[SchedulingStrategy]:
+        self, request: SchedulingRequest, nodes: list[NodeResource]
+    ) -> SchedulingStrategy | None:
         """获取调度策略"""
         if self.default_strategy == "adaptive":
             return self.adaptive_strategy
 
         return self.strategies.get(self.default_strategy)
 
-    async def _dispatch(
-        self, request: SchedulingRequest, result: SchedulingResult
-    ):
+    async def _dispatch(self, request: SchedulingRequest, result: SchedulingResult):
         """分发请求到Worker"""
         request_id = request.request_id
 
@@ -271,9 +258,13 @@ class Scheduler:
         task = asyncio.create_task(self._simulate_execution(request_id))
         # 临时方案：添加任务完成回调以便观察状态
         task.add_done_callback(
-            lambda t: logger.debug("simulated_execution_done", request_id=request_id)
-            if not t.exception()
-            else logger.error("simulated_execution_failed", request_id=request_id, error=str(t.exception()))
+            lambda t: (
+                logger.debug("simulated_execution_done", request_id=request_id)
+                if not t.exception()
+                else logger.error(
+                    "simulated_execution_failed", request_id=request_id, error=str(t.exception())
+                )
+            )
         )
 
     async def _handle_scheduling_failure(
@@ -366,7 +357,7 @@ class Scheduler:
 
     # ==================== 查询接口 ====================
 
-    def get_pending_requests(self) -> List[SchedulingRequest]:
+    def get_pending_requests(self) -> list[SchedulingRequest]:
         """获取待调度请求"""
         requests = []
         for _, _, _, request in self.pending_queue._queue:  # type: ignore
@@ -374,11 +365,11 @@ class Scheduler:
                 requests.append(request)
         return requests
 
-    def get_running_requests(self) -> Dict[str, QueueItem]:
+    def get_running_requests(self) -> dict[str, QueueItem]:
         """获取运行中的请求"""
         return self.running_requests.copy()
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """获取调度统计"""
         return {
             **self.stats,

@@ -1,17 +1,19 @@
 """HuggingFace TGI推理后端"""
 
-from typing import List, Dict, Optional, Any, AsyncIterator
-import time
 import asyncio
+import time
+from collections.abc import AsyncIterator
+from typing import Any
+
 import structlog
 
+from quantumflow.core.constants import InferenceBackendType
 from quantumflow.inference.engine import (
     InferenceEngine,
+    InferenceResult,
     ModelConfig,
     SamplingParams,
-    InferenceResult,
 )
-from quantumflow.core.constants import InferenceBackendType
 
 logger = structlog.get_logger().bind(component="tgi_backend")
 
@@ -26,13 +28,13 @@ class TGIEngine(InferenceEngine):
 
     def __init__(
         self,
-        config: Dict[str, Any] = None,
+        config: dict[str, Any] = None,
         base_url: str = "http://localhost:8080",
     ):
         super().__init__(InferenceBackendType.TGI)
         self.config = config or {}
         self.base_url = base_url.rstrip("/")
-        self._client: Optional[Any] = None
+        self._client: Any | None = None
         self._timeout = 300  # 超时时间（秒）
 
     async def initialize(self) -> bool:
@@ -119,18 +121,21 @@ class TGIEngine(InferenceEngine):
     async def generate(
         self,
         model_name: str,
-        prompts: List[str],
+        prompts: list[str],
         sampling_params: SamplingParams,
-    ) -> List[InferenceResult]:
+    ) -> list[InferenceResult]:
         """同步生成"""
         if not self._client:
             logger.error("tgi_client_not_initialized")
             return [
                 InferenceResult(
                     request_id=f"{model_name}_{i}",
-                    outputs=[f"[TGI错误: 客户端未初始化]"],
-                    prompt_tokens=0, completion_tokens=0, latency_ms=0,
-                    finish_reason="error", metrics={},
+                    outputs=["[TGI错误: 客户端未初始化]"],
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    latency_ms=0,
+                    finish_reason="error",
+                    metrics={},
                 )
                 for i in range(len(prompts))
             ]
@@ -197,7 +202,9 @@ class TGIEngine(InferenceEngine):
 
                     if isinstance(generated_tokens_val, list) and i < len(generated_tokens_val):
                         ct = generated_tokens_val[i]
-                    elif isinstance(generated_tokens_val, (int, float)) and len(generated_texts) > 0:
+                    elif (
+                        isinstance(generated_tokens_val, (int, float)) and len(generated_texts) > 0
+                    ):
                         ct = int(generated_tokens_val) // len(generated_texts)
                     else:
                         ct = len(text.split())
@@ -233,9 +240,12 @@ class TGIEngine(InferenceEngine):
             return [
                 InferenceResult(
                     request_id=f"{model_name}_{i}",
-                    outputs=[f"[TGI超时]"],
-                    prompt_tokens=0, completion_tokens=0, latency_ms=0,
-                    finish_reason="error", metrics={},
+                    outputs=["[TGI超时]"],
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    latency_ms=0,
+                    finish_reason="error",
+                    metrics={},
                 )
                 for i in range(len(prompts))
             ]
@@ -249,8 +259,11 @@ class TGIEngine(InferenceEngine):
                 InferenceResult(
                     request_id=f"{model_name}_{i}",
                     outputs=[f"[TGI错误: {str(e)}]"],
-                    prompt_tokens=0, completion_tokens=0, latency_ms=0,
-                    finish_reason="error", metrics={},
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    latency_ms=0,
+                    finish_reason="error",
+                    metrics={},
                 )
                 for i in range(len(prompts))
             ]
@@ -320,7 +333,7 @@ class TGIEngine(InferenceEngine):
                 error=str(e),
             )
 
-    async def get_stats(self, model_name: str) -> Dict[str, float]:
+    async def get_stats(self, model_name: str) -> dict[str, float]:
         """获取引擎统计"""
         if not self._client:
             return {}

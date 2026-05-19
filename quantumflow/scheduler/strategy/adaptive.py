@@ -1,12 +1,13 @@
 """自适应调度策略"""
 
-from typing import List, Dict, Callable
+from collections.abc import Callable
+
 import structlog
 
 from quantumflow.scheduler.strategy.base import (
+    NodeResource,
     SchedulingRequest,
     SchedulingResult,
-    NodeResource,
     SchedulingStrategy,
     StrategyType,
 )
@@ -26,8 +27,8 @@ class AdaptiveSchedulingStrategy(SchedulingStrategy):
 
     def __init__(
         self,
-        strategies: Dict[str, SchedulingStrategy] = None,
-        rules: List[Dict] = None,
+        strategies: dict[str, SchedulingStrategy] = None,
+        rules: list[dict] = None,
     ):
         super().__init__(StrategyType.ADAPTIVE)
         self.strategies = strategies or {}
@@ -37,7 +38,7 @@ class AdaptiveSchedulingStrategy(SchedulingStrategy):
     def name(self) -> str:
         return "adaptive"
 
-    def _default_rules(self) -> List[Dict]:
+    def _default_rules(self) -> list[dict]:
         """默认调度规则"""
         return [
             # 规则1：大模型使用Gang调度
@@ -67,7 +68,7 @@ class AdaptiveSchedulingStrategy(SchedulingStrategy):
         ]
 
     def _evaluate_condition(
-        self, condition: Callable, request: SchedulingRequest, nodes: List[NodeResource]
+        self, condition: Callable, request: SchedulingRequest, nodes: list[NodeResource]
     ) -> bool:
         """评估条件"""
         try:
@@ -76,7 +77,7 @@ class AdaptiveSchedulingStrategy(SchedulingStrategy):
             return False
 
     def _select_best_strategy(
-        self, request: SchedulingRequest, available_nodes: List[NodeResource]
+        self, request: SchedulingRequest, available_nodes: list[NodeResource]
     ) -> str:
         """选择最佳策略"""
         # 按优先级排序规则
@@ -92,14 +93,12 @@ class AdaptiveSchedulingStrategy(SchedulingStrategy):
         # 默认使用Pack
         return "pack"
 
-    def can_handle(
-        self, request: SchedulingRequest, available_nodes: List[NodeResource]
-    ) -> bool:
+    def can_handle(self, request: SchedulingRequest, available_nodes: list[NodeResource]) -> bool:
         """总是可以使用自适应策略"""
         return True
 
     def select_nodes(
-        self, request: SchedulingRequest, available_nodes: List[NodeResource]
+        self, request: SchedulingRequest, available_nodes: list[NodeResource]
     ) -> SchedulingResult:
         """使用自适应策略选择节点"""
         if not available_nodes:
@@ -163,8 +162,10 @@ class AdaptiveSchedulingStrategy(SchedulingStrategy):
         priority: int = 5,
     ):
         """添加调度规则"""
-        self.rules.append({
-            "condition": condition,
-            "strategy": strategy,
-            "priority": priority,
-        })
+        self.rules.append(
+            {
+                "condition": condition,
+                "strategy": strategy,
+                "priority": priority,
+            }
+        )

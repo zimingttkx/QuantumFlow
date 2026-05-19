@@ -1,15 +1,15 @@
 """Worker API 路由测试"""
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from fastapi.testclient import TestClient
 import sys
+from unittest.mock import AsyncMock
 
-sys.path.insert(0, '/home/dingziming/PycharmProjects/QuantumFlow')
+import pytest
+from fastapi.testclient import TestClient
 
-from quantumflow.worker import WorkerNode, WorkerConfig
-from quantumflow.worker.api_routes import create_worker_router
+sys.path.insert(0, "/home/dingziming/PycharmProjects/QuantumFlow")
+
 from quantumflow.core.constants import NodeStatus
+from quantumflow.worker import WorkerConfig, WorkerNode
 
 
 class TestWorkerAPIRoutes:
@@ -85,7 +85,7 @@ class TestWorkerAPIRoutes:
                 "model_name": "new-model",
                 "model_path": "/models/new",
                 "backend": "huggingface",
-            }
+            },
         )
         assert response.status_code == 200
         data = response.json()
@@ -101,7 +101,7 @@ class TestWorkerAPIRoutes:
             json={
                 "model_name": "fail-model",
                 "model_path": "/models/fail",
-            }
+            },
         )
         assert response.status_code == 200
         data = response.json()
@@ -109,10 +109,7 @@ class TestWorkerAPIRoutes:
 
     def test_unload_model_endpoint(self, client, worker, mock_engine):
         """[正常用例] 卸载模型端点正常工作"""
-        response = client.post(
-            "/api/v1/worker/unload_model",
-            json={"model_name": "test-model"}
-        )
+        response = client.post("/api/v1/worker/unload_model", json={"model_name": "test-model"})
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "success"
@@ -131,16 +128,18 @@ class TestWorkerAPIRoutes:
         from quantumflow.inference.engine import InferenceResult
 
         mock_engine.is_model_loaded = AsyncMock(return_value=True)
-        mock_engine.generate = AsyncMock(return_value=[
-            InferenceResult(
-                request_id="req-1",
-                outputs=["Hello world"],
-                prompt_tokens=5,
-                completion_tokens=2,
-                latency_ms=100,
-                finish_reason="stop"
-            )
-        ])
+        mock_engine.generate = AsyncMock(
+            return_value=[
+                InferenceResult(
+                    request_id="req-1",
+                    outputs=["Hello world"],
+                    prompt_tokens=5,
+                    completion_tokens=2,
+                    latency_ms=100,
+                    finish_reason="stop",
+                )
+            ]
+        )
 
         response = client.post(
             "/api/v1/worker/inference",
@@ -151,8 +150,8 @@ class TestWorkerAPIRoutes:
                 "sampling_params": {
                     "temperature": 0.7,
                     "max_tokens": 100,
-                }
-            }
+                },
+            },
         )
         assert response.status_code == 200
         data = response.json()
@@ -170,7 +169,7 @@ class TestWorkerAPIRoutes:
                 "request_id": "req-1",
                 "model_name": "unloaded-model",
                 "prompts": ["Hi"],
-            }
+            },
         )
         assert response.status_code == 200
         data = response.json()
@@ -190,7 +189,7 @@ class TestWorkerAPIRoutes:
                 "request_id": "req-1",
                 "model_name": "test-model",
                 "prompts": ["Hi"],
-            }
+            },
         )
         # API 返回 200 和错误状态，因为推理请求被正确处理了，只是执行失败
         assert response.status_code == 200
@@ -209,7 +208,7 @@ class TestWorkerNodeCreateApp:
         app = worker.create_app()
 
         assert app is not None
-        assert app.title == f"QuantumFlow Worker - test-worker"
+        assert app.title == "QuantumFlow Worker - test-worker"
 
     def test_app_has_worker_router(self):
         """[正常用例] app 包含 worker 路由"""

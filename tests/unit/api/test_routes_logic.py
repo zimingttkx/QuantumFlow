@@ -9,25 +9,20 @@
 6. 流式接口数据格式正确性
 """
 
-import pytest
-import asyncio
-import time
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from fastapi.testclient import TestClient
-from httpx import AsyncClient, ASGITransport
-
 import sys
-sys.path.insert(0, '/home/dingziming/PycharmProjects/QuantumFlow')
+import time
+from unittest.mock import Mock, patch
 
-from quantumflow.api.server import create_app
+import pytest
+
+sys.path.insert(0, "/home/dingziming/PycharmProjects/QuantumFlow")
+
 from quantumflow.api.models import (
-    InferenceRequest,
-    InferenceResponse,
-    BatchInferenceRequest,
     BatchInferenceResponse,
     ChatRequest,
+    InferenceRequest,
+    InferenceResponse,
 )
-from quantumflow.inference.engine import SamplingParams
 
 
 class TestBatchResponseStatistics:
@@ -257,7 +252,7 @@ class TestEnsureModelLoadedLogic:
         """模型已加载时返回 True"""
         from quantumflow.api.routes.inference import _ensure_model_loaded
 
-        with patch('quantumflow.api.routes.inference.get_engine_manager') as mock_get_mgr:
+        with patch("quantumflow.api.routes.inference.get_engine_manager") as mock_get_mgr:
             mock_mgr = Mock()
             mock_mgr.is_model_loaded = Mock(return_value=True)
             mock_get_mgr.return_value = mock_mgr
@@ -272,7 +267,7 @@ class TestEnsureModelLoadedLogic:
         """模型未加载时返回 False 并给出提示"""
         from quantumflow.api.routes.inference import _ensure_model_loaded
 
-        with patch('quantumflow.api.routes.inference.get_engine_manager') as mock_get_mgr:
+        with patch("quantumflow.api.routes.inference.get_engine_manager") as mock_get_mgr:
             mock_mgr = Mock()
             mock_mgr.is_model_loaded = Mock(return_value=False)
             mock_get_mgr.return_value = mock_mgr

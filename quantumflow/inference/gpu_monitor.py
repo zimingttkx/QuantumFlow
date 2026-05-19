@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
+
 import structlog
 
 logger = structlog.get_logger().bind(component="gpu_monitor")
@@ -14,13 +16,14 @@ logger = structlog.get_logger().bind(component="gpu_monitor")
 @dataclass
 class GPUSnapshot:
     """单次采样的GPU状态"""
+
     index: int
     name: str
     total_vram_gb: float
     used_vram_gb: float
     free_vram_gb: float
-    utilization_pct: float   # GPU计算利用率（执行单元活跃度）
-    memory_util_pct: float   # GPU显存带宽利用率（memory控制器活跃度）
+    utilization_pct: float  # GPU计算利用率（执行单元活跃度）
+    memory_util_pct: float  # GPU显存带宽利用率（memory控制器活跃度）
     temperature_c: float
     timestamp: float = field(default_factory=time.time)
 
@@ -47,16 +50,17 @@ class GPUMonitor:
 
     def __init__(self, interval_seconds: float = 5.0):
         self.interval_seconds = interval_seconds
-        self._latest: List[GPUSnapshot] = []
-        self._task: Optional[asyncio.Task] = None
+        self._latest: list[GPUSnapshot] = []
+        self._task: asyncio.Task | None = None
         self._running = False
-        self._subscribers: List[Callable[[List[GPUSnapshot]], Any]] = []
+        self._subscribers: list[Callable[[list[GPUSnapshot]], Any]] = []
         self._sample_count: int = 0
 
         # pynvml 初始化
         self._pynvml_available = False
         try:
             import pynvml
+
             pynvml.nvmlInit()
             self._pynvml_available = True
             self._gpu_count = pynvml.nvmlDeviceGetCount()
@@ -65,6 +69,7 @@ class GPUMonitor:
             if self._pynvml_available:
                 try:
                     import pynvml
+
                     pynvml.nvmlShutdown()
                 except Exception:
                     pass
@@ -74,11 +79,11 @@ class GPUMonitor:
     # ── public API ─────────────────────────────────────────
 
     @property
-    def latest(self) -> List[GPUSnapshot]:
+    def latest(self) -> list[GPUSnapshot]:
         """最新的GPU快照列表"""
         return self._latest
 
-    def subscribe(self, callback: Callable[[List[GPUSnapshot]], Any]):
+    def subscribe(self, callback: Callable[[list[GPUSnapshot]], Any]):
         """注册回调，每次采样后调用"""
         self._subscribers.append(callback)
 
@@ -101,7 +106,7 @@ class GPUMonitor:
                 pass
         logger.info("gpu_monitor_stopped", samples_collected=self._sample_count)
 
-    def collect_snapshot(self) -> List[GPUSnapshot]:
+    def collect_snapshot(self) -> list[GPUSnapshot]:
         """执行一次同步采集（用于测试或按需查询）"""
         return self._read_gpu_state()
 
@@ -118,7 +123,7 @@ class GPUMonitor:
                 for cb in self._subscribers:
                     try:
                         result = cb(snapshots)
-                        if hasattr(result, '__await__'):
+                        if hasattr(result, "__await__"):
                             await result
                     except Exception:
                         pass
@@ -142,14 +147,15 @@ class GPUMonitor:
 
             await asyncio.sleep(self.interval_seconds)
 
-    def _read_gpu_state(self) -> List[GPUSnapshot]:
+    def _read_gpu_state(self) -> list[GPUSnapshot]:
         """读取GPU状态（同步）"""
         if self._pynvml_available:
             return self._read_via_pynvml()
         return self._read_via_torch()
 
-    def _read_via_pynvml(self) -> List[GPUSnapshot]:
+    def _read_via_pynvml(self) -> list[GPUSnapshot]:
         import pynvml
+
         snapshots = []
         for i in range(self._gpu_count):
             try:
@@ -163,23 +169,26 @@ class GPUMonitor:
                     temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
                 except Exception:
                     temp = 0
-                snapshots.append(GPUSnapshot(
-                    index=i,
-                    name=name,
-                    total_vram_gb=mem.total / (1024**3),
-                    used_vram_gb=mem.used / (1024**3),
-                    free_vram_gb=mem.free / (1024**3),
-                    utilization_pct=util.gpu,       # 计算利用率：CUDA核心活跃度
-                    memory_util_pct=util.memory,    # 显存带宽利用率：HBM控制器活跃度
-                    temperature_c=temp,
-                ))
+                snapshots.append(
+                    GPUSnapshot(
+                        index=i,
+                        name=name,
+                        total_vram_gb=mem.total / (1024**3),
+                        used_vram_gb=mem.used / (1024**3),
+                        free_vram_gb=mem.free / (1024**3),
+                        utilization_pct=util.gpu,  # 计算利用率：CUDA核心活跃度
+                        memory_util_pct=util.memory,  # 显存带宽利用率：HBM控制器活跃度
+                        temperature_c=temp,
+                    )
+                )
             except Exception:
                 pass
         return snapshots
 
-    def _read_via_torch(self) -> List[GPUSnapshot]:
+    def _read_via_torch(self) -> list[GPUSnapshot]:
         try:
             import torch
+
             if not torch.cuda.is_available():
                 return []
             snapshots = []
@@ -187,16 +196,18 @@ class GPUMonitor:
                 props = torch.cuda.get_device_properties(i)
                 total = props.total_memory / (1024**3)
                 allocated = torch.cuda.memory_allocated(i) / (1024**3)
-                snapshots.append(GPUSnapshot(
-                    index=i,
-                    name=props.name,
-                    total_vram_gb=total,
-                    used_vram_gb=allocated,
-                    free_vram_gb=total - allocated,
-                    utilization_pct=0.0,   # torch不提供单独的计算/memory利用率分离指标
-                    memory_util_pct=0.0,
-                    temperature_c=0.0,
-                ))
+                snapshots.append(
+                    GPUSnapshot(
+                        index=i,
+                        name=props.name,
+                        total_vram_gb=total,
+                        used_vram_gb=allocated,
+                        free_vram_gb=total - allocated,
+                        utilization_pct=0.0,  # torch不提供单独的计算/memory利用率分离指标
+                        memory_util_pct=0.0,
+                        temperature_c=0.0,
+                    )
+                )
             return snapshots
         except Exception:
             return []
@@ -205,6 +216,7 @@ class GPUMonitor:
         if self._pynvml_available:
             try:
                 import pynvml
+
                 pynvml.nvmlShutdown()
             except Exception:
                 pass

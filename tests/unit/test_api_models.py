@@ -1,24 +1,25 @@
 """API单元测试"""
 
-import pytest
 from datetime import datetime
+
+import pytest
 from pydantic import ValidationError
 
 from quantumflow.api.models import (
-    SamplingParams,
-    InferenceRequest,
     BatchInferenceRequest,
     ChatMessage,
     ChatRequest,
+    ClusterStatus,
     DeployRequest,
+    ErrorDetail,
+    ErrorResponse,
+    GPUInfo,
+    HealthResponse,
+    InferenceRequest,
     InferenceResponse,
     ModelInfo,
     NodeInfo,
-    GPUInfo,
-    ClusterStatus,
-    HealthResponse,
-    ErrorResponse,
-    ErrorDetail,
+    SamplingParams,
 )
 
 
@@ -300,7 +301,6 @@ class TestNodeInfo:
 
     def test_valid_node_info(self):
         """测试有效节点信息"""
-        from datetime import datetime
 
         info = NodeInfo(
             node_id="node-1",

@@ -3,8 +3,8 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, List, Optional, Any
 from enum import Enum
+from typing import Any
 
 
 class StrategyType(str, Enum):
@@ -21,15 +21,15 @@ class SchedulingRequest:
 
     request_id: str
     model: str
-    model_config: Dict[str, Any] = field(default_factory=dict)
+    model_config: dict[str, Any] = field(default_factory=dict)
     prompt: str = ""
     prompt_length: int = 0
     max_tokens: int = 2048
     priority: int = 5
-    session_id: Optional[str] = None
-    tags: Dict[str, str] = field(default_factory=dict)
+    session_id: str | None = None
+    tags: dict[str, str] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
-    deadline: Optional[float] = None
+    deadline: float | None = None
     retry_count: int = 0  # 追踪重试次数
 
     @property
@@ -77,20 +77,20 @@ class NodeResource:
     ip: str
     status: str
     gpu_count: int
-    gpus: List[GPUResource]
+    gpus: list[GPUResource]
     cpu_count: int
     memory_total: int
     memory_available: int
     disk_total: int
     disk_available: int
     load: float
-    labels: Dict[str, str] = field(default_factory=dict)
-    loaded_models: List[str] = field(default_factory=list)
+    labels: dict[str, str] = field(default_factory=dict)
+    loaded_models: list[str] = field(default_factory=list)
     version: str = "1.0.0"
     last_heartbeat: datetime = field(default_factory=datetime.now)
 
     @property
-    def available_gpus(self) -> List[GPUResource]:
+    def available_gpus(self) -> list[GPUResource]:
         """获取可用GPU"""
         return [gpu for gpu in self.gpus if gpu.memory_free_percent > 0.1]
 
@@ -104,7 +104,7 @@ class NodeResource:
         """节点是否健康"""
         return self.status == "healthy"
 
-    def can_fit_model(self, model_config: Dict[str, Any]) -> bool:
+    def can_fit_model(self, model_config: dict[str, Any]) -> bool:
         """检查是否能容纳模型"""
         required_memory = model_config.get("estimated_memory", 0)
         required_gpus = model_config.get("tensor_parallel", 1)
@@ -112,9 +112,7 @@ class NodeResource:
         if len(self.available_gpus) < required_gpus:
             return False
 
-        available_memory = sum(
-            gpu.memory_available for gpu in self.available_gpus[:required_gpus]
-        )
+        available_memory = sum(gpu.memory_available for gpu in self.available_gpus[:required_gpus])
 
         return available_memory >= required_memory
 
@@ -124,13 +122,13 @@ class SchedulingResult:
     """调度结果"""
 
     success: bool
-    assigned_nodes: List[str] = field(default_factory=list)
-    assigned_gpus: Dict[str, List[int]] = field(default_factory=dict)
+    assigned_nodes: list[str] = field(default_factory=list)
+    assigned_gpus: dict[str, list[int]] = field(default_factory=dict)
     estimated_wait_time: float = 0.0
     estimated_latency: float = 0.0
     strategy_used: str = ""
-    reason: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    reason: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class SchedulingStrategy(ABC):
@@ -146,22 +144,18 @@ class SchedulingStrategy(ABC):
         pass
 
     @abstractmethod
-    def can_handle(
-        self, request: SchedulingRequest, available_nodes: List[NodeResource]
-    ) -> bool:
+    def can_handle(self, request: SchedulingRequest, available_nodes: list[NodeResource]) -> bool:
         """判断是否可以使用此策略"""
         pass
 
     @abstractmethod
     def select_nodes(
-        self, request: SchedulingRequest, available_nodes: List[NodeResource]
+        self, request: SchedulingRequest, available_nodes: list[NodeResource]
     ) -> SchedulingResult:
         """选择最优节点组合"""
         pass
 
-    def estimate_wait_time(
-        self, request: SchedulingRequest, nodes: List[NodeResource]
-    ) -> float:
+    def estimate_wait_time(self, request: SchedulingRequest, nodes: list[NodeResource]) -> float:
         """估算等待时间（秒）"""
         if not nodes:
             return float("inf")
@@ -172,9 +166,7 @@ class SchedulingStrategy(ABC):
 
         return base_time * (1 + avg_load)
 
-    def estimate_latency(
-        self, request: SchedulingRequest, nodes: List[NodeResource]
-    ) -> float:
+    def estimate_latency(self, request: SchedulingRequest, nodes: list[NodeResource]) -> float:
         """估算推理延迟（秒）"""
         # 简单估算
         prompt_tokens = request.prompt_length // 4
@@ -185,8 +177,6 @@ class SchedulingStrategy(ABC):
 
         return (prompt_tokens + completion_tokens) * time_per_token
 
-    def filter_healthy_nodes(
-        self, nodes: List[NodeResource]
-    ) -> List[NodeResource]:
+    def filter_healthy_nodes(self, nodes: list[NodeResource]) -> list[NodeResource]:
         """过滤健康节点"""
         return [n for n in nodes if n.is_healthy]

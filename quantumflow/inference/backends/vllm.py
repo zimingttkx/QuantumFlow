@@ -1,17 +1,19 @@
 """vLLM推理后端"""
 
 import asyncio
-from typing import List, Dict, Optional, Any, AsyncIterator
 import time
+from collections.abc import AsyncIterator
+from typing import Any
+
 import structlog
 
+from quantumflow.core.constants import InferenceBackendType
 from quantumflow.inference.engine import (
     InferenceEngine,
+    InferenceResult,
     ModelConfig,
     SamplingParams,
-    InferenceResult,
 )
-from quantumflow.core.constants import InferenceBackendType
 
 logger = structlog.get_logger().bind(component="vllm_backend")
 
@@ -19,6 +21,7 @@ logger = structlog.get_logger().bind(component="vllm_backend")
 def _build_vllm_llm(config: ModelConfig):
     """同步构造 vLLM LLM 实例（供 run_in_executor 调用）"""
     import os
+
     from vllm import LLM
 
     os.environ.setdefault("VLLM_ALLOW_LONG_MAX_MODEL_LEN", "1")
@@ -31,7 +34,7 @@ def _build_vllm_llm(config: ModelConfig):
         dtype=config.dtype,
         quantization=config.quantization,
         trust_remote_code=config.trust_remote_code,
-        enforce_eager=getattr(config, 'enforce_eager', False),
+        enforce_eager=getattr(config, "enforce_eager", False),
         # vLLM 0.21+ 的 Chunked Prefill 是内置默认行为，无需显式开关
     )
 
@@ -44,15 +47,16 @@ def _run_vllm_generate(llm, prompts, vllm_params):
 class VLLMEngine(InferenceEngine):
     """vLLM推理引擎实现"""
 
-    def __init__(self, config: Dict[str, Any] = None):
+    def __init__(self, config: dict[str, Any] = None):
         super().__init__(InferenceBackendType.VLLM)
         self.config = config or {}
-        self._llm_instances: Dict[str, Any] = {}
-        self._async_engines: Dict[str, Any] = {}
+        self._llm_instances: dict[str, Any] = {}
+        self._async_engines: dict[str, Any] = {}
 
     async def initialize(self) -> bool:
         try:
             import vllm
+
             logger.info("vllm_initializing", version=vllm.__version__)
             self._is_initialized = True
             logger.info("vllm_initialized")
@@ -100,10 +104,12 @@ class VLLMEngine(InferenceEngine):
             del self._loaded_models[model_name]
 
             import gc
+
             gc.collect()
 
             try:
                 import torch
+
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
             except Exception:
@@ -116,17 +122,20 @@ class VLLMEngine(InferenceEngine):
     async def generate(
         self,
         model_name: str,
-        prompts: List[str],
+        prompts: list[str],
         sampling_params: SamplingParams,
-    ) -> List[InferenceResult]:
+    ) -> list[InferenceResult]:
         if model_name not in self._llm_instances:
             logger.error("model_not_loaded", model=model_name)
             return [
                 InferenceResult(
                     request_id=f"{model_name}_{i}",
-                    outputs=[f"[vLLM错误: 模型未加载]"],
-                    prompt_tokens=0, completion_tokens=0, latency_ms=0,
-                    finish_reason="error", metrics={},
+                    outputs=["[vLLM错误: 模型未加载]"],
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    latency_ms=0,
+                    finish_reason="error",
+                    metrics={},
                 )
                 for i in range(len(prompts))
             ]
@@ -157,8 +166,14 @@ class VLLMEngine(InferenceEngine):
             for i, output in enumerate(outputs):
                 output_text = output.outputs[0].text
                 finish_reason = output.outputs[0].finish_reason or "stop"
-                prompt_tokens = len(output.prompt_token_ids) if output.prompt_token_ids is not None else 0
-                completion_tokens = len(output.outputs[0].token_ids) if output.outputs[0].token_ids is not None else 0
+                prompt_tokens = (
+                    len(output.prompt_token_ids) if output.prompt_token_ids is not None else 0
+                )
+                completion_tokens = (
+                    len(output.outputs[0].token_ids)
+                    if output.outputs[0].token_ids is not None
+                    else 0
+                )
                 results.append(
                     InferenceResult(
                         request_id=f"{model_name}_{i}",
@@ -179,8 +194,11 @@ class VLLMEngine(InferenceEngine):
                 InferenceResult(
                     request_id=f"{model_name}_{i}",
                     outputs=[f"[vLLM错误: {str(e)}]"],
-                    prompt_tokens=0, completion_tokens=0, latency_ms=0,
-                    finish_reason="error", metrics={},
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    latency_ms=0,
+                    finish_reason="error",
+                    metrics={},
                 )
                 for i in range(len(prompts))
             ]
@@ -221,9 +239,9 @@ class VLLMEngine(InferenceEngine):
                     text = output_item.text
                     if text:
                         # 按空白字符拆分，逐个 yield 单词+空格
-                        parts = text.split(' ')
+                        parts = text.split(" ")
                         for i, part in enumerate(parts):
-                            chunk = part + (' ' if i < len(parts) - 1 else '')
+                            chunk = part + (" " if i < len(parts) - 1 else "")
                             if chunk:
                                 yield chunk
                                 await asyncio.sleep(0.01)
@@ -231,13 +249,14 @@ class VLLMEngine(InferenceEngine):
         except Exception as e:
             logger.error("stream_generate_error", model=model_name, error=str(e))
 
-    async def get_stats(self, model_name: str) -> Dict[str, float]:
+    async def get_stats(self, model_name: str) -> dict[str, float]:
         if model_name not in self._llm_instances:
             return {}
 
         try:
             import torch
-            stats: Dict[str, float] = {}
+
+            stats: dict[str, float] = {}
             if torch.cuda.is_available():
                 stats["gpu_memory_allocated"] = torch.cuda.memory_allocated() / (1024**3)
                 stats["gpu_memory_reserved"] = torch.cuda.memory_reserved() / (1024**3)

@@ -1,21 +1,20 @@
 """调度策略单元测试"""
 
-import pytest
-import asyncio
-from datetime import datetime, timedelta
-from unittest.mock import Mock, AsyncMock, MagicMock, patch
+from unittest.mock import Mock
 
+import pytest
+
+from quantumflow.scheduler.strategy.adaptive import AdaptiveSchedulingStrategy
 from quantumflow.scheduler.strategy.base import (
-    SchedulingStrategy,
+    GPUResource,
+    NodeResource,
     SchedulingRequest,
     SchedulingResult,
-    NodeResource,
-    GPUResource,
+    SchedulingStrategy,
     StrategyType,
 )
 from quantumflow.scheduler.strategy.gang import GangSchedulingStrategy
 from quantumflow.scheduler.strategy.pack import PackSchedulingStrategy
-from quantumflow.scheduler.strategy.adaptive import AdaptiveSchedulingStrategy
 
 
 class TestGPUResource:
@@ -582,9 +581,7 @@ class TestAdaptiveSchedulingStrategy:
         """创建策略实例"""
         gang = GangSchedulingStrategy()
         pack = PackSchedulingStrategy()
-        return AdaptiveSchedulingStrategy(
-            strategies={"gang": gang, "pack": pack}
-        )
+        return AdaptiveSchedulingStrategy(strategies={"gang": gang, "pack": pack})
 
     @pytest.fixture
     def healthy_nodes(self):

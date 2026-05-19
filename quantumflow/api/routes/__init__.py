@@ -2,7 +2,16 @@
 
 from fastapi import APIRouter
 
-from quantumflow.api.routes import health, inference, models, cluster, metrics, model_management, hub, scheduler
+from quantumflow.api.routes import (
+    cluster,
+    health,
+    hub,
+    inference,
+    metrics,
+    model_management,
+    models,
+    scheduler,
+)
 
 router = APIRouter()
 

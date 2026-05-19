@@ -9,19 +9,17 @@
 6. 边界值与异常场景覆盖
 """
 
-import pytest
-import asyncio
-import torch
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from typing import List
-
 # 待测试模块
 import sys
-sys.path.insert(0, '/home/dingziming/PycharmProjects/QuantumFlow')
+from unittest.mock import Mock
+
+import pytest
+import torch
+
+sys.path.insert(0, "/home/dingziming/PycharmProjects/QuantumFlow")
 
 from quantumflow.inference.backends.huggingface import HuggingFaceEngine
-from quantumflow.inference.engine import ModelConfig, SamplingParams, InferenceResult
-from quantumflow.core.constants import InferenceBackendType
+from quantumflow.inference.engine import InferenceResult, ModelConfig, SamplingParams
 
 
 class TestSampleTokenLogic:
@@ -38,7 +36,7 @@ class TestSampleTokenLogic:
     def mock_logits(self):
         """创建稳定的 mock logits [vocab_size=100]"""
         logits = torch.zeros(100)
-        logits[0] = 10.0   # token 0 最高概率
+        logits[0] = 10.0  # token 0 最高概率
         logits[1] = 5.0
         logits[50] = 1.0
         return logits
@@ -73,7 +71,7 @@ class TestSampleTokenLogic:
         """top_k=1 必须只保留概率最高的 1 个 token"""
         logits = torch.zeros(100)
         logits[0] = 10.0  # 最高
-        logits[1] = 9.0   # 第二高
+        logits[1] = 9.0  # 第二高
         logits[2] = 8.0
         logits[99] = -100.0  # 最低
 
@@ -105,9 +103,9 @@ class TestSampleTokenLogic:
     def test_top_p_nucleus_sampling_filters(self, engine):
         """top_p=0.9 Nucleus Sampling 必须过滤掉累计概率超过阈值的 token"""
         logits = torch.zeros(10)
-        logits[0] = 0.5   # p=0.5
-        logits[1] = 0.3   # 累计 0.8
-        logits[2] = 0.1   # 累计 0.9 <= 0.9
+        logits[0] = 0.5  # p=0.5
+        logits[1] = 0.3  # 累计 0.8
+        logits[2] = 0.1  # 累计 0.9 <= 0.9
         logits[3] = 0.05  # 累计 0.95 > 0.9，应该被过滤
 
         torch.manual_seed(42)
@@ -143,7 +141,9 @@ class TestSampleTokenLogic:
         # 验证：即使 _generated_tokens 有 3 个相同的 token 5，
         # 惩罚也只应用一次（因为用 set 去重了）
         # 所以 token 5 仍然是最高概率
-        assert result_before.item() == 5, f"重复惩罚去重后 token 5 仍应是最高，实际: {result_before.item()}"
+        assert (
+            result_before.item() == 5
+        ), f"重复惩罚去重后 token 5 仍应是最高，实际: {result_before.item()}"
 
     def test_repetition_penalty_does_not_affect_untouched_tokens(self, engine):
         """重复惩罚不能影响未生成过的 token"""
@@ -200,8 +200,10 @@ class TestChunkedPrefillDecision:
     def test_threshold_constant_value(self):
         """CHUNKED_PREFILL_THRESHOLD_TOKENS 必须等于 512"""
         from quantumflow.inference.backends.huggingface import CHUNKED_PREFILL_THRESHOLD_TOKENS
-        assert CHUNKED_PREFILL_THRESHOLD_TOKENS == 512, \
-            f"阈值必须是 512，实际: {CHUNKED_PREFILL_THRESHOLD_TOKENS}"
+
+        assert (
+            CHUNKED_PREFILL_THRESHOLD_TOKENS == 512
+        ), f"阈值必须是 512，实际: {CHUNKED_PREFILL_THRESHOLD_TOKENS}"
 
 
 class TestChunkedGenerateImpl:
@@ -344,9 +346,33 @@ class TestGenerateMethod:
 
         # 模拟 3 个 prompts 的结果
         mock_results = [
-            InferenceResult(request_id="model_0", outputs=["a"], prompt_tokens=1, completion_tokens=1, latency_ms=10, finish_reason="stop", metrics={}),
-            InferenceResult(request_id="model_1", outputs=["b"], prompt_tokens=1, completion_tokens=1, latency_ms=10, finish_reason="stop", metrics={}),
-            InferenceResult(request_id="model_2", outputs=["c"], prompt_tokens=1, completion_tokens=1, latency_ms=10, finish_reason="stop", metrics={}),
+            InferenceResult(
+                request_id="model_0",
+                outputs=["a"],
+                prompt_tokens=1,
+                completion_tokens=1,
+                latency_ms=10,
+                finish_reason="stop",
+                metrics={},
+            ),
+            InferenceResult(
+                request_id="model_1",
+                outputs=["b"],
+                prompt_tokens=1,
+                completion_tokens=1,
+                latency_ms=10,
+                finish_reason="stop",
+                metrics={},
+            ),
+            InferenceResult(
+                request_id="model_2",
+                outputs=["c"],
+                prompt_tokens=1,
+                completion_tokens=1,
+                latency_ms=10,
+                finish_reason="stop",
+                metrics={},
+            ),
         ]
 
         # 验证 request_id 的索引递增

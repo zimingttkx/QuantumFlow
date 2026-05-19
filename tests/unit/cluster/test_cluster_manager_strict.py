@@ -7,16 +7,17 @@
 4. 重点测试核心功能、易错细节、状态变更
 """
 
-import pytest
 import asyncio
-from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
-from typing import List, Dict, Any
-
 import sys
-sys.path.insert(0, '/home/dingziming/PycharmProjects/QuantumFlow')
+from datetime import datetime
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
-from quantumflow.cluster.manager import ClusterManager, Node, GPUInfo, NodeStatus
+import pytest
+
+sys.path.insert(0, "/home/dingziming/PycharmProjects/QuantumFlow")
+
+from quantumflow.cluster.manager import ClusterManager, GPUInfo, Node, NodeStatus
 from quantumflow.core.constants import NodeStatus as NodeStatusEnum
 
 
@@ -227,7 +228,7 @@ class TestClusterManagerRegistration:
         return ClusterManager(heartbeat_interval=1, heartbeat_timeout=5)
 
     @pytest.fixture
-    def valid_node_info(self) -> Dict[str, Any]:
+    def valid_node_info(self) -> dict[str, Any]:
         """标准节点信息"""
         return {
             "node_id": "node-1",
@@ -989,7 +990,9 @@ class TestClusterManagerStats:
         manager = ClusterManager(heartbeat_interval=1, heartbeat_timeout=5)
 
         async def setup():
-            for i, status in enumerate([NodeStatusEnum.HEALTHY, NodeStatusEnum.HEALTHY, NodeStatusEnum.UNHEALTHY]):
+            for i, status in enumerate(
+                [NodeStatusEnum.HEALTHY, NodeStatusEnum.HEALTHY, NodeStatusEnum.UNHEALTHY]
+            ):
                 node_info = {
                     "node_id": f"node-{i}",
                     "hostname": f"worker-{i}",

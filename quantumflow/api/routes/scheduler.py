@@ -1,11 +1,9 @@
 """调度可视化 API — 暴露VRAM/批处理/GPU/调度器内部状态"""
 
-from typing import Optional
-from fastapi import APIRouter
 import time
-import structlog
 
-from quantumflow.api.models import GPUInfo
+import structlog
+from fastapi import APIRouter
 
 logger = structlog.get_logger().bind(component="api_scheduler")
 
@@ -25,24 +23,28 @@ def _build_scheduler_status() -> dict:
     available_vram_gb = vram.get_available_vram_gb()
     loaded_models_detail = []
     for name, info in vram._loaded.items():  # noqa: SLF001
-        loaded_models_detail.append({
-            "model_name": name,
-            "estimated_vram_gb": info.estimated_vram_gb,
-            "actual_vram_gb": round(info.actual_vram_gb, 1),
-            "last_used_at": info.last_used_at,
-            "idle_seconds": round(now - info.last_used_at, 1),
-            "in_use": info.in_use,
-        })
+        loaded_models_detail.append(
+            {
+                "model_name": name,
+                "estimated_vram_gb": info.estimated_vram_gb,
+                "actual_vram_gb": round(info.actual_vram_gb, 1),
+                "last_used_at": info.last_used_at,
+                "idle_seconds": round(now - info.last_used_at, 1),
+                "in_use": info.in_use,
+            }
+        )
 
     # ── 淘汰候选（按优先级排序） ──
     eviction_candidates = []
     for info in vram._get_eviction_candidates():  # noqa: SLF001
-        eviction_candidates.append({
-            "model_name": info.model_name,
-            "estimated_vram_gb": info.estimated_vram_gb,
-            "idle_seconds": round(now - info.last_used_at, 1),
-            "in_use": info.in_use,
-        })
+        eviction_candidates.append(
+            {
+                "model_name": info.model_name,
+                "estimated_vram_gb": info.estimated_vram_gb,
+                "idle_seconds": round(now - info.last_used_at, 1),
+                "in_use": info.in_use,
+            }
+        )
 
     # ── 空闲超时淘汰 ──
     idle_to_evict = vram.get_idle_models_to_evict()
@@ -58,9 +60,11 @@ def _build_scheduler_status() -> dict:
     # ── 调度器状态（如果有的话） ──
     scheduler_stats = None
     try:
-        from quantumflow.scheduler.scheduler import Scheduler
         # 尝试获取全局 scheduler 实例（如果存在）
         import gc
+
+        from quantumflow.scheduler.scheduler import Scheduler
+
         for obj in gc.get_objects():
             if isinstance(obj, Scheduler):
                 sched = obj
@@ -79,7 +83,9 @@ def _build_scheduler_status() -> dict:
                     {
                         "request_id": rid,
                         "model": item.request.model,
-                        "scheduled_at": item.scheduled_at.isoformat() if item.scheduled_at else None,
+                        "scheduled_at": (
+                            item.scheduled_at.isoformat() if item.scheduled_at else None
+                        ),
                     }
                     for rid, item in running.items()
                 ]

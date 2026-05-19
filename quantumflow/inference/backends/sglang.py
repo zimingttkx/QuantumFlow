@@ -1,17 +1,19 @@
 """SGLang推理后端"""
 
-from typing import List, Dict, Optional, Any, AsyncIterator
-import time
 import asyncio
+import time
+from collections.abc import AsyncIterator
+from typing import Any
+
 import structlog
 
+from quantumflow.core.constants import InferenceBackendType
 from quantumflow.inference.engine import (
     InferenceEngine,
+    InferenceResult,
     ModelConfig,
     SamplingParams,
-    InferenceResult,
 )
-from quantumflow.core.constants import InferenceBackendType
 
 logger = structlog.get_logger().bind(component="sglang_backend")
 
@@ -26,13 +28,13 @@ class SGLangEngine(InferenceEngine):
 
     def __init__(
         self,
-        config: Dict[str, Any] = None,
+        config: dict[str, Any] = None,
         base_url: str = "http://localhost:30000",
     ):
         super().__init__(InferenceBackendType.SGLANG)
         self.config = config or {}
         self.base_url = base_url.rstrip("/")
-        self._client: Optional[Any] = None
+        self._client: Any | None = None
         self._timeout = 300
 
     async def initialize(self) -> bool:
@@ -113,16 +115,16 @@ class SGLangEngine(InferenceEngine):
     async def generate(
         self,
         model_name: str,
-        prompts: List[str],
+        prompts: list[str],
         sampling_params: SamplingParams,
-    ) -> List[InferenceResult]:
+    ) -> list[InferenceResult]:
         """同步生成"""
         if not self._client:
             logger.error("sglang_client_not_initialized")
             return [
                 InferenceResult(
                     request_id=f"{model_name}_{i}",
-                    outputs=[f"[SGLang错误: 客户端未初始化]"],
+                    outputs=["[SGLang错误: 客户端未初始化]"],
                     prompt_tokens=0,
                     completion_tokens=0,
                     latency_ms=0,
@@ -133,7 +135,7 @@ class SGLangEngine(InferenceEngine):
             ]
 
         try:
-            start_time = time.time()
+            time.time()
 
             async def _single_generate(prompt: str, index: int) -> InferenceResult:
                 """发送单个推理请求"""
@@ -171,7 +173,7 @@ class SGLangEngine(InferenceEngine):
                     if not choices:
                         return InferenceResult(
                             request_id=f"{model_name}_{index}",
-                            outputs=[f"[SGLang错误: 空响应]"],
+                            outputs=["[SGLang错误: 空响应]"],
                             prompt_tokens=0,
                             completion_tokens=0,
                             latency_ms=(time.time() - req_start) * 1000,
@@ -192,7 +194,7 @@ class SGLangEngine(InferenceEngine):
                 except asyncio.TimeoutError:
                     return InferenceResult(
                         request_id=f"{model_name}_{index}",
-                        outputs=[f"[SGLang超时]"],
+                        outputs=["[SGLang超时]"],
                         prompt_tokens=0,
                         completion_tokens=0,
                         latency_ms=(time.time() - req_start) * 1000,
@@ -210,7 +212,7 @@ class SGLangEngine(InferenceEngine):
             return [
                 InferenceResult(
                     request_id=f"{model_name}_{i}",
-                    outputs=[f"[SGLang超时]"],
+                    outputs=["[SGLang超时]"],
                     prompt_tokens=0,
                     completion_tokens=0,
                     latency_ms=0,
@@ -305,7 +307,7 @@ class SGLangEngine(InferenceEngine):
                 error=str(e),
             )
 
-    async def get_stats(self, model_name: str) -> Dict[str, float]:
+    async def get_stats(self, model_name: str) -> dict[str, float]:
         """获取引擎统计"""
         if not self._client:
             return {}
@@ -325,7 +327,7 @@ class SGLangEngine(InferenceEngine):
     async def chat(
         self,
         model_name: str,
-        messages: List[Dict[str, str]],
+        messages: list[dict[str, str]],
         sampling_params: SamplingParams,
     ) -> InferenceResult:
         """
@@ -343,7 +345,7 @@ class SGLangEngine(InferenceEngine):
             logger.error("sglang_client_not_initialized")
             return InferenceResult(
                 request_id=f"{model_name}_chat",
-                outputs=[f"[SGLang错误: 客户端未初始化]"],
+                outputs=["[SGLang错误: 客户端未初始化]"],
                 prompt_tokens=0,
                 completion_tokens=0,
                 latency_ms=0,

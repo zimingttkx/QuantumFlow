@@ -14,22 +14,21 @@
 - 批量请求的并行处理和错误隔离
 """
 
-import pytest
 import asyncio
-import time
-from unittest.mock import AsyncMock, MagicMock, patch, call
-from typing import List
-
 import sys
-sys.path.insert(0, '/home/dingziming/PycharmProjects/QuantumFlow')
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+sys.path.insert(0, "/home/dingziming/PycharmProjects/QuantumFlow")
 
 from quantumflow.inference.backends.tgi import TGIEngine
-from quantumflow.inference.engine import ModelConfig, SamplingParams, InferenceResult
-
+from quantumflow.inference.engine import ModelConfig, SamplingParams
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Fixtures
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 @pytest.fixture
 def engine():
@@ -53,13 +52,14 @@ def model_config():
 # 辅助函数
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def _make_async_iter(items: List[str]):
+
+async def _make_async_iter(items: list[str]):
     """将列表转为 async iterator"""
     for item in items:
         yield item
 
 
-def _mock_sse_response(chunks: List[str], status_code: int = 200):
+def _mock_sse_response(chunks: list[str], status_code: int = 200):
     """创建模拟 SSE 响应"""
     mock_response = MagicMock()
     mock_response.status_code = status_code
@@ -81,6 +81,7 @@ def _mock_sse_response(chunks: List[str], status_code: int = 200):
 # ═══════════════════════════════════════════════════════════════════════════════
 # 测试类：初始化与生命周期
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestTGIInitialization:
     """验证 TGI 引擎初始化和生命周期管理"""
@@ -144,6 +145,7 @@ class TestTGIInitialization:
 # 测试类：模型加载与卸载
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestTGIModelLifecycle:
     """验证模型的加载/卸载状态管理"""
 
@@ -159,8 +161,9 @@ class TestTGIModelLifecycle:
         result = await engine.load_model(model_config)
 
         assert result is True, "模型ID匹配时应加载成功"
-        assert model_config.model_name in engine._loaded_models, \
-            "加载的模型应被添加到 _loaded_models"
+        assert (
+            model_config.model_name in engine._loaded_models
+        ), "加载的模型应被添加到 _loaded_models"
 
     @pytest.mark.asyncio
     async def test_load_model_without_client_returns_false(self, engine, model_config):
@@ -193,8 +196,9 @@ class TestTGIModelLifecycle:
         result = await engine.unload_model(model_config.model_name)
 
         assert result is True, "卸载已跟踪的模型应返回True"
-        assert model_config.model_name not in engine._loaded_models, \
-            "卸载后模型不应在 _loaded_models 中"
+        assert (
+            model_config.model_name not in engine._loaded_models
+        ), "卸载后模型不应在 _loaded_models 中"
 
     @pytest.mark.asyncio
     async def test_unload_nonexistent_model_returns_false(self, engine):
@@ -208,6 +212,7 @@ class TestTGIModelLifecycle:
 # 测试类：generate() 业务逻辑
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestTGIGenerateLogic:
     """验证 generate() 的业务逻辑正确性"""
 
@@ -218,11 +223,13 @@ class TestTGIGenerateLogic:
         """[正常用例] 单个prompt使用/generate端点"""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json = MagicMock(return_value={
-            "generated_text": "test response",
-            "prompt_tokens": 5,
-            "generated_tokens": 2,
-        })
+        mock_response.json = MagicMock(
+            return_value={
+                "generated_text": "test response",
+                "prompt_tokens": 5,
+                "generated_tokens": 2,
+            }
+        )
         engine._client.post = AsyncMock(return_value=mock_response)
 
         await engine.generate("test", ["single prompt"], SamplingParams())
@@ -232,17 +239,18 @@ class TestTGIGenerateLogic:
         url = call_args[0][0] if call_args[0] else call_args.kwargs.get("url", "")
 
         # 断言：单个prompt应调用/generate而非/generate_batch
-        assert "/generate" in str(url), \
-            f"单个prompt应调用/generate端点，实际: {url}"
+        assert "/generate" in str(url), f"单个prompt应调用/generate端点，实际: {url}"
 
     @pytest.mark.asyncio
     async def test_multiple_prompts_use_generate_batch_endpoint(self, engine):
         """[正常用例] 多个prompt使用/generate_batch端点"""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json = MagicMock(return_value={
-            "generated_text": ["r1", "r2"],
-        })
+        mock_response.json = MagicMock(
+            return_value={
+                "generated_text": ["r1", "r2"],
+            }
+        )
         engine._client.post = AsyncMock(return_value=mock_response)
 
         await engine.generate("test", ["p1", "p2"], SamplingParams())
@@ -250,8 +258,7 @@ class TestTGIGenerateLogic:
         call_args = engine._client.post.call_args
         url = call_args[0][0] if call_args[0] else call_args.kwargs.get("url", "")
 
-        assert "/generate_batch" in str(url), \
-            f"多个prompt应调用/generate_batch端点，实际: {url}"
+        assert "/generate_batch" in str(url), f"多个prompt应调用/generate_batch端点，实际: {url}"
 
     # ── 请求参数映射 ──────────────────────────────────────────
 
@@ -302,8 +309,9 @@ class TestTGIGenerateLogic:
         payload = call_args.kwargs["json"]
 
         # top_k <= 0 时，API不应包含top_k参数
-        assert "top_k" not in payload.get("parameters", {}), \
-            "top_k<=0时不应发送到API，否则会导致意外截断"
+        assert "top_k" not in payload.get(
+            "parameters", {}
+        ), "top_k<=0时不应发送到API，否则会导致意外截断"
 
     @pytest.mark.asyncio
     async def test_stop_not_sent_when_empty(self, engine):
@@ -320,8 +328,7 @@ class TestTGIGenerateLogic:
         payload = call_args.kwargs["json"]
 
         # 空stop不应发送到API
-        assert "stop" not in payload.get("parameters", {}), \
-            "空stop列表不应发送到API"
+        assert "stop" not in payload.get("parameters", {}), "空stop列表不应发送到API"
 
     # ── 响应解析逻辑 ───────────────────────────────────────────
 
@@ -330,19 +337,22 @@ class TestTGIGenerateLogic:
         """[正常用例] 单响应正确解析generated_text字段"""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json = MagicMock(return_value={
-            "generated_text": "Hello world",
-            "prompt_tokens": 5,
-            "generated_tokens": 2,
-        })
+        mock_response.json = MagicMock(
+            return_value={
+                "generated_text": "Hello world",
+                "prompt_tokens": 5,
+                "generated_tokens": 2,
+            }
+        )
         engine._client.post = AsyncMock(return_value=mock_response)
 
         results = await engine.generate("test", ["Hi"], SamplingParams())
 
         assert len(results) == 1, "单prompt应返回单结果"
         result = results[0]
-        assert result.outputs[0] == "Hello world", \
-            f"outputs[0]应为'Hello world'，实际: {result.outputs[0]}"
+        assert (
+            result.outputs[0] == "Hello world"
+        ), f"outputs[0]应为'Hello world'，实际: {result.outputs[0]}"
         assert result.prompt_tokens == 5, "prompt_tokens解析错误"
         assert result.completion_tokens == 2, "generated_tokens应映射为completion_tokens"
         assert result.finish_reason == "stop", "单响应应返回finish_reason=stop"
@@ -352,11 +362,13 @@ class TestTGIGenerateLogic:
         """[正常用例] 批量响应中token统计为列表时正确解析"""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json = MagicMock(return_value={
-            "generated_text": ["resp1", "resp2", "resp3"],
-            "prompt_tokens": [10, 20, 30],
-            "generated_tokens": [5, 8, 12],
-        })
+        mock_response.json = MagicMock(
+            return_value={
+                "generated_text": ["resp1", "resp2", "resp3"],
+                "prompt_tokens": [10, 20, 30],
+                "generated_tokens": [5, 8, 12],
+            }
+        )
         engine._client.post = AsyncMock(return_value=mock_response)
 
         results = await engine.generate("test", ["p1", "p2", "p3"], SamplingParams())
@@ -377,11 +389,13 @@ class TestTGIGenerateLogic:
         """[边界用例] 批量响应中token统计为标量时均分到各结果"""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json = MagicMock(return_value={
-            "generated_text": ["r1", "r2", "r3"],
-            "prompt_tokens": 30,  # 标量
-            "generated_tokens": 15,  # 标量
-        })
+        mock_response.json = MagicMock(
+            return_value={
+                "generated_text": ["r1", "r2", "r3"],
+                "prompt_tokens": 30,  # 标量
+                "generated_tokens": 15,  # 标量
+            }
+        )
         engine._client.post = AsyncMock(return_value=mock_response)
 
         results = await engine.generate("test", ["p1", "p2", "p3"], SamplingParams())
@@ -390,10 +404,12 @@ class TestTGIGenerateLogic:
 
         # 验证均分逻辑：30 // 3 = 10，15 // 3 = 5
         for r in results:
-            assert r.prompt_tokens == 10, \
-                f"均分后每个结果的prompt_tokens应为10，实际: {r.prompt_tokens}"
-            assert r.completion_tokens == 5, \
-                f"均分后每个结果的completion_tokens应为5，实际: {r.completion_tokens}"
+            assert (
+                r.prompt_tokens == 10
+            ), f"均分后每个结果的prompt_tokens应为10，实际: {r.prompt_tokens}"
+            assert (
+                r.completion_tokens == 5
+            ), f"均分后每个结果的completion_tokens应为5，实际: {r.completion_tokens}"
 
     @pytest.mark.asyncio
     async def test_empty_prompts_returns_empty_list(self, engine):
@@ -408,17 +424,18 @@ class TestTGIGenerateLogic:
         """[错误用例] 响应缺少generated_text时返回空output"""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json = MagicMock(return_value={
-            # generated_text 字段缺失
-            "prompt_tokens": 5,
-        })
+        mock_response.json = MagicMock(
+            return_value={
+                # generated_text 字段缺失
+                "prompt_tokens": 5,
+            }
+        )
         engine._client.post = AsyncMock(return_value=mock_response)
 
         results = await engine.generate("test", ["prompt"], SamplingParams())
 
         assert len(results) == 1
-        assert results[0].outputs[0] == "", \
-            "缺少generated_text时应返回空字符串"
+        assert results[0].outputs[0] == "", "缺少generated_text时应返回空字符串"
 
     # ── 错误处理路径 ───────────────────────────────────────────
 
@@ -461,6 +478,7 @@ class TestTGIGenerateLogic:
 # 测试类：generate_stream() 业务逻辑
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestTGIGenerateStreamLogic:
     """验证 generate_stream() 的 SSE 解析和流式处理逻辑"""
 
@@ -471,7 +489,7 @@ class TestTGIGenerateStreamLogic:
             'data: {"token":{"text":"Hello"}}\n\n',
             'data: {"token":{"text":" world"}}\n\n',
             'data: {"token":{"text":"!"}}\n\n',
-            'data: [DONE]\n\n',
+            "data: [DONE]\n\n",
         ]
         engine._client.stream = MagicMock(return_value=_mock_sse_response(sse_chunks))
 
@@ -489,9 +507,9 @@ class TestTGIGenerateStreamLogic:
         """[错误处理] SSE中的非法JSON行被跳过，不中断流"""
         sse_chunks = [
             'data: {"token":{"text":"Start"}}\n\n',
-            'data: {invalid json}\n\n',  # 非法JSON
+            "data: {invalid json}\n\n",  # 非法JSON
             'data: {"token":{"text":"End"}}\n\n',
-            'data: [DONE]\n\n',
+            "data: [DONE]\n\n",
         ]
         engine._client.stream = MagicMock(return_value=_mock_sse_response(sse_chunks))
 
@@ -511,7 +529,7 @@ class TestTGIGenerateStreamLogic:
             'data: {"token":{"text":"Hello"}}\n\n',
             'data: {"token":{"text":""}}\n\n',  # 空token
             'data: {"token":{"text":"World"}}\n\n',
-            'data: [DONE]\n\n',
+            "data: [DONE]\n\n",
         ]
         engine._client.stream = MagicMock(return_value=_mock_sse_response(sse_chunks))
 
@@ -528,7 +546,7 @@ class TestTGIGenerateStreamLogic:
         """[正常用例] 收到[DONE]后停止迭代"""
         sse_chunks = [
             'data: {"token":{"text":"A"}}\n\n',
-            'data: [DONE]\n\n',
+            "data: [DONE]\n\n",
             'data: {"token":{"text":"B"}}\n\n',  # 不应被处理
         ]
         engine._client.stream = MagicMock(return_value=_mock_sse_response(sse_chunks))
@@ -578,7 +596,7 @@ class TestTGIGenerateStreamLogic:
         """[正常用例] 流式请求正确传递所有采样参数"""
         sse_chunks = [
             'data: {"token":{"text":"ok"}}\n\n',
-            'data: [DONE]\n\n',
+            "data: [DONE]\n\n",
         ]
         engine._client.stream = MagicMock(return_value=_mock_sse_response(sse_chunks))
 
@@ -610,6 +628,7 @@ class TestTGIGenerateStreamLogic:
 # ═══════════════════════════════════════════════════════════════════════════════
 # 测试类：get_stats() 业务逻辑
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestTGIStats:
     """验证 get_stats() 的返回值格式"""
@@ -650,6 +669,7 @@ class TestTGIStats:
 # 测试类：错误消息格式一致性
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestTGIErrorMessages:
     """验证错误消息格式的一致性和完整性"""
 
@@ -662,9 +682,9 @@ class TestTGIErrorMessages:
 
         for r in results:
             # 错误消息应有一致的格式
-            assert r.outputs[0].startswith("[TGI错误") or \
-                   r.outputs[0].startswith("[TGI超时]"), \
-                f"错误消息格式不统一: {r.outputs[0]}"
+            assert r.outputs[0].startswith("[TGI错误") or r.outputs[0].startswith(
+                "[TGI超时]"
+            ), f"错误消息格式不统一: {r.outputs[0]}"
 
     @pytest.mark.asyncio
     async def test_error_results_have_error_finish_reason(self, engine):
@@ -673,8 +693,9 @@ class TestTGIErrorMessages:
 
         results = await engine.generate("test", ["p1"], SamplingParams())
 
-        assert results[0].finish_reason == "error", \
-            f"错误结果的finish_reason应为error，实际: {results[0].finish_reason}"
+        assert (
+            results[0].finish_reason == "error"
+        ), f"错误结果的finish_reason应为error，实际: {results[0].finish_reason}"
 
 
 if __name__ == "__main__":

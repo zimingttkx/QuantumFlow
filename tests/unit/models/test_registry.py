@@ -1,7 +1,8 @@
 """Model Registry测试"""
 
 import pytest
-from quantumflow.models import ModelRegistry, ModelInfo, ModelStatus, get_registry
+
+from quantumflow.models import ModelInfo, ModelRegistry, ModelStatus, get_registry
 
 
 class TestModelInfo:

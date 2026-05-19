@@ -2,11 +2,12 @@
 """GPU单卡压测脚本 — 触发动态批处理，观察GPU利用率"""
 
 import asyncio
-import httpx
-import time
-import random
 import os
+import random
+import time
 from datetime import datetime
+
+import httpx
 
 # 禁用代理环境变量
 for k in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"]:
@@ -16,7 +17,7 @@ for k in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy",
 MODEL = "Qwen2.5-1.5B"
 BASE_URL = "http://localhost:8000"
 CONCURRENT_REQUESTS = 24  # 同时24个请求，触发 max_batch_size=8 的合并
-MAX_TOKENS = 256         # 增加输出长度，让GPU有更多工作
+MAX_TOKENS = 256  # 增加输出长度，让GPU有更多工作
 PROMPTS = [
     "请详细解释量子力学中的不确定性原理，包括海森堡的原始表述和现代数学表述，以及它在双缝实验中的具体体现。请举例说明测量对量子系统的影响。",
     "用Python实现一个完整的二叉搜索树，包括插入、删除、查找和遍历操作。要求代码包含类型注解和详细的注释说明。",
@@ -70,7 +71,13 @@ async def send_request(client: httpx.AsyncClient, prompt: str, request_id: int):
         }
     except Exception as e:
         elapsed = (time.time() - t0) * 1000
-        return {"id": request_id, "prompt": prompt[:20], "elapsed_ms": elapsed, "success": False, "error": str(e)}
+        return {
+            "id": request_id,
+            "prompt": prompt[:20],
+            "elapsed_ms": elapsed,
+            "success": False,
+            "error": str(e),
+        }
 
 
 async def check_scheduler_status(client: httpx.AsyncClient):
@@ -114,8 +121,7 @@ async def run_batch_test(round_num: int):
     async with httpx.AsyncClient() as client:
         # 并发发送所有请求
         tasks = [
-            send_request(client, random.choice(PROMPTS), i)
-            for i in range(CONCURRENT_REQUESTS)
+            send_request(client, random.choice(PROMPTS), i) for i in range(CONCURRENT_REQUESTS)
         ]
         results = await asyncio.gather(*tasks)
 
@@ -127,30 +133,42 @@ async def run_batch_test(round_num: int):
 
         print(f"\n  成功: {len(successes)}/{CONCURRENT_REQUESTS} | 失败: {len(failures)}")
         if successes:
-            print(f"  端到端延迟:  min={min(wall_times):.0f}ms  avg={sum(wall_times)/len(wall_times):.0f}ms  max={max(wall_times):.0f}ms")
-            print(f"  模型推理延迟: min={min(latencies):.0f}ms  avg={sum(latencies)/len(latencies):.0f}ms  max={max(latencies):.0f}ms")
+            print(
+                f"  端到端延迟:  min={min(wall_times):.0f}ms  avg={sum(wall_times)/len(wall_times):.0f}ms  max={max(wall_times):.0f}ms"
+            )
+            print(
+                f"  模型推理延迟: min={min(latencies):.0f}ms  avg={sum(latencies)/len(latencies):.0f}ms  max={max(latencies):.0f}ms"
+            )
 
         # 获取调度状态
         sched = await check_scheduler_status(client)
         if sched:
             batch = sched.get("batch", {})
             if batch:
-                print(f"\n  📦 批处理统计:")
+                print("\n  📦 批处理统计:")
                 for key, stats in batch.items():
-                    print(f"     {key}: {stats['total_requests']} 请求 / {stats['total_batches']} 批次 / 平均批量 {stats['avg_batch_size']}")
+                    print(
+                        f"     {key}: {stats['total_requests']} 请求 / {stats['total_batches']} 批次 / 平均批量 {stats['avg_batch_size']}"
+                    )
 
             vram = sched.get("vram", {})
             if vram:
-                print(f"\n  🧠 VRAM: 可用 {vram['available_vram_gb']}GB | 安全系数 {vram['safety_factor']*100:.0f}% | 加载模型 {vram['loaded_count']}个")
+                print(
+                    f"\n  🧠 VRAM: 可用 {vram['available_vram_gb']}GB | 安全系数 {vram['safety_factor']*100:.0f}% | 加载模型 {vram['loaded_count']}个"
+                )
                 for m in vram.get("loaded_models", []):
                     status = "🔄 推理中" if m["in_use"] else "💤 空闲"
-                    print(f"     - {m['model_name']}: {m['estimated_vram_gb']}GB | {status} | 空闲 {m['idle_seconds']:.1f}s")
+                    print(
+                        f"     - {m['model_name']}: {m['estimated_vram_gb']}GB | {status} | 空闲 {m['idle_seconds']:.1f}s"
+                    )
 
         # 获取GPU状态
         gpu = await get_gpu_status(client)
         if gpu:
             print(f"\n  🎮 GPU: {gpu['name']}")
-            print(f"     计算利用率: {gpu['utilization']} | 显存带宽利用率: {gpu['memory_utilization']} | 显存: {gpu['memory_used']}/{gpu['memory_total']} ({gpu['memory_pct']})")
+            print(
+                f"     计算利用率: {gpu['utilization']} | 显存带宽利用率: {gpu['memory_utilization']} | 显存: {gpu['memory_used']}/{gpu['memory_total']} ({gpu['memory_pct']})"
+            )
 
         return successes, failures
 
@@ -172,7 +190,9 @@ async def monitor_loop():
                         mem_total = g["memory_total"] / 1e9
                         ts = datetime.now().strftime("%H:%M:%S")
                         bar = "█" * int(util * 20) + "░" * (20 - int(util * 20))
-                        print(f"  [{ts}] GPU利用率: [{bar}] {util*100:.0f}% | 显存: {mem_used:.1f}/{mem_total:.1f}GB")
+                        print(
+                            f"  [{ts}] GPU利用率: [{bar}] {util*100:.0f}% | 显存: {mem_used:.1f}/{mem_total:.1f}GB"
+                        )
             except:
                 pass
 
@@ -184,7 +204,7 @@ async def main():
     print(f"  模型: {MODEL}")
     print(f"  并发: {CONCURRENT_REQUESTS} 请求/轮")
     print(f"  max_tokens: {MAX_TOKENS}")
-    print(f"  批处理: max_batch_size=8, max_delay=50ms")
+    print("  批处理: max_batch_size=8, max_delay=50ms")
     print()
 
     # 先检查服务是否可用

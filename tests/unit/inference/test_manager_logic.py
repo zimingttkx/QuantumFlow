@@ -9,17 +9,17 @@
 6. GPU 监控启动/停止生命周期
 """
 
-import pytest
 import asyncio
-from unittest.mock import Mock, AsyncMock, patch, MagicMock, ANY
-from typing import List
-
 import sys
-sys.path.insert(0, '/home/dingziming/PycharmProjects/QuantumFlow')
+from unittest.mock import ANY, AsyncMock, Mock, patch
 
-from quantumflow.inference.manager import EngineManager, get_engine_manager
-from quantumflow.inference.engine import ModelConfig, SamplingParams, InferenceResult
+import pytest
+
+sys.path.insert(0, "/home/dingziming/PycharmProjects/QuantumFlow")
+
 from quantumflow.core.constants import InferenceBackendType
+from quantumflow.inference.engine import InferenceResult, SamplingParams
+from quantumflow.inference.manager import EngineManager
 
 
 # Module-level fixture for all test classes
@@ -50,9 +50,9 @@ class TestModelLifecycle:
     async def test_load_model_updates_vram(self, manager):
         """load_model 成功后必须更新 VRAM 记录"""
         # Mock VRAM manager
-        with patch.object(manager._vram_manager, 'can_load', return_value=(True, "", [])):
-            with patch.object(manager._vram_manager, 'record_loaded') as mock_record:
-                with patch.object(manager._vram_manager, 'update_actual_vram'):
+        with patch.object(manager._vram_manager, "can_load", return_value=(True, "", [])):
+            with patch.object(manager._vram_manager, "record_loaded") as mock_record:
+                with patch.object(manager._vram_manager, "update_actual_vram"):
                     # Mock 引擎
                     mock_engine = AsyncMock()
                     mock_engine.load_model = AsyncMock(return_value=True)
@@ -70,7 +70,7 @@ class TestModelLifecycle:
     @pytest.mark.asyncio
     async def test_load_model_vram_rejected(self, manager):
         """VRAM 不足时 load_model 必须拒绝"""
-        with patch.object(manager._vram_manager, 'can_load', return_value=(False, "VRAM 不足", [])):
+        with patch.object(manager._vram_manager, "can_load", return_value=(False, "VRAM 不足", [])):
             result, msg = await manager.load_model(
                 model_name="test_model",
                 model_path="/path/to/model",
@@ -89,7 +89,7 @@ class TestModelLifecycle:
         manager._loaded_models["test_model"] = mock_engine
         manager._engines[InferenceBackendType.HUGGINGFACE] = mock_engine
 
-        with patch.object(manager._vram_manager, 'record_unloaded') as mock_unload:
+        with patch.object(manager._vram_manager, "record_unloaded") as mock_unload:
             await manager.unload_model("test_model")
 
             assert "test_model" not in manager._loaded_models
@@ -123,16 +123,28 @@ class TestGenerateRouting:
     async def test_generate_calls_correct_engine(self, manager_with_model):
         """generate 必须调用正确的引擎"""
         mock_engine = AsyncMock()
-        mock_engine.generate = AsyncMock(return_value=[
-            InferenceResult(request_id="test_0", outputs=["out"], prompt_tokens=1, completion_tokens=1, latency_ms=10, finish_reason="stop", metrics={})
-        ])
+        mock_engine.generate = AsyncMock(
+            return_value=[
+                InferenceResult(
+                    request_id="test_0",
+                    outputs=["out"],
+                    prompt_tokens=1,
+                    completion_tokens=1,
+                    latency_ms=10,
+                    finish_reason="stop",
+                    metrics={},
+                )
+            ]
+        )
         manager_with_model._loaded_models["test_model"] = mock_engine
 
-        with patch.object(manager_with_model._vram_manager, 'allocate_blocks', return_value=None):
-            with patch.object(manager_with_model._vram_manager, 'mark_in_use'):
-                with patch.object(manager_with_model._vram_manager, 'mark_idle'):
-                    with patch.object(manager_with_model._vram_manager, 'release_blocks'):
-                        await manager_with_model.generate("test_model", ["prompt"], SamplingParams())
+        with patch.object(manager_with_model._vram_manager, "allocate_blocks", return_value=None):
+            with patch.object(manager_with_model._vram_manager, "mark_in_use"):
+                with patch.object(manager_with_model._vram_manager, "mark_idle"):
+                    with patch.object(manager_with_model._vram_manager, "release_blocks"):
+                        await manager_with_model.generate(
+                            "test_model", ["prompt"], SamplingParams()
+                        )
 
         mock_engine.generate.assert_called_once()
 
@@ -143,12 +155,16 @@ class TestGenerateRouting:
         mock_engine.generate = AsyncMock(return_value=[])
         manager_with_model._loaded_models["test_model"] = mock_engine
 
-        with patch.object(manager_with_model._vram_manager, 'allocate_blocks', return_value=None):
-            with patch.object(manager_with_model._vram_manager, 'mark_in_use'):
-                with patch.object(manager_with_model._vram_manager, 'mark_idle'):
-                    with patch.object(manager_with_model._vram_manager, 'release_blocks'):
-                        with patch.object(manager_with_model._vram_manager, 'update_actual_vram') as mock_update:
-                            await manager_with_model.generate("test_model", ["prompt"], SamplingParams())
+        with patch.object(manager_with_model._vram_manager, "allocate_blocks", return_value=None):
+            with patch.object(manager_with_model._vram_manager, "mark_in_use"):
+                with patch.object(manager_with_model._vram_manager, "mark_idle"):
+                    with patch.object(manager_with_model._vram_manager, "release_blocks"):
+                        with patch.object(
+                            manager_with_model._vram_manager, "update_actual_vram"
+                        ) as mock_update:
+                            await manager_with_model.generate(
+                                "test_model", ["prompt"], SamplingParams()
+                            )
 
         mock_update.assert_called_once_with("test_model")
 
@@ -159,12 +175,18 @@ class TestGenerateRouting:
         mock_engine.generate = AsyncMock(side_effect=RuntimeError("Inference failed"))
         manager_with_model._loaded_models["test_model"] = mock_engine
 
-        with patch.object(manager_with_model._vram_manager, 'allocate_blocks', return_value=["block1"]):
-            with patch.object(manager_with_model._vram_manager, 'mark_in_use'):
-                with patch.object(manager_with_model._vram_manager, 'mark_idle'):
-                    with patch.object(manager_with_model._vram_manager, 'release_blocks') as mock_release:
+        with patch.object(
+            manager_with_model._vram_manager, "allocate_blocks", return_value=["block1"]
+        ):
+            with patch.object(manager_with_model._vram_manager, "mark_in_use"):
+                with patch.object(manager_with_model._vram_manager, "mark_idle"):
+                    with patch.object(
+                        manager_with_model._vram_manager, "release_blocks"
+                    ) as mock_release:
                         with pytest.raises(RuntimeError):
-                            await manager_with_model.generate("test_model", ["prompt"], SamplingParams())
+                            await manager_with_model.generate(
+                                "test_model", ["prompt"], SamplingParams()
+                            )
 
         mock_release.assert_called_once()
 
@@ -197,12 +219,18 @@ class TestStreamRouting:
         mock_engine.generate_stream = mock_stream
         manager_with_model._loaded_models["test_model"] = mock_engine
 
-        with patch.object(manager_with_model._vram_manager, 'allocate_blocks', return_value=["block1"]) as mock_alloc:
-            with patch.object(manager_with_model._vram_manager, 'mark_in_use'):
-                with patch.object(manager_with_model._vram_manager, 'mark_idle'):
-                    with patch.object(manager_with_model._vram_manager, 'release_blocks') as mock_release:
+        with patch.object(
+            manager_with_model._vram_manager, "allocate_blocks", return_value=["block1"]
+        ) as mock_alloc:
+            with patch.object(manager_with_model._vram_manager, "mark_in_use"):
+                with patch.object(manager_with_model._vram_manager, "mark_idle"):
+                    with patch.object(
+                        manager_with_model._vram_manager, "release_blocks"
+                    ) as mock_release:
                         chunks = []
-                        async for chunk in manager_with_model.generate_stream("test_model", "prompt", SamplingParams()):
+                        async for chunk in manager_with_model.generate_stream(
+                            "test_model", "prompt", SamplingParams()
+                        ):
                             chunks.append(chunk)
 
         mock_alloc.assert_called_once()
@@ -219,9 +247,11 @@ class TestVRAMStatus:
 
     def test_get_vram_status_returns_available(self, manager):
         """get_vram_status 必须返回正确的可用 VRAM"""
-        with patch.object(manager._vram_manager, 'get_available_vram_gb', return_value=8.5):
-            with patch.object(manager._vram_manager, 'safety_factor', 0.7):
-                with patch.object(manager._vram_manager, 'get_loaded_models', return_value=["model1"]):
+        with patch.object(manager._vram_manager, "get_available_vram_gb", return_value=8.5):
+            with patch.object(manager._vram_manager, "safety_factor", 0.7):
+                with patch.object(
+                    manager._vram_manager, "get_loaded_models", return_value=["model1"]
+                ):
                     status = manager.get_vram_status()
 
         assert status["available_vram_gb"] == 8.5
@@ -290,7 +320,7 @@ class TestGPUMonitoring:
     @pytest.mark.asyncio
     async def test_start_gpu_monitoring(self, manager):
         """start_gpu_monitoring 必须启动监控"""
-        with patch.object(manager._gpu_monitor, 'start', new_callable=AsyncMock) as mock_start:
+        with patch.object(manager._gpu_monitor, "start", new_callable=AsyncMock) as mock_start:
             await manager.start_gpu_monitoring()
 
         mock_start.assert_called_once()
@@ -301,7 +331,7 @@ class TestGPUMonitoring:
         manager._gpu_monitor._running = True
         manager._gpu_monitor._task = asyncio.create_task(asyncio.sleep(10))
 
-        with patch.object(manager._gpu_monitor, 'stop', new_callable=AsyncMock) as mock_stop:
+        with patch.object(manager._gpu_monitor, "stop", new_callable=AsyncMock) as mock_stop:
             await manager.stop_gpu_monitoring()
 
         mock_stop.assert_called_once()
@@ -316,7 +346,7 @@ class TestGPUMonitoring:
         status = manager.get_gpu_status()
         assert len(status) == 1
 
-        with patch.object(manager._gpu_monitor, 'collect_snapshot', return_value=mock_snapshot):
+        with patch.object(manager._gpu_monitor, "collect_snapshot", return_value=mock_snapshot):
             snapshot = manager.get_gpu_snapshot()
             assert len(snapshot) == 1
 
@@ -372,10 +402,10 @@ class TestEdgeCases:
         mock_engine.generate = AsyncMock(return_value=[])
         manager._loaded_models["test"] = mock_engine
 
-        with patch.object(manager._vram_manager, 'allocate_blocks', return_value=None):
-            with patch.object(manager._vram_manager, 'mark_in_use'):
-                with patch.object(manager._vram_manager, 'mark_idle'):
-                    with patch.object(manager._vram_manager, 'release_blocks'):
+        with patch.object(manager._vram_manager, "allocate_blocks", return_value=None):
+            with patch.object(manager._vram_manager, "mark_in_use"):
+                with patch.object(manager._vram_manager, "mark_idle"):
+                    with patch.object(manager._vram_manager, "release_blocks"):
                         result = await manager.generate("test", [], SamplingParams())
 
         assert result == []

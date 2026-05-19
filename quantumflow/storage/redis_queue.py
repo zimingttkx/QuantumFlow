@@ -1,12 +1,11 @@
 """Redis队列存储实现"""
 
-import asyncio
 import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Any, AsyncIterator
+from typing import Any
 
 import redis.asyncio as redis
 import structlog
@@ -32,26 +31,28 @@ class QueuedRequest:
     prompt: str
     priority: int
     created_at: datetime
-    scheduled_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    result: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    scheduled_at: datetime | None = None
+    completed_at: datetime | None = None
+    result: dict[str, Any] | None = None
+    error: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_json(self) -> str:
         """序列化为JSON"""
-        return json.dumps({
-            "request_id": self.request_id,
-            "model_name": self.model_name,
-            "prompt": self.prompt,
-            "priority": self.priority,
-            "created_at": self.created_at.isoformat(),
-            "scheduled_at": self.scheduled_at.isoformat() if self.scheduled_at else None,
-            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
-            "result": self.result,
-            "error": self.error,
-            "metadata": self.metadata,
-        })
+        return json.dumps(
+            {
+                "request_id": self.request_id,
+                "model_name": self.model_name,
+                "prompt": self.prompt,
+                "priority": self.priority,
+                "created_at": self.created_at.isoformat(),
+                "scheduled_at": self.scheduled_at.isoformat() if self.scheduled_at else None,
+                "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+                "result": self.result,
+                "error": self.error,
+                "metadata": self.metadata,
+            }
+        )
 
     @classmethod
     def from_json(cls, data: str) -> "QueuedRequest":
@@ -63,8 +64,12 @@ class QueuedRequest:
             prompt=obj["prompt"],
             priority=obj["priority"],
             created_at=datetime.fromisoformat(obj["created_at"]),
-            scheduled_at=datetime.fromisoformat(obj["scheduled_at"]) if obj.get("scheduled_at") else None,
-            completed_at=datetime.fromisoformat(obj["completed_at"]) if obj.get("completed_at") else None,
+            scheduled_at=(
+                datetime.fromisoformat(obj["scheduled_at"]) if obj.get("scheduled_at") else None
+            ),
+            completed_at=(
+                datetime.fromisoformat(obj["completed_at"]) if obj.get("completed_at") else None
+            ),
             result=obj.get("result"),
             error=obj.get("error"),
             metadata=obj.get("metadata", {}),
@@ -100,7 +105,7 @@ class RedisQueue:
         self.default_ttl = default_ttl
         self.max_retries = max_retries
 
-        self._redis: Optional[redis.Redis] = None
+        self._redis: redis.Redis | None = None
         self._connected = False
 
         logger.info(
@@ -191,7 +196,7 @@ class RedisQueue:
             )
             return False
 
-    async def dequeue(self, timeout: int = 0) -> Optional[QueuedRequest]:
+    async def dequeue(self, timeout: int = 0) -> QueuedRequest | None:
         """
         出队请求（阻塞）
 
@@ -259,7 +264,7 @@ class RedisQueue:
             logger.error("dequeue_failed", error=str(e))
             return None
 
-    async def dequeue_batch(self, batch_size: int = 10) -> List[QueuedRequest]:
+    async def dequeue_batch(self, batch_size: int = 10) -> list[QueuedRequest]:
         """
         批量出队
 
@@ -316,7 +321,7 @@ class RedisQueue:
 
     # ==================== 结果存储 ====================
 
-    async def store_result(self, request_id: str, result: Dict[str, Any]) -> bool:
+    async def store_result(self, request_id: str, result: dict[str, Any]) -> bool:
         """
         存储请求结果
 
@@ -354,7 +359,7 @@ class RedisQueue:
             )
             return False
 
-    async def get_result(self, request_id: str) -> Optional[Dict[str, Any]]:
+    async def get_result(self, request_id: str) -> dict[str, Any] | None:
         """
         获取请求结果
 
@@ -383,7 +388,7 @@ class RedisQueue:
             )
             return None
 
-    async def get_request(self, request_id: str) -> Optional[QueuedRequest]:
+    async def get_request(self, request_id: str) -> QueuedRequest | None:
         """
         获取请求详情
 
@@ -425,7 +430,7 @@ class RedisQueue:
             logger.error("queue_size_failed", error=str(e))
             return 0
 
-    async def get_queue_stats(self) -> Dict[str, Any]:
+    async def get_queue_stats(self) -> dict[str, Any]:
         """获取队列统计"""
         if not self.is_connected:
             return {}
@@ -488,7 +493,7 @@ class RedisQueue:
         except Exception as e:
             logger.warning("increment_metric_failed", error=str(e))
 
-    async def get_metrics(self) -> Dict[str, int]:
+    async def get_metrics(self) -> dict[str, int]:
         """获取指标"""
         if not self.is_connected:
             return {}

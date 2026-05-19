@@ -1,6 +1,6 @@
 """Prometheus监控指标"""
 
-from prometheus_client import Counter, Histogram, Gauge, Info
+from prometheus_client import Counter, Gauge, Histogram, Info
 
 # ==================== 请求指标 ====================
 
@@ -76,7 +76,9 @@ SYSTEM_INFO = Info(
 )
 
 # 初始化系统信息
-SYSTEM_INFO.info({
-    "version": "1.0.0",
-    "name": "QuantumFlow",
-})
+SYSTEM_INFO.info(
+    {
+        "version": "1.0.0",
+        "name": "QuantumFlow",
+    }
+)

@@ -11,12 +11,11 @@
 - 真实GPU: 检测/fallback
 - 边界: 空dict/全部in_use/0值/不存在模型操作
 """
-import pytest
+
 import time
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-from quantumflow.inference.vram_manager import VRAMManager, LoadedModelInfo, VRAM_SAFETY_FACTOR
-
+from quantumflow.inference.vram_manager import VRAM_SAFETY_FACTOR, LoadedModelInfo, VRAMManager
 
 PASS = 0
 FAIL = 0
@@ -48,8 +47,10 @@ def report():
 
 # ── helpers ──────────────────────────────────────────────
 
-def make_vram(free_vram: float, used_vram: float = 0.0,
-              safety: float = None, idle_ttl: float = 0.0) -> VRAMManager:
+
+def make_vram(
+    free_vram: float, used_vram: float = 0.0, safety: float = None, idle_ttl: float = 0.0
+) -> VRAMManager:
     """创建 VRAMManager，mock 掉 GPU 读取"""
     mgr = VRAMManager(
         safety_factor=safety if safety is not None else VRAM_SAFETY_FACTOR,
@@ -63,6 +64,7 @@ def make_vram(free_vram: float, used_vram: float = 0.0,
 # ═══════════════════════════════════════════════════════════
 # 1. 静态方法 — 参数量估算
 # ═══════════════════════════════════════════════════════════
+
 
 def test_param_count__all_known_patterns():
     """每个已知参数量模式精确匹配"""
@@ -88,21 +90,29 @@ def test_param_count__all_known_patterns():
     ]
     for path, expected in cases:
         got = VRAMManager._estimate_param_count(path)
-        check(f"{path} → {expected//1_000_000_000}B", got == expected,
-              f"expected={expected}, got={got}")
+        check(
+            f"{path} → {expected//1_000_000_000}B",
+            got == expected,
+            f"expected={expected}, got={got}",
+        )
 
 
 def test_param_count__long_pattern_before_short():
     """长模式优先：13b 不应被 1b 误匹配"""
     print("\n── 参数量: 长模式优先 ──")
-    check("13b不被1b误匹配",
-          VRAMManager._estimate_param_count("meta-llama/Llama-2-13b-chat-hf") == 13_000_000_000)
-    check("11b不被1b误匹配",
-          VRAMManager._estimate_param_count("model-11b-something") == 11_000_000_000)
-    check("14b不被1b误匹配",
-          VRAMManager._estimate_param_count("Qwen2.5-14B") == 14_000_000_000)
-    check("1.5b不被1b误匹配(1.5b在1b之前)",
-          VRAMManager._estimate_param_count("Qwen2.5-1.5B") == 1_500_000_000)
+    check(
+        "13b不被1b误匹配",
+        VRAMManager._estimate_param_count("meta-llama/Llama-2-13b-chat-hf") == 13_000_000_000,
+    )
+    check(
+        "11b不被1b误匹配",
+        VRAMManager._estimate_param_count("model-11b-something") == 11_000_000_000,
+    )
+    check("14b不被1b误匹配", VRAMManager._estimate_param_count("Qwen2.5-14B") == 14_000_000_000)
+    check(
+        "1.5b不被1b误匹配(1.5b在1b之前)",
+        VRAMManager._estimate_param_count("Qwen2.5-1.5B") == 1_500_000_000,
+    )
 
 
 def test_param_count__case_insensitive():
@@ -125,6 +135,7 @@ def test_param_count__unknown():
 # ═══════════════════════════════════════════════════════════
 # 2. 静态方法 — 架构估算
 # ═══════════════════════════════════════════════════════════
+
 
 def test_architecture__known():
     """已知架构精确匹配"""
@@ -168,6 +179,7 @@ def test_architecture__unknown():
 # 3. VRAM 估算
 # ═══════════════════════════════════════════════════════════
 
+
 def test_vram_estimation__with_architecture():
     """有架构信息时精确估算 KV cache"""
     print("\n── VRAM估算: 精确(含架构) ──")
@@ -195,7 +207,7 @@ def test_vram_estimation__without_architecture():
     mgr = VRAMManager()
 
     # 用 patch 让 _estimate_architecture 返回 (0,0)
-    with patch.object(VRAMManager, '_estimate_architecture', return_value=(0, 0)):
+    with patch.object(VRAMManager, "_estimate_architecture", return_value=(0, 0)):
         est = mgr.estimate_model_vram_gb("some-7b-model", max_model_len=2048)
         # model_gb = 7e9*2/1e9*1.2=16.8, kv_rough=16.8*0.3=5.04 → total≈21.84
         check("7B粗略有KV", 15.0 < est < 30.0, f"got={est}")
@@ -218,12 +230,9 @@ def test_vram_estimation__max_model_len_affects_kv():
     est_mid = mgr.estimate_model_vram_gb("Qwen2.5-7B-Instruct", max_model_len=2048)
     est_long = mgr.estimate_model_vram_gb("Qwen2.5-7B-Instruct", max_model_len=8192)
 
-    check("short < mid", est_short < est_mid,
-          f"short={est_short}, mid={est_mid}")
-    check("mid < long", est_mid < est_long,
-          f"mid={est_mid}, long={est_long}")
-    check("long至少比short大2GB", est_long - est_short > 2.0,
-          f"diff={est_long - est_short:.1f}")
+    check("short < mid", est_short < est_mid, f"short={est_short}, mid={est_mid}")
+    check("mid < long", est_mid < est_long, f"mid={est_mid}, long={est_long}")
+    check("long至少比short大2GB", est_long - est_short > 2.0, f"diff={est_long - est_short:.1f}")
 
 
 def test_vram_estimation__max_model_len_zero():
@@ -238,6 +247,7 @@ def test_vram_estimation__max_model_len_zero():
 # ═══════════════════════════════════════════════════════════
 # 4. can_load 决策 — 4 种基本结果
 # ═══════════════════════════════════════════════════════════
+
 
 def test_can_load__direct_fit():
     """场景1: VRAM充足，直接加载"""
@@ -294,8 +304,7 @@ def test_can_load__evict_multiple():
     # 实际: a(2.0) < 4.4 → 加 b(累计4.0 < 4.4) → 加 c(累计6.0 >= 4.4)
     check("can=True", can)
     check("淘汰3个", len(evict) == 3, f"got={evict}")
-    check("evict顺序LRU", evict == ["a", "b", "c"],
-          f"got={evict}")
+    check("evict顺序LRU", evict == ["a", "b", "c"], f"got={evict}")
 
 
 def test_can_load__reject_absolute_insufficient():
@@ -378,13 +387,13 @@ def test_can_load__partial_in_use():
 
     can, reason, evict = mgr.can_load("new", required_vram_gb=8.0)
     # usable=5.6, shortage=8-5.6=2.4, idle(3GB)足够
-    check("can=True(仅淘汰idle)", can and evict == ["idle"],
-          f"can={can}, evict={evict}")
+    check("can=True(仅淘汰idle)", can and evict == ["idle"], f"can={can}, evict={evict}")
 
 
 # ═══════════════════════════════════════════════════════════
 # 5. 淘汰评分公式 — 精确验证
 # ═══════════════════════════════════════════════════════════
+
 
 def test_scoring__formula_verification():
     """评分=age_norm*0.7+size_norm*0.3，高分优先淘汰"""
@@ -394,9 +403,11 @@ def test_scoring__formula_verification():
     now = time.time()
     # 直接构造 LoadedModelInfo 避免时间漂移
     mgr._loaded["old-big"] = LoadedModelInfo(
-        model_name="old-big", estimated_vram_gb=10.0, last_used_at=now - 100)
+        model_name="old-big", estimated_vram_gb=10.0, last_used_at=now - 100
+    )
     mgr._loaded["new-small"] = LoadedModelInfo(
-        model_name="new-small", estimated_vram_gb=1.0, last_used_at=now - 10)
+        model_name="new-small", estimated_vram_gb=1.0, last_used_at=now - 10
+    )
 
     candidates = mgr._get_eviction_candidates()
 
@@ -418,9 +429,11 @@ def test_scoring__same_age_size_decides():
     now = time.time()
 
     mgr._loaded["small"] = LoadedModelInfo(
-        model_name="small", estimated_vram_gb=1.0, last_used_at=now - 50)
+        model_name="small", estimated_vram_gb=1.0, last_used_at=now - 50
+    )
     mgr._loaded["large"] = LoadedModelInfo(
-        model_name="large", estimated_vram_gb=10.0, last_used_at=now - 50)
+        model_name="large", estimated_vram_gb=10.0, last_used_at=now - 50
+    )
 
     candidates = mgr._get_eviction_candidates()
     # 年龄相同→age_norm相同(0.0/0→... wait max_age=0 for same timestamp)
@@ -434,8 +447,7 @@ def test_scoring__same_age_size_decides():
     # score(small)=1.0*0.7+0.1*0.3=0.73
     # score(large)=1.0*0.7+1.0*0.3=1.0 → large first
     check("2个候选", len(candidates) == 2)
-    check("large先淘汰", candidates[0].model_name == "large",
-          f"first={candidates[0].model_name}")
+    check("large先淘汰", candidates[0].model_name == "large", f"first={candidates[0].model_name}")
 
 
 def test_scoring__same_size_age_decides():
@@ -445,16 +457,17 @@ def test_scoring__same_size_age_decides():
     now = time.time()
 
     mgr._loaded["new"] = LoadedModelInfo(
-        model_name="new", estimated_vram_gb=5.0, last_used_at=now - 10)
+        model_name="new", estimated_vram_gb=5.0, last_used_at=now - 10
+    )
     mgr._loaded["old"] = LoadedModelInfo(
-        model_name="old", estimated_vram_gb=5.0, last_used_at=now - 100)
+        model_name="old", estimated_vram_gb=5.0, last_used_at=now - 100
+    )
 
     candidates = mgr._get_eviction_candidates()
     # max_age=100, max_vram=5
     # new: age_norm=10/100=0.1, size_norm=5/5=1.0 → score=0.07+0.3=0.37
     # old: age_norm=100/100=1.0, size_norm=5/5=1.0 → score=0.7+0.3=1.0
-    check("old先淘汰", candidates[0].model_name == "old",
-          f"first={candidates[0].model_name}")
+    check("old先淘汰", candidates[0].model_name == "old", f"first={candidates[0].model_name}")
     check("new后淘汰", candidates[1].model_name == "new")
 
 
@@ -500,10 +513,8 @@ def test_scoring__division_by_zero_safeguard():
     now = time.time()
 
     # 所有模型同一时刻加载 + 大小都为0 → max_age=0, max_vram=0
-    mgr._loaded["a"] = LoadedModelInfo(
-        model_name="a", estimated_vram_gb=0.0, last_used_at=now)
-    mgr._loaded["b"] = LoadedModelInfo(
-        model_name="b", estimated_vram_gb=0.0, last_used_at=now)
+    mgr._loaded["a"] = LoadedModelInfo(model_name="a", estimated_vram_gb=0.0, last_used_at=now)
+    mgr._loaded["b"] = LoadedModelInfo(model_name="b", estimated_vram_gb=0.0, last_used_at=now)
 
     candidates = mgr._get_eviction_candidates()
     # 不应 crash
@@ -515,6 +526,7 @@ def test_scoring__division_by_zero_safeguard():
 # ═══════════════════════════════════════════════════════════
 # 6. 状态管理 — record / mark / update / get
 # ═══════════════════════════════════════════════════════════
+
 
 def test_record_loaded__basic():
     """record_loaded 注册模型"""
@@ -638,6 +650,7 @@ def test_get_loaded_models__empty():
 # 7. 空闲超时淘汰
 # ═══════════════════════════════════════════════════════════
 
+
 def test_idle_ttl__expired_selected():
     """空闲超过 TTL 的模型被选中"""
     print("\n── TTL: 过期选择 ──")
@@ -664,7 +677,7 @@ def test_idle_ttl__exact_boundary():
     mgr.record_loaded("just-expired", 3.0)
     mgr.record_loaded("just-active", 3.0)
     mgr._loaded["just-expired"].last_used_at = now - 60.001  # 刚超过
-    mgr._loaded["just-active"].last_used_at = now - 59.999   # 刚未超
+    mgr._loaded["just-active"].last_used_at = now - 59.999  # 刚未超
 
     idle = mgr.get_idle_models_to_evict()
     check("刚超时在列", "just-expired" in idle)
@@ -720,6 +733,7 @@ def test_idle_ttl__multiple_expired():
 # 8. safety_factor
 # ═══════════════════════════════════════════════════════════
 
+
 def test_safety_factor__affects_usable():
     """安全系数直接影响可用 VRAM"""
     print("\n── 安全系数: 影响可用VRAM ──")
@@ -757,6 +771,7 @@ def test_safety_factor__edge_values():
 # 9. 真实 GPU 检测
 # ═══════════════════════════════════════════════════════════
 
+
 def test_real_gpu__detection():
     """真实环境GPU检测"""
     print("\n── 真实GPU: 检测 ──")
@@ -765,6 +780,7 @@ def test_real_gpu__detection():
     used = mgr._read_used_vram_gb()
 
     import torch
+
     if torch.cuda.is_available():
         check("有CUDA→free>0", free > 0, f"free={free:.1f}GB")
         check("free合理范围", 0 < free < 200, f"free={free:.1f}GB")
@@ -777,8 +793,10 @@ def test_real_gpu__detection():
 def test_read_vram__torch_fallback():
     """pynvml 失败时 fallback 到 torch"""
     print("\n── 真实GPU: torch fallback ──")
-    with patch('quantumflow.inference.vram_manager.VRAMManager._read_free_vram_gb',
-               wraps=VRAMManager._read_free_vram_gb) as mock_read:
+    with patch(
+        "quantumflow.inference.vram_manager.VRAMManager._read_free_vram_gb",
+        wraps=VRAMManager._read_free_vram_gb,
+    ) as mock_read:
         # 不 mock — 让真实路径执行
         pass
 
@@ -786,6 +804,7 @@ def test_read_vram__torch_fallback():
     free = mgr.get_available_vram_gb()
 
     import torch
+
     if torch.cuda.is_available():
         check("返回正值", free > 0)
     else:
@@ -795,6 +814,7 @@ def test_read_vram__torch_fallback():
 # ═══════════════════════════════════════════════════════════
 # 10. VRAMManager 初始化
 # ═══════════════════════════════════════════════════════════
+
 
 def test_init__defaults():
     """默认参数"""

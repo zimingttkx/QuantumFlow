@@ -9,17 +9,17 @@
 这些测试用 mock HTTP 响应模拟真实后端，验证协议层面的正确性。
 """
 
-import pytest
-import asyncio
-import json
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
 import sys
-sys.path.insert(0, '/home/dingziming/PycharmProjects/QuantumFlow')
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+sys.path.insert(0, "/home/dingziming/PycharmProjects/QuantumFlow")
 
 from quantumflow.inference.backends.sglang import SGLangEngine
 from quantumflow.inference.backends.tgi import TGIEngine
 from quantumflow.inference.backends.vllm import VLLMEngine
-from quantumflow.inference.engine import ModelConfig, SamplingParams, InferenceResult
+from quantumflow.inference.engine import SamplingParams
 
 
 async def _async_iter(lines):
@@ -31,6 +31,7 @@ async def _async_iter(lines):
 # ═══════════════════════════════════════════════════════════════════════════════
 # SGLang Protocol Tests
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestSGLangProtocol:
     """SGLang HTTP API 协议正确性测试"""
@@ -52,7 +53,7 @@ class TestSGLangProtocol:
             'data: {"choices":[{"text":"Hello","index":0,"finish_reason":null}]}\n\n',
             'data: {"choices":[{"text":" world","index":0,"finish_reason":null}]}\n\n',
             'data: {"choices":[{"text":"!","index":0,"finish_reason":"stop"}]}\n\n',
-            'data: [DONE]\n\n',
+            "data: [DONE]\n\n",
         ]
 
         mock_response = AsyncMock()
@@ -75,7 +76,7 @@ class TestSGLangProtocol:
         # 如果使用 chat/completions 端点，SSE 格式是 choices[0].delta.text
         sse_chunks = [
             'data: {"choices":[{"delta":{"text":"Hi"},"index":0}]}\n\n',
-            'data: [DONE]\n\n',
+            "data: [DONE]\n\n",
         ]
 
         mock_response = AsyncMock()
@@ -98,7 +99,7 @@ class TestSGLangProtocol:
         sse_chunks = [
             'data: {"choices":[]}\n\n',
             'data: {"choices":[{"text":"ok","index":0}]}\n\n',
-            'data: [DONE]\n\n',
+            "data: [DONE]\n\n",
         ]
 
         mock_response = AsyncMock()
@@ -112,15 +113,15 @@ class TestSGLangProtocol:
         async for text in engine.generate_stream("test", "prompt", SamplingParams()):
             chunks.append(text)
 
-        assert "ok" in chunks, f"空 choices 行不应该阻止后续 chunk 的解析"
+        assert "ok" in chunks, "空 choices 行不应该阻止后续 chunk 的解析"
 
     @pytest.mark.asyncio
     async def test_stream_json_decode_error_does_not_crash(self, engine):
         """PROTOCOL: 非法 JSON 的 SSE 行不崩溃，跳过继续"""
         sse_chunks = [
-            'data: {invalid json}\n\n',
+            "data: {invalid json}\n\n",
             'data: {"choices":[{"text":"recovered","index":0}]}\n\n',
-            'data: [DONE]\n\n',
+            "data: [DONE]\n\n",
         ]
 
         mock_response = AsyncMock()
@@ -134,7 +135,7 @@ class TestSGLangProtocol:
         async for text in engine.generate_stream("test", "prompt", SamplingParams()):
             chunks.append(text)
 
-        assert "recovered" in chunks, f"JSON 解析错误不应阻止后续 chunk"
+        assert "recovered" in chunks, "JSON 解析错误不应阻止后续 chunk"
 
     @pytest.mark.asyncio
     async def test_stream_http_error_returns_empty(self, engine):
@@ -158,10 +159,15 @@ class TestSGLangProtocol:
         """PROTOCOL: 批量 generate 必须为每个 prompt 发送独立的 HTTP 请求"""
         # 每个请求返回独立结果
         responses = [
-            AsyncMock(status_code=200, json=MagicMock(return_value={
-                "choices": [{"text": f"response_{i}", "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 5, "completion_tokens": 3},
-            }))
+            AsyncMock(
+                status_code=200,
+                json=MagicMock(
+                    return_value={
+                        "choices": [{"text": f"response_{i}", "finish_reason": "stop"}],
+                        "usage": {"prompt_tokens": 5, "completion_tokens": 3},
+                    }
+                ),
+            )
             for i in range(3)
         ]
         engine._client.post = AsyncMock(side_effect=responses)
@@ -169,13 +175,13 @@ class TestSGLangProtocol:
         results = await engine.generate("test", ["p1", "p2", "p3"], SamplingParams())
 
         # 验证：3 个 prompt → 3 次 HTTP POST
-        assert engine._client.post.call_count == 3, \
-            f"3 个 prompt 应发送 3 次 HTTP 请求，实际: {engine._client.post.call_count}"
+        assert (
+            engine._client.post.call_count == 3
+        ), f"3 个 prompt 应发送 3 次 HTTP 请求，实际: {engine._client.post.call_count}"
 
         assert len(results) == 3, f"应返回 3 个结果，实际: {len(results)}"
         for i, r in enumerate(results):
-            assert r.outputs[0] == f"response_{i}", \
-                f"结果[{i}] 内容错误: '{r.outputs[0]}'"
+            assert r.outputs[0] == f"response_{i}", f"结果[{i}] 内容错误: '{r.outputs[0]}'"
             assert r.finish_reason == "stop"
 
     @pytest.mark.asyncio
@@ -183,10 +189,12 @@ class TestSGLangProtocol:
         """PROTOCOL: 单个 prompt 只发一次 HTTP 请求"""
         mock_response = AsyncMock(
             status_code=200,
-            json=MagicMock(return_value={
-                "choices": [{"text": "single response", "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 3, "completion_tokens": 2},
-            })
+            json=MagicMock(
+                return_value={
+                    "choices": [{"text": "single response", "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+                }
+            ),
         )
         engine._client.post = AsyncMock(return_value=mock_response)
 
@@ -203,10 +211,12 @@ class TestSGLangProtocol:
         error_response = AsyncMock(status_code=500, text="Internal Server Error")
         ok_response = AsyncMock(
             status_code=200,
-            json=MagicMock(return_value={
-                "choices": [{"text": "ok", "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 3, "completion_tokens": 1},
-            })
+            json=MagicMock(
+                return_value={
+                    "choices": [{"text": "ok", "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 3, "completion_tokens": 1},
+                }
+            ),
         )
         engine._client.post = AsyncMock(side_effect=[ok_response, error_response, ok_response])
 
@@ -214,8 +224,9 @@ class TestSGLangProtocol:
 
         assert len(results) == 3
         assert results[0].finish_reason == "stop"
-        assert results[1].finish_reason == "error", \
-            f"失败请求的结果应为 error，实际: {results[1].finish_reason}"
+        assert (
+            results[1].finish_reason == "error"
+        ), f"失败请求的结果应为 error，实际: {results[1].finish_reason}"
         assert results[2].finish_reason == "stop"
 
     @pytest.mark.asyncio
@@ -236,16 +247,16 @@ class TestSGLangProtocol:
         """PROTOCOL: generate 必须正确传递所有采样参数到 API"""
         mock_response = AsyncMock(
             status_code=200,
-            json=MagicMock(return_value={
-                "choices": [{"text": "ok", "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 5, "completion_tokens": 2},
-            })
+            json=MagicMock(
+                return_value={
+                    "choices": [{"text": "ok", "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 5, "completion_tokens": 2},
+                }
+            ),
         )
         engine._client.post = AsyncMock(return_value=mock_response)
 
-        sampling_params = SamplingParams(
-            temperature=0.5, top_p=0.8, max_tokens=100, stop=["###"]
-        )
+        sampling_params = SamplingParams(temperature=0.5, top_p=0.8, max_tokens=100, stop=["###"])
 
         await engine.generate("test", ["prompt"], sampling_params)
 
@@ -261,6 +272,7 @@ class TestSGLangProtocol:
 # ═══════════════════════════════════════════════════════════════════════════════
 # TGI Protocol Tests
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestTGIProtocol:
     """TGI HTTP API 协议正确性测试"""
@@ -278,21 +290,23 @@ class TestTGIProtocol:
     async def test_top_k_not_used_as_truncate(self, engine):
         """PROTOCOL: top_k 采样参数不得映射为 TGI 的 truncate 参数"""
         mock_response = AsyncMock(
-            status_code=200,
-            json=MagicMock(return_value={"generated_text": "response"})
+            status_code=200, json=MagicMock(return_value={"generated_text": "response"})
         )
         engine._client.post = AsyncMock(return_value=mock_response)
 
         # top_k=50 (默认值) — 如果被错误映射为 truncate=50，输入会被截断
-        await engine.generate("test", ["Hello world, this is a test prompt"], SamplingParams(top_k=50))
+        await engine.generate(
+            "test", ["Hello world, this is a test prompt"], SamplingParams(top_k=50)
+        )
 
         call_args = engine._client.post.call_args
         payload = call_args.kwargs["json"]
 
         # 验证：parameters 中不应包含 truncate 字段
         if "parameters" in payload:
-            assert "truncate" not in payload["parameters"], \
-                f"BUG: top_k 被错误映射为 truncate! parameters={payload['parameters']}"
+            assert (
+                "truncate" not in payload["parameters"]
+            ), f"BUG: top_k 被错误映射为 truncate! parameters={payload['parameters']}"
             # 但应该有 top_k
             if "top_k" in payload["parameters"]:
                 assert payload["parameters"]["top_k"] == 50
@@ -302,7 +316,7 @@ class TestTGIProtocol:
         """PROTOCOL: generate_stream 必须传递 top_k/stop/repetition_penalty"""
         sse_chunks = [
             'data: {"token":{"text":"Hello"}}\n\n',
-            'data: [DONE]\n\n',
+            "data: [DONE]\n\n",
         ]
 
         mock_response = AsyncMock()
@@ -313,8 +327,12 @@ class TestTGIProtocol:
         engine._client.stream = MagicMock(return_value=mock_context)
 
         sampling_params = SamplingParams(
-            temperature=0.5, top_p=0.9, top_k=40,
-            max_tokens=100, repetition_penalty=1.1, stop=["END"]
+            temperature=0.5,
+            top_p=0.9,
+            top_k=40,
+            max_tokens=100,
+            repetition_penalty=1.1,
+            stop=["END"],
         )
 
         chunks = []
@@ -330,8 +348,7 @@ class TestTGIProtocol:
         assert params["top_k"] == 40
         assert params["repetition_penalty"] == 1.1
         assert params["stop"] == ["END"]
-        assert "truncate" not in params, \
-            f"BUG: truncate 不应出现在 parameters 中: {params}"
+        assert "truncate" not in params, f"BUG: truncate 不应出现在 parameters 中: {params}"
 
     # ── Token 统计 ──────────────────────────────────────────
 
@@ -341,11 +358,13 @@ class TestTGIProtocol:
         # TGI /generate_batch 返回的 prompt_tokens/generated_tokens 是标量
         mock_response = AsyncMock(
             status_code=200,
-            json=MagicMock(return_value={
-                "generated_text": ["resp1", "resp2", "resp3"],
-                "prompt_tokens": 30,  # 标量，不是列表
-                "generated_tokens": 15,  # 标量
-            })
+            json=MagicMock(
+                return_value={
+                    "generated_text": ["resp1", "resp2", "resp3"],
+                    "prompt_tokens": 30,  # 标量，不是列表
+                    "generated_tokens": 15,  # 标量
+                }
+            ),
         )
         engine._client.post = AsyncMock(return_value=mock_response)
 
@@ -355,18 +374,22 @@ class TestTGIProtocol:
         # 标量 token 数应该在 3 个结果之间分配
         for r in results:
             assert r.prompt_tokens > 0, f"每个结果应有 prompt_tokens > 0: {r.prompt_tokens}"
-            assert r.completion_tokens > 0, f"每个结果应有 completion_tokens > 0: {r.completion_tokens}"
+            assert (
+                r.completion_tokens > 0
+            ), f"每个结果应有 completion_tokens > 0: {r.completion_tokens}"
 
     @pytest.mark.asyncio
     async def test_batch_token_stats_list_handling(self, engine):
         """PROTOCOL: TGI batch 的 token 统计兼容列表格式"""
         mock_response = AsyncMock(
             status_code=200,
-            json=MagicMock(return_value={
-                "generated_text": ["r1", "r2"],
-                "prompt_tokens": [10, 20],  # 列表格式
-                "generated_tokens": [5, 8],
-            })
+            json=MagicMock(
+                return_value={
+                    "generated_text": ["r1", "r2"],
+                    "prompt_tokens": [10, 20],  # 列表格式
+                    "generated_tokens": [5, 8],
+                }
+            ),
         )
         engine._client.post = AsyncMock(return_value=mock_response)
 
@@ -405,7 +428,7 @@ class TestTGIProtocol:
         sse_chunks = [
             'data: {"token":{"text":"Hello"}}\n\n',
             'data: {"token":{"text":" world"}}\n\n',
-            'data: [DONE]\n\n',
+            "data: [DONE]\n\n",
         ]
 
         mock_response = AsyncMock()
@@ -425,23 +448,22 @@ class TestTGIProtocol:
     async def test_single_generate_uses_generate_endpoint(self, engine):
         """PROTOCOL: 单个 prompt 使用 /generate 端点"""
         mock_response = AsyncMock(
-            status_code=200,
-            json=MagicMock(return_value={"generated_text": "response"})
+            status_code=200, json=MagicMock(return_value={"generated_text": "response"})
         )
         engine._client.post = AsyncMock(return_value=mock_response)
 
         await engine.generate("test", ["single prompt"], SamplingParams())
 
         call_args = engine._client.post.call_args
-        assert call_args.kwargs["json"]["inputs"] == "single prompt", \
-            "单个 prompt 的 inputs 应为字符串"
+        assert (
+            call_args.kwargs["json"]["inputs"] == "single prompt"
+        ), "单个 prompt 的 inputs 应为字符串"
 
     @pytest.mark.asyncio
     async def test_batch_generate_uses_generate_batch_endpoint(self, engine):
         """PROTOCOL: 多个 prompt 使用 /generate_batch 端点"""
         mock_response = AsyncMock(
-            status_code=200,
-            json=MagicMock(return_value={"generated_text": ["r1", "r2"]})
+            status_code=200, json=MagicMock(return_value={"generated_text": ["r1", "r2"]})
         )
         engine._client.post = AsyncMock(return_value=mock_response)
 
@@ -449,16 +471,15 @@ class TestTGIProtocol:
 
         call_args = engine._client.post.call_args
         # /generate_batch 端点
-        from unittest.mock import call
         actual_url = engine._client.post.call_args[0][0] if engine._client.post.call_args[0] else ""
         # inputs 应为列表
-        assert isinstance(call_args.kwargs["json"]["inputs"], list), \
-            "批量请求的 inputs 应为列表"
+        assert isinstance(call_args.kwargs["json"]["inputs"], list), "批量请求的 inputs 应为列表"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # vLLM Behavior Tests
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestVLLMBehavior:
     """vLLM 后端行为测试"""
@@ -478,8 +499,9 @@ class TestVLLMBehavior:
         stats = await engine.get_stats("nonexistent")
         assert isinstance(stats, dict), f"get_stats 应返回 dict: {type(stats)}"
         for k, v in stats.items():
-            assert isinstance(v, (int, float)), \
-                f"get_stats 的值必须是数字，key={k}, value={v}, type={type(v)}"
+            assert isinstance(
+                v, (int, float)
+            ), f"get_stats 的值必须是数字，key={k}, value={v}, type={type(v)}"
 
     @pytest.mark.asyncio
     async def test_generate_model_not_loaded_returns_error_results(self):
@@ -518,6 +540,7 @@ class TestVLLMBehavior:
     async def test_initialize_with_vllm_available(self):
         """BEHAVIOR: vLLM 可用时 initialize 成功"""
         import vllm
+
         with patch.dict("sys.modules", {"vllm": vllm}):
             engine = VLLMEngine()
             result = await engine.initialize()

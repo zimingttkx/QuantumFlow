@@ -1,12 +1,11 @@
 """Pack调度策略 - 用于小模型"""
 
-from typing import List
 import structlog
 
 from quantumflow.scheduler.strategy.base import (
+    NodeResource,
     SchedulingRequest,
     SchedulingResult,
-    NodeResource,
     SchedulingStrategy,
     StrategyType,
 )
@@ -33,9 +32,7 @@ class PackSchedulingStrategy(SchedulingStrategy):
     def name(self) -> str:
         return "pack"
 
-    def can_handle(
-        self, request: SchedulingRequest, available_nodes: List[NodeResource]
-    ) -> bool:
+    def can_handle(self, request: SchedulingRequest, available_nodes: list[NodeResource]) -> bool:
         """检查是否可以使用Pack调度"""
         healthy_nodes = self.filter_healthy_nodes(available_nodes)
 
@@ -51,7 +48,7 @@ class PackSchedulingStrategy(SchedulingStrategy):
         return True
 
     def select_nodes(
-        self, request: SchedulingRequest, available_nodes: List[NodeResource]
+        self, request: SchedulingRequest, available_nodes: list[NodeResource]
     ) -> SchedulingResult:
         """选择最优节点"""
         healthy_nodes = self.filter_healthy_nodes(available_nodes)

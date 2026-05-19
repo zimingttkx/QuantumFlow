@@ -1,9 +1,9 @@
 """推理引擎基类"""
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Any, AsyncIterator
-from enum import Enum
+from typing import Any
 
 from quantumflow.core.constants import InferenceBackendType
 
@@ -19,7 +19,7 @@ class ModelConfig:
     gpu_memory_utilization: float = 0.8  # 80% VRAM for vLLM (RTX 4080 12GB)
     max_model_len: int = 2048  # 传给vLLM的max_model_len，KV cache由gpu_memory_utilization控制
     dtype: str = "auto"  # float16, bfloat16, float32, auto
-    quantization: Optional[str] = None  # awq, gptq, gguf
+    quantization: str | None = None  # awq, gptq, gguf
     trust_remote_code: bool = True
 
     # vLLM特有配置
@@ -31,9 +31,9 @@ class ModelConfig:
 
     # HuggingFace 特有配置
     prefill_chunk_size: int = 512  # 分块预填充的块大小（tokens），超过此长度自动分块
-    torch_compile: bool = True     # 是否启用 torch.compile 加速
+    torch_compile: bool = True  # 是否启用 torch.compile 加速
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """转换为字典"""
         return {
             "model_name": self.model_name,
@@ -57,9 +57,9 @@ class SamplingParams:
     top_k: int = 50
     max_tokens: int = 2048
     repetition_penalty: float = 1.0
-    stop: Optional[List[str]] = None
+    stop: list[str] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """转换为字典"""
         return {
             "temperature": self.temperature,
@@ -76,12 +76,12 @@ class InferenceResult:
     """推理结果"""
 
     request_id: str
-    outputs: List[str]
+    outputs: list[str]
     prompt_tokens: int
     completion_tokens: int
     latency_ms: float
     finish_reason: str
-    metrics: Dict[str, float] = field(default_factory=dict)
+    metrics: dict[str, float] = field(default_factory=dict)
 
 
 class InferenceEngine(ABC):
@@ -90,7 +90,7 @@ class InferenceEngine(ABC):
     def __init__(self, backend_type: InferenceBackendType):
         self.backend_type = backend_type
         self._is_initialized = False
-        self._loaded_models: Dict[str, ModelConfig] = {}
+        self._loaded_models: dict[str, ModelConfig] = {}
 
     @abstractmethod
     async def initialize(self) -> bool:
@@ -111,9 +111,9 @@ class InferenceEngine(ABC):
     async def generate(
         self,
         model_name: str,
-        prompts: List[str],
+        prompts: list[str],
         sampling_params: SamplingParams,
-    ) -> List[InferenceResult]:
+    ) -> list[InferenceResult]:
         """同步生成"""
         pass
 
@@ -128,7 +128,7 @@ class InferenceEngine(ABC):
         pass
 
     @abstractmethod
-    async def get_stats(self, model_name: str) -> Dict[str, float]:
+    async def get_stats(self, model_name: str) -> dict[str, float]:
         """获取引擎统计"""
         pass
 
@@ -138,11 +138,11 @@ class InferenceEngine(ABC):
         return self._is_initialized
 
     @property
-    def loaded_model_names(self) -> List[str]:
+    def loaded_model_names(self) -> list[str]:
         """已加载的模型列表"""
         return list(self._loaded_models.keys())
 
-    async def get_model_config(self, model_name: str) -> Optional[ModelConfig]:
+    async def get_model_config(self, model_name: str) -> ModelConfig | None:
         """获取模型配置"""
         return self._loaded_models.get(model_name)
 

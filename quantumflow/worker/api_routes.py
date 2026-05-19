@@ -1,9 +1,8 @@
 """Worker API 路由 - 接收 Controller 的指令"""
 
-from typing import Any, Dict, List
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 
 from quantumflow.inference.engine import ModelConfig, SamplingParams
 from quantumflow.worker.worker import (
@@ -22,7 +21,7 @@ def create_worker_router(worker: WorkerNode) -> APIRouter:
     # ==================== 模型管理 ====================
 
     @router.post("/load_model")
-    async def load_model(req: LoadModelRequest) -> Dict[str, Any]:
+    async def load_model(req: LoadModelRequest) -> dict[str, Any]:
         """
         加载模型
 
@@ -54,10 +53,10 @@ def create_worker_router(worker: WorkerNode) -> APIRouter:
                 }
 
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/unload_model")
-    async def unload_model(req: UnloadModelRequest) -> Dict[str, Any]:
+    async def unload_model(req: UnloadModelRequest) -> dict[str, Any]:
         """
         卸载模型
 
@@ -80,7 +79,7 @@ def create_worker_router(worker: WorkerNode) -> APIRouter:
                 }
 
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
     # ==================== 推理请求 ====================
 
@@ -122,12 +121,12 @@ def create_worker_router(worker: WorkerNode) -> APIRouter:
             )
 
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
     # ==================== 状态查询 ====================
 
     @router.get("/status")
-    async def get_status() -> Dict[str, Any]:
+    async def get_status() -> dict[str, Any]:
         """
         获取 Worker 状态
 
@@ -149,7 +148,7 @@ def create_worker_router(worker: WorkerNode) -> APIRouter:
         }
 
     @router.get("/stats")
-    async def get_stats(model_name: str) -> Dict[str, Any]:
+    async def get_stats(model_name: str) -> dict[str, Any]:
         """
         获取模型统计信息
 
@@ -163,10 +162,10 @@ def create_worker_router(worker: WorkerNode) -> APIRouter:
                 "stats": stats,
             }
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.get("/node_info")
-    async def get_node_info() -> Dict[str, Any]:
+    async def get_node_info() -> dict[str, Any]:
         """
         获取节点完整信息
 
@@ -175,7 +174,7 @@ def create_worker_router(worker: WorkerNode) -> APIRouter:
         return worker.node_info
 
     @router.get("/models")
-    async def list_models() -> Dict[str, Any]:
+    async def list_models() -> dict[str, Any]:
         """
         列出已加载模型
         """

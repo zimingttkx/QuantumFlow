@@ -10,17 +10,16 @@
 7. 统计指标准确性
 """
 
-import pytest
 import asyncio
-import time
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from typing import List
-
 import sys
-sys.path.insert(0, '/home/dingziming/PycharmProjects/QuantumFlow')
+from unittest.mock import AsyncMock
+
+import pytest
+
+sys.path.insert(0, "/home/dingziming/PycharmProjects/QuantumFlow")
 
 from quantumflow.inference.batch_accumulator import BatchAccumulator
-from quantumflow.inference.engine import SamplingParams, InferenceResult
+from quantumflow.inference.engine import InferenceResult, SamplingParams
 
 
 class TestBatchKeyUniqueness:
@@ -83,9 +82,19 @@ class TestBatchAccumulatorSubmit:
     async def test_submit_result_returned(self, accumulator):
         """submit 返回推理结果（不是 Future）"""
         # 设置 mock 返回值
-        accumulator._infer_fn = AsyncMock(return_value=[
-            InferenceResult(request_id="batch_0", outputs=["result"], prompt_tokens=1, completion_tokens=1, latency_ms=1, finish_reason="stop", metrics={})
-        ])
+        accumulator._infer_fn = AsyncMock(
+            return_value=[
+                InferenceResult(
+                    request_id="batch_0",
+                    outputs=["result"],
+                    prompt_tokens=1,
+                    completion_tokens=1,
+                    latency_ms=1,
+                    finish_reason="stop",
+                    metrics={},
+                )
+            ]
+        )
 
         # await submit 获取结果
         result = await accumulator.submit("prompt1")
@@ -97,9 +106,19 @@ class TestBatchAccumulatorSubmit:
     @pytest.mark.asyncio
     async def test_submit_triggers_worker(self, accumulator):
         """submit 必须触发 worker 处理"""
-        accumulator._infer_fn = AsyncMock(return_value=[
-            InferenceResult(request_id="0", outputs=["ok"], prompt_tokens=1, completion_tokens=1, latency_ms=1, finish_reason="stop", metrics={})
-        ])
+        accumulator._infer_fn = AsyncMock(
+            return_value=[
+                InferenceResult(
+                    request_id="0",
+                    outputs=["ok"],
+                    prompt_tokens=1,
+                    completion_tokens=1,
+                    latency_ms=1,
+                    finish_reason="stop",
+                    metrics={},
+                )
+            ]
+        )
 
         result = await accumulator.submit("prompt1")
 
@@ -114,8 +133,24 @@ class TestBatchResultDistribution:
     async def test_results_distributed_to_correct_futures(self):
         """每个 prompt 的结果必须分发到对应的 Future"""
         infer_results = [
-            InferenceResult(request_id="batch_0", outputs=["response1"], prompt_tokens=1, completion_tokens=1, latency_ms=1, finish_reason="stop", metrics={}),
-            InferenceResult(request_id="batch_1", outputs=["response2"], prompt_tokens=1, completion_tokens=1, latency_ms=1, finish_reason="stop", metrics={}),
+            InferenceResult(
+                request_id="batch_0",
+                outputs=["response1"],
+                prompt_tokens=1,
+                completion_tokens=1,
+                latency_ms=1,
+                finish_reason="stop",
+                metrics={},
+            ),
+            InferenceResult(
+                request_id="batch_1",
+                outputs=["response2"],
+                prompt_tokens=1,
+                completion_tokens=1,
+                latency_ms=1,
+                finish_reason="stop",
+                metrics={},
+            ),
         ]
 
         infer_fn = AsyncMock(return_value=infer_results)
@@ -140,6 +175,7 @@ class TestBatchResultDistribution:
     @pytest.mark.asyncio
     async def test_infer_fn_exception_propagates(self):
         """infer_fn 抛异常时异常必须传播到 caller"""
+
         def raising_infer(prompts):
             raise RuntimeError("Inference failed")
 
@@ -160,9 +196,19 @@ class TestBatchFlush:
     @pytest.mark.asyncio
     async def test_flush_triggers_processing(self):
         """flush 必须触发处理"""
-        infer_fn = AsyncMock(return_value=[
-            InferenceResult(request_id="0", outputs=["ok"], prompt_tokens=1, completion_tokens=1, latency_ms=1, finish_reason="stop", metrics={})
-        ])
+        infer_fn = AsyncMock(
+            return_value=[
+                InferenceResult(
+                    request_id="0",
+                    outputs=["ok"],
+                    prompt_tokens=1,
+                    completion_tokens=1,
+                    latency_ms=1,
+                    finish_reason="stop",
+                    metrics={},
+                )
+            ]
+        )
 
         acc = BatchAccumulator(
             infer_fn=infer_fn,
@@ -179,10 +225,20 @@ class TestBatchFlush:
     @pytest.mark.asyncio
     async def test_max_batch_size_triggers_flush(self):
         """达到 max_batch_size 必须立即 flush"""
-        infer_fn = AsyncMock(return_value=[
-            InferenceResult(request_id=f"batch_{i}", outputs=["out"], prompt_tokens=1, completion_tokens=1, latency_ms=1, finish_reason="stop", metrics={})
-            for i in range(3)
-        ])
+        infer_fn = AsyncMock(
+            return_value=[
+                InferenceResult(
+                    request_id=f"batch_{i}",
+                    outputs=["out"],
+                    prompt_tokens=1,
+                    completion_tokens=1,
+                    latency_ms=1,
+                    finish_reason="stop",
+                    metrics={},
+                )
+                for i in range(3)
+            ]
+        )
 
         acc = BatchAccumulator(
             infer_fn=infer_fn,
@@ -204,10 +260,19 @@ class TestBatchStatistics:
     @pytest.mark.asyncio
     async def test_total_requests_incremented(self):
         """total_requests 计数必须准确"""
+
         # 动态返回与 prompts 数匹配的结果
         def mock_infer(prompts):
             return [
-                InferenceResult(request_id=str(i), outputs=["ok"], prompt_tokens=1, completion_tokens=1, latency_ms=1, finish_reason="stop", metrics={})
+                InferenceResult(
+                    request_id=str(i),
+                    outputs=["ok"],
+                    prompt_tokens=1,
+                    completion_tokens=1,
+                    latency_ms=1,
+                    finish_reason="stop",
+                    metrics={},
+                )
                 for i in range(len(prompts))
             ]
 
@@ -231,7 +296,15 @@ class TestBatchStatistics:
         def mock_infer(prompts):
             call_count[0] += 1
             return [
-                InferenceResult(request_id="0", outputs=["ok"], prompt_tokens=1, completion_tokens=1, latency_ms=1, finish_reason="stop", metrics={})
+                InferenceResult(
+                    request_id="0",
+                    outputs=["ok"],
+                    prompt_tokens=1,
+                    completion_tokens=1,
+                    latency_ms=1,
+                    finish_reason="stop",
+                    metrics={},
+                )
             ]
 
         acc = BatchAccumulator(
@@ -259,9 +332,19 @@ class TestBatchEdgeCases:
     @pytest.mark.asyncio
     async def test_empty_prompt_handling(self):
         """空 prompt 必须能处理"""
-        infer_fn = AsyncMock(return_value=[
-            InferenceResult(request_id="batch_0", outputs=[""], prompt_tokens=0, completion_tokens=0, latency_ms=1, finish_reason="stop", metrics={}),
-        ])
+        infer_fn = AsyncMock(
+            return_value=[
+                InferenceResult(
+                    request_id="batch_0",
+                    outputs=[""],
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    latency_ms=1,
+                    finish_reason="stop",
+                    metrics={},
+                ),
+            ]
+        )
 
         acc = BatchAccumulator(
             infer_fn=infer_fn,
@@ -283,9 +366,19 @@ class TestBatchEdgeCases:
     @pytest.mark.asyncio
     async def test_single_request_no_batching(self):
         """单个请求不需要 batch"""
-        infer_fn = AsyncMock(return_value=[
-            InferenceResult(request_id="batch_0", outputs=["response"], prompt_tokens=1, completion_tokens=1, latency_ms=1, finish_reason="stop", metrics={}),
-        ])
+        infer_fn = AsyncMock(
+            return_value=[
+                InferenceResult(
+                    request_id="batch_0",
+                    outputs=["response"],
+                    prompt_tokens=1,
+                    completion_tokens=1,
+                    latency_ms=1,
+                    finish_reason="stop",
+                    metrics={},
+                ),
+            ]
+        )
 
         acc = BatchAccumulator(
             infer_fn=infer_fn,
@@ -304,10 +397,20 @@ class TestBatchConcurrency:
     @pytest.mark.asyncio
     async def test_concurrent_submits(self):
         """并发 submit 必须正确处理"""
-        infer_fn = AsyncMock(return_value=[
-            InferenceResult(request_id=f"batch_{i}", outputs=[f"out{i}"], prompt_tokens=1, completion_tokens=1, latency_ms=1, finish_reason="stop", metrics={})
-            for i in range(5)
-        ])
+        infer_fn = AsyncMock(
+            return_value=[
+                InferenceResult(
+                    request_id=f"batch_{i}",
+                    outputs=[f"out{i}"],
+                    prompt_tokens=1,
+                    completion_tokens=1,
+                    latency_ms=1,
+                    finish_reason="stop",
+                    metrics={},
+                )
+                for i in range(5)
+            ]
+        )
 
         acc = BatchAccumulator(
             infer_fn=infer_fn,
@@ -325,9 +428,19 @@ class TestBatchConcurrency:
     @pytest.mark.asyncio
     async def test_worker_task_cleanup_on_shutdown(self):
         """shutdown 时 worker 任务必须清理"""
-        infer_fn = AsyncMock(return_value=[
-            InferenceResult(request_id="0", outputs=["ok"], prompt_tokens=1, completion_tokens=1, latency_ms=1, finish_reason="stop", metrics={})
-        ])
+        infer_fn = AsyncMock(
+            return_value=[
+                InferenceResult(
+                    request_id="0",
+                    outputs=["ok"],
+                    prompt_tokens=1,
+                    completion_tokens=1,
+                    latency_ms=1,
+                    finish_reason="stop",
+                    metrics={},
+                )
+            ]
+        )
 
         acc = BatchAccumulator(
             infer_fn=infer_fn,

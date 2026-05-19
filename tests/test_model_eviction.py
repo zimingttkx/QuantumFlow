@@ -9,11 +9,11 @@
 - 状态转换: mark_in_use更新last_used_at/初始时间戳
 - 综合场景: 多模型共存/顺序淘汰/partial evict
 """
+
 import time
 from unittest.mock import MagicMock
 
-from quantumflow.inference.vram_manager import VRAMManager, LoadedModelInfo
-
+from quantumflow.inference.vram_manager import LoadedModelInfo, VRAMManager
 
 PASS = 0
 FAIL = 0
@@ -54,6 +54,7 @@ def make_mgr(free_vram=20.0, idle_ttl=0.0):
 # 1. 复合评分公式 — 精确验证
 # ═══════════════════════════════════════════════════════════
 
+
 def test_weighted_scoring_formula():
     """评分=age_norm*0.7+size_norm*0.3，高分优先淘汰。
     用精确构造的 last_used_at 验证公式计算值。"""
@@ -63,11 +64,10 @@ def test_weighted_scoring_formula():
 
     # 构造3个模型，手动控制时间戳和大小
     mgr._loaded["A"] = LoadedModelInfo(
-        model_name="A", estimated_vram_gb=10.0, last_used_at=now - 100)
-    mgr._loaded["B"] = LoadedModelInfo(
-        model_name="B", estimated_vram_gb=5.0, last_used_at=now - 50)
-    mgr._loaded["C"] = LoadedModelInfo(
-        model_name="C", estimated_vram_gb=1.0, last_used_at=now - 10)
+        model_name="A", estimated_vram_gb=10.0, last_used_at=now - 100
+    )
+    mgr._loaded["B"] = LoadedModelInfo(model_name="B", estimated_vram_gb=5.0, last_used_at=now - 50)
+    mgr._loaded["C"] = LoadedModelInfo(model_name="C", estimated_vram_gb=1.0, last_used_at=now - 10)
 
     candidates = mgr._get_eviction_candidates()
 
@@ -79,12 +79,11 @@ def test_weighted_scoring_formula():
     # 淘汰顺序: A(1.0) > B(0.5) > C(0.1)
 
     check("3个候选", len(candidates) == 3)
-    check("A优先淘汰(score=1.0)", candidates[0].model_name == "A",
-          f"first={candidates[0].model_name}")
-    check("B第二(score=0.5)", candidates[1].model_name == "B",
-          f"second={candidates[1].model_name}")
-    check("C最后(score=0.1)", candidates[2].model_name == "C",
-          f"third={candidates[2].model_name}")
+    check(
+        "A优先淘汰(score=1.0)", candidates[0].model_name == "A", f"first={candidates[0].model_name}"
+    )
+    check("B第二(score=0.5)", candidates[1].model_name == "B", f"second={candidates[1].model_name}")
+    check("C最后(score=0.1)", candidates[2].model_name == "C", f"third={candidates[2].model_name}")
 
 
 def test_scoring__age_dominates_when_size_similar():
@@ -94,17 +93,22 @@ def test_scoring__age_dominates_when_size_similar():
     now = time.time()
 
     mgr._loaded["old-small"] = LoadedModelInfo(
-        model_name="old-small", estimated_vram_gb=2.0, last_used_at=now - 200)
+        model_name="old-small", estimated_vram_gb=2.0, last_used_at=now - 200
+    )
     mgr._loaded["new-big"] = LoadedModelInfo(
-        model_name="new-big", estimated_vram_gb=3.0, last_used_at=now - 1)
+        model_name="new-big", estimated_vram_gb=3.0, last_used_at=now - 1
+    )
 
     candidates = mgr._get_eviction_candidates()
 
     # old-small: age_norm=1.0, size_norm=2/3≈0.67 → score=0.7+0.2=0.9
     # new-big:   age_norm=1/200≈0.005, size_norm=1.0 → score≈0.0035+0.3=0.3035
     # old-small 分更高 → 优先淘汰
-    check("old-small优先淘汰(年龄权重)", candidates[0].model_name == "old-small",
-          f"first={candidates[0].model_name}")
+    check(
+        "old-small优先淘汰(年龄权重)",
+        candidates[0].model_name == "old-small",
+        f"first={candidates[0].model_name}",
+    )
     check("new-big受保护", candidates[1].model_name == "new-big")
 
 
@@ -115,19 +119,25 @@ def test_scoring__size_breaks_tie():
     now = time.time()
 
     mgr._loaded["small"] = LoadedModelInfo(
-        model_name="small", estimated_vram_gb=1.0, last_used_at=now - 50)
+        model_name="small", estimated_vram_gb=1.0, last_used_at=now - 50
+    )
     mgr._loaded["large"] = LoadedModelInfo(
-        model_name="large", estimated_vram_gb=10.0, last_used_at=now - 50)
+        model_name="large", estimated_vram_gb=10.0, last_used_at=now - 50
+    )
 
     candidates = mgr._get_eviction_candidates()
     # 同年龄 → age_norm相同 → 大模型size_norm=1.0 > 小模型size_norm=0.1
-    check("large先淘汰(同年龄大者优先)", candidates[0].model_name == "large",
-          f"first={candidates[0].model_name}")
+    check(
+        "large先淘汰(同年龄大者优先)",
+        candidates[0].model_name == "large",
+        f"first={candidates[0].model_name}",
+    )
 
 
 # ═══════════════════════════════════════════════════════════
 # 2. in_use 保护
 # ═══════════════════════════════════════════════════════════
+
 
 def test_in_use_excluded_from_candidates():
     """正在推理的模型不在淘汰候选列表中"""
@@ -177,6 +187,7 @@ def test_mark_idle_returns_to_candidates():
 # ═══════════════════════════════════════════════════════════
 # 3. 空闲超时淘汰
 # ═══════════════════════════════════════════════════════════
+
 
 def test_idle_ttl__selects_expired():
     """空闲超过 TTL 的模型被选中淘汰"""
@@ -280,6 +291,7 @@ def test_idle_ttl__no_expired_empty():
 # 4. can_load 集成淘汰
 # ═══════════════════════════════════════════════════════════
 
+
 def test_can_load__evicts_lru_idle():
     """加载新模型时淘汰最旧的idle模型"""
     print("\n── 集成: can_load淘汰LRU ──")
@@ -368,6 +380,7 @@ def test_can_load__multiple_evictions_needed():
 # 5. 状态转换
 # ═══════════════════════════════════════════════════════════
 
+
 def test_mark_in_use_updates_timestamp():
     """mark_in_use 更新 last_used_at"""
     print("\n── 状态: last_used_at更新 ──")
@@ -390,8 +403,11 @@ def test_record_loaded__initial_timestamp():
     after = time.time()
 
     ts = mgr._loaded["fresh"].last_used_at
-    check("时间戳在加载时间范围内", before <= ts <= after,
-          f"before={before:.6f}, ts={ts:.6f}, after={after:.6f}")
+    check(
+        "时间戳在加载时间范围内",
+        before <= ts <= after,
+        f"before={before:.6f}, ts={ts:.6f}, after={after:.6f}",
+    )
 
 
 def test_record_loaded__sets_in_use_false():
@@ -405,6 +421,7 @@ def test_record_loaded__sets_in_use_false():
 # ═══════════════════════════════════════════════════════════
 # 6. 综合场景
 # ═══════════════════════════════════════════════════════════
+
 
 def test_full_scenario__3_models_load_4th():
     """3模型共存，加载第4个触发淘汰 + 第5个无法加载"""
@@ -431,8 +448,7 @@ def test_full_scenario__3_models_load_4th():
     can2, _, evict2 = mgr.can_load("big-model", required_vram_gb=12.0)
     check("big-model需要淘汰", can2)
     check("model-a(busy)不在淘汰", "model-a" not in evict2)
-    check("淘汰model-b(LRU最旧idle)", evict2 == ["model-b"],
-          f"evict={evict2}")
+    check("淘汰model-b(LRU最旧idle)", evict2 == ["model-b"], f"evict={evict2}")
 
     # 加载 huge-model(30GB): usable(10.5)+idle(3+3)=16.5 < 30 → 拒绝
     can3, _, evict3 = mgr.can_load("huge-model", required_vram_gb=30.0)
@@ -452,8 +468,7 @@ def test_scenario__sequential_eviction_with_mark_idle():
     mgr.mark_in_use("worker")
     can1, _, evict1 = mgr.can_load("new1", required_vram_gb=6.0)
     # usable=5.6, shortage=0.4, standby(2GB)够
-    check("淘汰standby(worker in_use)", can1 and evict1 == ["standby"],
-          f"evict={evict1}")
+    check("淘汰standby(worker in_use)", can1 and evict1 == ["standby"], f"evict={evict1}")
 
     # worker推理完成
     mgr.mark_idle("worker")
@@ -464,8 +479,7 @@ def test_scenario__sequential_eviction_with_mark_idle():
     # 现在只剩worker(idle,5GB)
     can2, _, evict2 = mgr.can_load("new2", required_vram_gb=6.0)
     # usable=5.6, shortage=0.4, worker(5GB)够
-    check("standby已淘汰后淘汰worker", can2 and evict2 == ["worker"],
-          f"evict={evict2}")
+    check("standby已淘汰后淘汰worker", can2 and evict2 == ["worker"], f"evict={evict2}")
 
 
 def test_scenario__no_models_loaded():
@@ -493,8 +507,7 @@ def test_scenario__small_vram_many_small_models():
     # usable=3.5, shortage=8-3.5=4.5GB → 需淘汰5个(5*1=5GB >= 4.5)
     check("淘汰5个", len(evict) == 5, f"got={len(evict)}: {evict}")
     # 前5个是最旧的(LRU顺序)
-    check("最旧的5个", evict == ["m0", "m1", "m2", "m3", "m4"],
-          f"got={evict}")
+    check("最旧的5个", evict == ["m0", "m1", "m2", "m3", "m4"], f"got={evict}")
 
 
 # ═══════════════════════════════════════════════════════════

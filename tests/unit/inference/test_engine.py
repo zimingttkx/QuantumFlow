@@ -1,18 +1,18 @@
 """推理引擎测试"""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
-from quantumflow.inference.engine import (
-    InferenceEngine,
-    ModelConfig,
-    SamplingParams,
-    InferenceResult,
-)
-from quantumflow.inference.backends.vllm import VLLMEngine
-from quantumflow.inference.manager import EngineManager, get_engine_manager
+import pytest
+
 from quantumflow.core.constants import InferenceBackendType
 from quantumflow.core.exceptions import InferenceError, ModelNotFoundError
+from quantumflow.inference.backends.vllm import VLLMEngine
+from quantumflow.inference.engine import (
+    InferenceResult,
+    ModelConfig,
+    SamplingParams,
+)
+from quantumflow.inference.manager import EngineManager, get_engine_manager
 
 
 class TestModelConfig:
@@ -115,6 +115,7 @@ class TestVLLMEngine:
         # Mock import to raise ImportError
         with patch.dict("sys.modules", {"vllm": None}):
             import sys
+
             original_vllm = sys.modules.get("vllm")
             sys.modules["vllm"] = None
 
@@ -232,8 +233,6 @@ class TestInferenceIntegration:
         manager._engines = {}
         manager._loaded_models = {}
         manager._default_engine = None
-
-        from quantumflow.core.exceptions import ModelNotFoundError
 
         with pytest.raises(ModelNotFoundError):
             await manager.generate(

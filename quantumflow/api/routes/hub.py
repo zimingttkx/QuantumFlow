@@ -1,17 +1,17 @@
 """HuggingFace Hub路由 - 模型发现、搜索、下载"""
 
-from fastapi import APIRouter, HTTPException, status, Query, BackgroundTasks
-from pydantic import BaseModel, Field
 import structlog
+from fastapi import APIRouter, HTTPException, Query, status
+from pydantic import BaseModel, Field
 
 from quantumflow.api.services.hub_service import (
+    download_model,
+    get_download_progress,
+    get_downloaded_models,
+    get_model_detail,
     get_trending_models,
     search_models,
     validate_model,
-    download_model,
-    get_model_detail,
-    get_download_progress,
-    get_downloaded_models,
 )
 from quantumflow.api.services.system_profiler import (
     detect_system,
@@ -23,6 +23,7 @@ logger = structlog.get_logger().bind(component="api_hub")
 router = APIRouter(prefix="/hub", tags=["Model Hub"])
 
 # ---- Pydantic schemas ----
+
 
 class HubModelInfo(BaseModel):
     model_id: str = Field(..., description="HuggingFace模型ID")
@@ -80,6 +81,7 @@ class RecommendationResponse(BaseModel):
 
 
 # ---- Routes ----
+
 
 @router.get(
     "/trending",

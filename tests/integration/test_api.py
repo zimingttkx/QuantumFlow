@@ -1,7 +1,6 @@
 """集成测试"""
 
 import pytest
-import asyncio
 from fastapi.testclient import TestClient
 
 from quantumflow.api.server import app
@@ -113,14 +112,16 @@ class TestClusterEndpoint:
             "ip": "127.0.0.1",
             "port": 8000,
             "gpu_count": 1,
-            "gpu_info": [{
-                "gpu_id": 0,
-                "name": "Test GPU",
-                "memory_total": 16 * 1024**3,
-                "memory_used": 4 * 1024**3,
-                "utilization": 0.3,
-                "temperature": 45.0,
-            }],
+            "gpu_info": [
+                {
+                    "gpu_id": 0,
+                    "name": "Test GPU",
+                    "memory_total": 16 * 1024**3,
+                    "memory_used": 4 * 1024**3,
+                    "utilization": 0.3,
+                    "temperature": 45.0,
+                }
+            ],
             "status": "healthy",
             "cpu_count": 8,
             "memory_total": 32 * 1024**3,

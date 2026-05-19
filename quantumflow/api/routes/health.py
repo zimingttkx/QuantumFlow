@@ -1,7 +1,6 @@
 """健康检查路由"""
 
 from fastapi import APIRouter, status
-from datetime import datetime
 
 from quantumflow.api.models import HealthResponse
 from quantumflow.version import __version__

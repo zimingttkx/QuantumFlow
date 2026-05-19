@@ -1,17 +1,15 @@
 """严格的端到端测试 - 验证整个系统"""
 
-import pytest
-import asyncio
-import time
 import json
-import httpx
-from unittest.mock import AsyncMock, patch, MagicMock
-from fastapi.testclient import TestClient
+import time
 
+import httpx
+import pytest
 
 # =============================================================================
 # Test Configuration and Fixtures
 # =============================================================================
+
 
 @pytest.fixture(scope="session")
 def api_base_url():
@@ -28,10 +26,11 @@ def test_timeout():
 def is_server_running():
     """检查服务器是否运行"""
     import socket
+
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         s.settimeout(2)
-        result = s.connect_ex(('localhost', 8000))
+        result = s.connect_ex(("localhost", 8000))
         s.close()
         return result == 0
     except Exception:
@@ -41,6 +40,7 @@ def is_server_running():
 # =============================================================================
 # Test API Health and Connectivity
 # =============================================================================
+
 
 class TestAPIService:
     """API服务健康检查"""
@@ -78,6 +78,7 @@ class TestAPIService:
 # Test Inference Endpoints - Non-Streaming
 # =============================================================================
 
+
 class TestInferenceNonStreaming:
     """非流式推理端点测试"""
 
@@ -99,7 +100,9 @@ class TestInferenceNonStreaming:
                 json=payload,
             )
 
-            assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+            assert (
+                response.status_code == 200
+            ), f"Expected 200, got {response.status_code}: {response.text}"
             data = response.json()
 
             # 验证响应结构
@@ -182,6 +185,7 @@ class TestInferenceNonStreaming:
 # Test Inference Endpoints - Streaming
 # =============================================================================
 
+
 class TestInferenceStreaming:
     """流式推理端点测试"""
 
@@ -258,6 +262,7 @@ class TestInferenceStreaming:
 # Test Chat Endpoint
 # =============================================================================
 
+
 class TestChatEndpoint:
     """聊天端点测试"""
 
@@ -267,9 +272,7 @@ class TestChatEndpoint:
         async with httpx.AsyncClient(timeout=60.0) as client:
             payload = {
                 "model": "test-model",
-                "messages": [
-                    {"role": "user", "content": "Hello!"}
-                ],
+                "messages": [{"role": "user", "content": "Hello!"}],
                 "sampling_params": {
                     "temperature": 0.7,
                     "max_tokens": 50,
@@ -332,9 +335,7 @@ class TestChatEndpoint:
         async with httpx.AsyncClient(timeout=30.0) as client:
             payload = {
                 "model": "test-model",
-                "messages": [
-                    {"role": "invalid_role", "content": "Hello"}
-                ],
+                "messages": [{"role": "invalid_role", "content": "Hello"}],
             }
             response = await client.post(
                 f"{api_base_url}/inference/chat",
@@ -347,6 +348,7 @@ class TestChatEndpoint:
 # =============================================================================
 # Test Batch Inference
 # =============================================================================
+
 
 class TestBatchInference:
     """批量推理测试"""
@@ -415,6 +417,7 @@ class TestBatchInference:
 # Test Model Management
 # =============================================================================
 
+
 class TestModelManagement:
     """模型管理测试"""
 
@@ -439,6 +442,7 @@ class TestModelManagement:
 # Test Cluster Management
 # =============================================================================
 
+
 class TestClusterManagement:
     """集群管理测试"""
 
@@ -460,6 +464,7 @@ class TestClusterManagement:
 # =============================================================================
 # Test Error Handling
 # =============================================================================
+
 
 class TestErrorHandling:
     """错误处理测试"""
@@ -508,6 +513,7 @@ class TestErrorHandling:
 # Test Performance and Latency
 # =============================================================================
 
+
 class TestPerformance:
     """性能测试"""
 
@@ -542,19 +548,22 @@ class TestPerformance:
 # Test Frontend Static File Serving
 # =============================================================================
 
+
 class TestFrontend:
     """前端测试"""
 
     def test_index_html_served(self):
         """测试index.html被正确提供"""
         import socket
+
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        result = s.connect_ex(('localhost', 8000))
+        result = s.connect_ex(("localhost", 8000))
         s.close()
         if result != 0:
             pytest.skip("服务器未运行")
 
         import httpx
+
         response = httpx.get("http://localhost:8000/")
         assert response.status_code == 200
         assert "text/html" in response.headers.get("content-type", "")
@@ -563,6 +572,7 @@ class TestFrontend:
 # =============================================================================
 # Test Real Model Loading (if available)
 # =============================================================================
+
 
 class TestRealModelLoading:
     """真实模型加载测试（如果模型可用）"""

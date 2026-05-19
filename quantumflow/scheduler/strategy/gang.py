@@ -1,12 +1,11 @@
 """Gang调度策略 - 用于大模型"""
 
-from typing import List
 import structlog
 
 from quantumflow.scheduler.strategy.base import (
+    NodeResource,
     SchedulingRequest,
     SchedulingResult,
-    NodeResource,
     SchedulingStrategy,
     StrategyType,
 )
@@ -33,9 +32,7 @@ class GangSchedulingStrategy(SchedulingStrategy):
     def name(self) -> str:
         return "gang"
 
-    def can_handle(
-        self, request: SchedulingRequest, available_nodes: List[NodeResource]
-    ) -> bool:
+    def can_handle(self, request: SchedulingRequest, available_nodes: list[NodeResource]) -> bool:
         """检查是否可以使用Gang调度"""
         # 检查是否有足够的GPU
         required_gpus = request.model_config.get("tensor_parallel", 1)
@@ -55,7 +52,7 @@ class GangSchedulingStrategy(SchedulingStrategy):
         return request.max_tokens > 2048 or request.priority >= 8
 
     def select_nodes(
-        self, request: SchedulingRequest, available_nodes: List[NodeResource]
+        self, request: SchedulingRequest, available_nodes: list[NodeResource]
     ) -> SchedulingResult:
         """选择最优节点组合"""
         required_gpus = request.model_config.get("tensor_parallel", 1)
@@ -84,9 +81,9 @@ class GangSchedulingStrategy(SchedulingStrategy):
             reverse=True,
         )
 
-        selected_nodes: List[str] = []
-        selected_node_objects: List[NodeResource] = []
-        selected_gpus: dict[str, List[int]] = {}
+        selected_nodes: list[str] = []
+        selected_node_objects: list[NodeResource] = []
+        selected_gpus: dict[str, list[int]] = {}
         total_selected_gpus = 0
 
         for node in sorted_nodes:

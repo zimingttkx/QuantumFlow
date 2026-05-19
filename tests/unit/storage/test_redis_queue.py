@@ -10,16 +10,16 @@
 7. 异常场景处理
 """
 
-import pytest
 import json
-import asyncio
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
-from quantumflow.storage import RedisQueue, QueuedRequest, QueuePriority
+import pytest
 
+from quantumflow.storage import QueuedRequest, QueuePriority, RedisQueue
 
 # ==================== QueuedRequest 序列化测试 ====================
+
 
 class TestQueuedRequestSerialization:
     """QueuedRequest 序列化/反序列化完整性测试"""
@@ -92,13 +92,15 @@ class TestQueuedRequestSerialization:
 
     def test_from_json_missing_optional_fields(self):
         """[错误处理] 缺少可选字段时使用默认值"""
-        minimal_json = json.dumps({
-            "request_id": "req-min",
-            "model_name": "model",
-            "prompt": "prompt",
-            "priority": 5,
-            "created_at": "2024-01-01T12:00:00",
-        })
+        minimal_json = json.dumps(
+            {
+                "request_id": "req-min",
+                "model_name": "model",
+                "prompt": "prompt",
+                "priority": 5,
+                "created_at": "2024-01-01T12:00:00",
+            }
+        )
 
         restored = QueuedRequest.from_json(minimal_json)
 
@@ -132,6 +134,7 @@ class TestQueuedRequestSerialization:
 
 # ==================== QueuePriority 枚举测试 ====================
 
+
 class TestQueuePriorityValues:
     """优先级枚举值验证"""
 
@@ -157,6 +160,7 @@ class TestQueuePriorityValues:
 
 
 # ==================== RedisQueue 核心业务逻辑测试 ====================
+
 
 class TestRedisQueueCoreLogic:
     """RedisQueue 核心业务逻辑测试"""
@@ -259,7 +263,9 @@ class TestRedisQueueCoreLogic:
         actual_score = list(zadd_args.values())[0]
 
         assert actual_request_id == "priority-test", "zadd key 应为 request_id"
-        assert abs(actual_score - expected_score) < 0.001, f"score 计算错误: 期望 {expected_score}, 实际 {actual_score}"
+        assert (
+            abs(actual_score - expected_score) < 0.001
+        ), f"score 计算错误: 期望 {expected_score}, 实际 {actual_score}"
 
     @pytest.mark.asyncio
     async def test_enqueue_increments_metric(self, queue, mock_redis):
@@ -484,8 +490,7 @@ class TestRedisQueueCoreLogic:
 
         hincrby_calls = mock_redis.hincrby.call_args_list
         completed_calls = [
-            c for c in hincrby_calls
-            if c[0][0] == queue.METRICS_KEY and c[0][1] == "completed"
+            c for c in hincrby_calls if c[0][0] == queue.METRICS_KEY and c[0][1] == "completed"
         ]
         assert len(completed_calls) >= 1, "必须增加 completed 指标"
 
@@ -566,10 +571,12 @@ class TestRedisQueueCoreLogic:
             created_at=datetime.now(),
         ).to_json()
 
-        mock_redis.zpopmin = AsyncMock(side_effect=[
-            [("batch-1", -5.0)],  # 第一次有数据
-            [],  # 第二次空
-        ])
+        mock_redis.zpopmin = AsyncMock(
+            side_effect=[
+                [("batch-1", -5.0)],  # 第一次有数据
+                [],  # 第二次空
+            ]
+        )
         mock_redis.get = AsyncMock(return_value=request_data)
         mock_redis.setex = AsyncMock(return_value=True)
 
@@ -598,7 +605,9 @@ class TestRedisQueueCoreLogic:
         batch = await queue.dequeue_batch(batch_size=2)
 
         # zpopmin 只应被调用 2 次
-        assert mock_redis.zpopmin.call_count == 2, f"zpopmin 应被调用 2 次, 实际 {mock_redis.zpopmin.call_count}"
+        assert (
+            mock_redis.zpopmin.call_count == 2
+        ), f"zpopmin 应被调用 2 次, 实际 {mock_redis.zpopmin.call_count}"
 
     # ==================== 清空队列测试 ====================
 
@@ -627,11 +636,13 @@ class TestRedisQueueCoreLogic:
     @pytest.mark.asyncio
     async def test_get_metrics_returns_integer_values(self, queue, mock_redis):
         """[核心功能] 指标值必须是整数类型"""
-        mock_redis.hgetall = AsyncMock(return_value={
-            "enqueued": "100",
-            "completed": "95",
-            "failed": "5",
-        })
+        mock_redis.hgetall = AsyncMock(
+            return_value={
+                "enqueued": "100",
+                "completed": "95",
+                "failed": "5",
+            }
+        )
 
         metrics = await queue.get_metrics()
 
@@ -710,6 +721,7 @@ class TestRedisQueueCoreLogic:
 
 
 # ==================== RedisQueue 集成测试（需 Redis） ====================
+
 
 class TestRedisQueueIntegration:
     """集成测试 - 需要真实 Redis 服务器"""
@@ -791,8 +803,9 @@ class TestRedisQueueIntegration:
 
             # 由于 score = -(priority + timestamp)，优先级相同时时间早的先出
             # 整体应按优先级降序出队
-            assert dequeued_priorities == sorted(dequeued_priorities, reverse=True), \
-                f"出队顺序应按优先级降序: 期望 {sorted(dequeued_priorities, reverse=True)}, 实际 {dequeued_priorities}"
+            assert dequeued_priorities == sorted(
+                dequeued_priorities, reverse=True
+            ), f"出队顺序应按优先级降序: 期望 {sorted(dequeued_priorities, reverse=True)}, 实际 {dequeued_priorities}"
 
         finally:
             await queue.disconnect()
@@ -863,6 +876,7 @@ class TestRedisQueueIntegration:
 
 
 # ==================== 异常场景专项测试 ====================
+
 
 class TestRedisQueueExceptionScenarios:
     """Redis 异常场景专项测试"""

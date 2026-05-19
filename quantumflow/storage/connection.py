@@ -3,8 +3,9 @@
 提供全局Redis连接单例，支持分布式存储和任务队列。
 """
 
-from typing import Optional
 import asyncio
+from typing import Optional
+
 import structlog
 
 logger = structlog.get_logger().bind(component="redis_manager")
@@ -26,7 +27,7 @@ class RedisConnectionManager:
     def __init__(self):
         self._redis_client = None
         self._connected = False
-        self._redis_url: Optional[str] = None
+        self._redis_url: str | None = None
         self._connection_kwargs: dict = {}
 
     @classmethod
@@ -122,7 +123,6 @@ class RedisConnectionManager:
             return {"status": "disconnected", "connected": False}
 
         try:
-            import redis.asyncio as redis
 
             info = await self._redis_client.info("server")
             await self._redis_client.ping()
@@ -141,7 +141,7 @@ class RedisConnectionManager:
 
 
 # 全局获取函数
-_redis_manager: Optional[RedisConnectionManager] = None
+_redis_manager: RedisConnectionManager | None = None
 
 
 async def get_redis_manager() -> RedisConnectionManager:

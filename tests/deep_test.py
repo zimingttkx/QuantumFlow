@@ -3,19 +3,24 @@
 注意：本脚本是手动运行集成测试，不是 pytest 测试文件。
 用法: python tests/deep_test.py
 """
+
 import asyncio
-import time
-import sys
 import os
+import sys
+import time
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
-pytestmark = pytest.mark.skip(reason="手动集成测试脚本，需 GPU + 模型下载，通过 python tests/deep_test.py 运行")
 
-from quantumflow.inference.engine import ModelConfig, SamplingParams, InferenceResult
-from quantumflow.inference.backends.huggingface import HuggingFaceEngine
-from quantumflow.inference.manager import EngineManager
+pytestmark = pytest.mark.skip(
+    reason="手动集成测试脚本，需 GPU + 模型下载，通过 python tests/deep_test.py 运行"
+)
+
 from quantumflow.core.constants import InferenceBackendType
+from quantumflow.inference.backends.huggingface import HuggingFaceEngine
+from quantumflow.inference.engine import ModelConfig, SamplingParams
+from quantumflow.inference.manager import EngineManager
 
 PASS = 0
 FAIL = 0
@@ -71,9 +76,15 @@ async def test_model(engine, model_name, model_path, prompts):
         check("有生成文本", len(r.outputs[0]) > 0, f"文本: {r.outputs[0][:80]}...")
         check("有 prompt_tokens", r.prompt_tokens > 0, f"tokens: {r.prompt_tokens}")
         check("有 completion_tokens", r.completion_tokens > 0, f"tokens: {r.completion_tokens}")
-        check("有 finish_reason", r.finish_reason in ("stop", "length"), f"reason: {r.finish_reason}")
+        check(
+            "有 finish_reason", r.finish_reason in ("stop", "length"), f"reason: {r.finish_reason}"
+        )
         check("有 latency_ms", r.latency_ms > 0, f"latency: {r.latency_ms:.0f}ms")
-        check("completion_tokens <= max_tokens", r.completion_tokens <= 30, f"实际: {r.completion_tokens}")
+        check(
+            "completion_tokens <= max_tokens",
+            r.completion_tokens <= 30,
+            f"实际: {r.completion_tokens}",
+        )
         print(f"    输出: {r.outputs[0][:100]}")
 
     # 3. 批量生成
@@ -109,7 +120,7 @@ async def test_model(engine, model_name, model_path, prompts):
 async def test_sampling_params():
     """测试采样参数的各种组合"""
     print(f"\n{'='*60}")
-    print(f"🧪 测试: 采样参数边界")
+    print("🧪 测试: 采样参数边界")
     print(f"{'='*60}")
 
     # 加载一个小模型
@@ -181,7 +192,7 @@ async def test_sampling_params():
 async def test_engine_manager():
     """测试 EngineManager 单例和路由逻辑"""
     print(f"\n{'='*60}")
-    print(f"🏭 测试: EngineManager")
+    print("🏭 测试: EngineManager")
     print(f"{'='*60}")
 
     mgr1 = EngineManager()
@@ -198,7 +209,7 @@ async def test_engine_manager():
 async def test_error_handling():
     """测试错误处理路径"""
     print(f"\n{'='*60}")
-    print(f"🛡️  测试: 错误处理")
+    print("🛡️  测试: 错误处理")
     print(f"{'='*60}")
 
     engine = HuggingFaceEngine()
@@ -243,7 +254,7 @@ async def test_error_handling():
 async def test_model_switch():
     """测试模型切换：加载A→推理→加载B→推理→卸载B→推理A"""
     print(f"\n{'='*60}")
-    print(f"🔄 测试: 模型切换")
+    print("🔄 测试: 模型切换")
     print(f"{'='*60}")
 
     engine = HuggingFaceEngine()
@@ -252,7 +263,12 @@ async def test_model_switch():
     sp = SamplingParams(temperature=0.1, max_tokens=20)
 
     # 加载 A
-    config_a = ModelConfig(model_name="model-a", model_path="Qwen/Qwen2.5-0.5B-Instruct", trust_remote_code=True, max_model_len=256)
+    config_a = ModelConfig(
+        model_name="model-a",
+        model_path="Qwen/Qwen2.5-0.5B-Instruct",
+        trust_remote_code=True,
+        max_model_len=256,
+    )
     await engine.load_model(config_a)
     check("加载 model-a", await engine.is_model_loaded("model-a"))
 
@@ -261,7 +277,12 @@ async def test_model_switch():
     check("model-a 推理成功", len(results_a) > 0 and len(results_a[0].outputs[0]) > 0)
 
     # 加载 B
-    config_b = ModelConfig(model_name="model-b", model_path="Qwen/Qwen2.5-1.5B-Instruct", trust_remote_code=True, max_model_len=256)
+    config_b = ModelConfig(
+        model_name="model-b",
+        model_path="Qwen/Qwen2.5-1.5B-Instruct",
+        trust_remote_code=True,
+        max_model_len=256,
+    )
     await engine.load_model(config_b)
     check("加载 model-b", await engine.is_model_loaded("model-b"))
 
@@ -317,6 +338,7 @@ async def main():
             print(msg)
             ERRORS.append(msg)
             import traceback
+
             traceback.print_exc()
             # 尝试卸载
             try:
@@ -331,6 +353,7 @@ async def main():
         FAIL += 1
         print(f"  ✗ 采样参数测试异常: {e}")
         import traceback
+
         traceback.print_exc()
 
     # 错误处理测试

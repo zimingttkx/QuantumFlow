@@ -1,7 +1,8 @@
 """Pytest配置"""
 
-import pytest
 import logging
+
+import pytest
 
 # 配置标准库日志
 logging.basicConfig(

@@ -1,22 +1,20 @@
 """HuggingFace Hub服务 - 模型发现、搜索、验证、下载"""
 
 import json
-from typing import List, Dict, Optional
 import os
+
 import structlog
 from huggingface_hub import (
     HfApi,
+    hf_hub_download,
     list_models,
     model_info,
-    scan_cache_dir,
     snapshot_download,
-    hf_hub_download,
 )
 from huggingface_hub.utils import (
     GatedRepoError,
-    RepositoryNotFoundError,
-    RevisionNotFoundError,
     HfHubHTTPError,
+    RepositoryNotFoundError,
 )
 
 logger = structlog.get_logger().bind(component="hub_service")
@@ -27,7 +25,7 @@ MODELS_CACHE_DIR = os.path.expanduser("~/.cache/quantumflow/models")
 _HF_API = HfApi()
 
 # 下载中的模型tracker，避免重复下载
-_downloading: Dict[str, float] = {}  # model_id -> progress (0-100)
+_downloading: dict[str, float] = {}  # model_id -> progress (0-100)
 
 
 def get_models_dir() -> str:
@@ -36,9 +34,9 @@ def get_models_dir() -> str:
     return MODELS_CACHE_DIR
 
 
-def _model_to_dict(m) -> Dict:
+def _model_to_dict(m) -> dict:
     """将HF模型信息转为字典"""
-    siblings = getattr(m, "siblings", None) or []
+    getattr(m, "siblings", None) or []
     return {
         "model_id": m.modelId if hasattr(m, "modelId") else m.id,
         "author": getattr(m, "author", "unknown"),
@@ -46,7 +44,9 @@ def _model_to_dict(m) -> Dict:
         "likes": getattr(m, "likes", 0) or 0,
         "pipeline_tag": getattr(m, "pipeline_tag", "unknown"),
         "tags": getattr(m, "tags", []) or [],
-        "last_modified": str(getattr(m, "lastModified", "")) if getattr(m, "lastModified", None) else "",
+        "last_modified": (
+            str(getattr(m, "lastModified", "")) if getattr(m, "lastModified", None) else ""
+        ),
         "sha": getattr(m, "sha", ""),
         "created_at": str(getattr(m, "createdAt", "")) if getattr(m, "createdAt", None) else "",
         "private": getattr(m, "private", False),
@@ -55,7 +55,7 @@ def _model_to_dict(m) -> Dict:
     }
 
 
-async def get_trending_models(limit: int = 30, filter_params: Dict = None) -> List[Dict]:
+async def get_trending_models(limit: int = 30, filter_params: dict = None) -> list[dict]:
     """获取HF热门文本生成模型
 
     Args:
@@ -102,7 +102,7 @@ async def get_trending_models(limit: int = 30, filter_params: Dict = None) -> Li
         return []
 
 
-async def search_models(query: str, limit: int = 20) -> List[Dict]:
+async def search_models(query: str, limit: int = 20) -> list[dict]:
     """搜索HF模型
 
     Args:
@@ -135,7 +135,7 @@ async def search_models(query: str, limit: int = 20) -> List[Dict]:
         return []
 
 
-async def validate_model(model_id: str) -> Dict:
+async def validate_model(model_id: str) -> dict:
     """验证模型是否存在于HF上（不下载）
 
     Args:
@@ -210,7 +210,7 @@ async def validate_model(model_id: str) -> Dict:
         }
 
 
-async def get_model_detail(model_id: str) -> Dict:
+async def get_model_detail(model_id: str) -> dict:
     """获取模型详细信息（含真实参数量，优先读取 config.json）"""
     try:
         info = model_info(model_id, files_metadata=True)
@@ -219,7 +219,9 @@ async def get_model_detail(model_id: str) -> Dict:
         cfg = _fetch_config_params(model_id)
         if cfg.get("params"):
             param_count = cfg["params"]
-            estimated_vram = _estimate_vram(param_count, cfg["hidden_size"], cfg["num_hidden_layers"])
+            estimated_vram = _estimate_vram(
+                param_count, cfg["hidden_size"], cfg["num_hidden_layers"]
+            )
             source = "config.json"
         else:
             param_count = _estimate_params(info)
@@ -276,7 +278,9 @@ def _fetch_config_params(model_id: str) -> dict:
         intermediate_size = cfg.get("intermediate_size", 0)
         vocab_size = cfg.get("vocab_size", 0)
 
-        if not all([hidden_size, num_hidden_layers, num_attention_heads, intermediate_size, vocab_size]):
+        if not all(
+            [hidden_size, num_hidden_layers, num_attention_heads, intermediate_size, vocab_size]
+        ):
             return {}
 
         head_dim = hidden_size / num_attention_heads
@@ -334,13 +338,23 @@ def _estimate_params(info) -> int:
     model_id_lower = model_id.lower()
 
     param_patterns = [
-        ("8b", 8_000_000_000), ("7b", 7_000_000_000), ("13b", 13_000_000_000),
-        ("70b", 70_000_000_000), ("72b", 72_000_000_000), ("34b", 34_000_000_000),
-        ("3b", 3_000_000_000), ("1b", 1_000_000_000), ("1.5b", 1_500_000_000),
-        ("0.5b", 500_000_000), ("14b", 14_000_000_000),
-        ("40b", 40_000_000_000), ("65b", 65_000_000_000),
-        ("180b", 180_000_000_000), ("405b", 405_000_000_000),
-        ("20b", 20_000_000_000), ("9b", 9_000_000_000),
+        ("8b", 8_000_000_000),
+        ("7b", 7_000_000_000),
+        ("13b", 13_000_000_000),
+        ("70b", 70_000_000_000),
+        ("72b", 72_000_000_000),
+        ("34b", 34_000_000_000),
+        ("3b", 3_000_000_000),
+        ("1b", 1_000_000_000),
+        ("1.5b", 1_500_000_000),
+        ("0.5b", 500_000_000),
+        ("14b", 14_000_000_000),
+        ("40b", 40_000_000_000),
+        ("65b", 65_000_000_000),
+        ("180b", 180_000_000_000),
+        ("405b", 405_000_000_000),
+        ("20b", 20_000_000_000),
+        ("9b", 9_000_000_000),
         ("11b", 11_000_000_000),
     ]
 
@@ -380,7 +394,7 @@ async def download_model(
     model_id: str,
     progress_callback=None,
     max_retries: int = 3,
-) -> Dict:
+) -> dict:
     """从HF下载模型到本地
 
     Args:
@@ -445,7 +459,8 @@ async def download_model(
             )
             if attempt < max_retries - 1:
                 import asyncio
-                await asyncio.sleep(2 ** attempt)
+
+                await asyncio.sleep(2**attempt)
             else:
                 _downloading.pop(model_id, None)
                 return {
@@ -463,7 +478,7 @@ def get_download_progress(model_id: str) -> float:
     return _downloading.get(model_id, -1)
 
 
-def get_downloaded_models() -> List[Dict]:
+def get_downloaded_models() -> list[dict]:
     """获取本地已下载的模型列表"""
     result = []
     models_dir = get_models_dir()
@@ -477,16 +492,18 @@ def get_downloaded_models() -> List[Dict]:
             model_id = entry.replace("--", "/")
             # 计算大小
             total_size = 0
-            for dirpath, dirnames, filenames in os.walk(entry_path):
+            for dirpath, _dirnames, filenames in os.walk(entry_path):
                 for f in filenames:
                     fp = os.path.join(dirpath, f)
                     if os.path.exists(fp):
                         total_size += os.path.getsize(fp)
-            result.append({
-                "model_id": model_id,
-                "local_path": entry_path,
-                "size_bytes": total_size,
-                "size_gb": round(total_size / (1024**3), 2),
-            })
+            result.append(
+                {
+                    "model_id": model_id,
+                    "local_path": entry_path,
+                    "size_bytes": total_size,
+                    "size_gb": round(total_size / (1024**3), 2),
+                }
+            )
 
     return result

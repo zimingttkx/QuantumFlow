@@ -1,25 +1,23 @@
 """严格的推理引擎单元测试"""
 
-import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
-from typing import AsyncIterator
+from unittest.mock import MagicMock, patch
 
-from quantumflow.inference.engine import (
-    InferenceEngine,
-    ModelConfig,
-    SamplingParams,
-    InferenceResult,
-)
-from quantumflow.inference.backends.vllm import VLLMEngine
-from quantumflow.inference.manager import EngineManager, get_engine_manager
+import pytest
+
 from quantumflow.core.constants import InferenceBackendType
 from quantumflow.core.exceptions import InferenceError, ModelNotFoundError, SchedulerError
-
+from quantumflow.inference.backends.vllm import VLLMEngine
+from quantumflow.inference.engine import (
+    InferenceResult,
+    ModelConfig,
+    SamplingParams,
+)
+from quantumflow.inference.manager import EngineManager, get_engine_manager
 
 # =============================================================================
 # Test ModelConfig - 验证配置的正确性和边界值
 # =============================================================================
+
 
 class TestModelConfigStrict:
     """ModelConfig严格测试"""
@@ -98,6 +96,7 @@ class TestModelConfigStrict:
 # Test SamplingParams - 验证采样参数
 # =============================================================================
 
+
 class TestSamplingParamsStrict:
     """SamplingParams严格测试"""
 
@@ -145,6 +144,7 @@ class TestSamplingParamsStrict:
 # =============================================================================
 # Test InferenceResult - 验证推理结果
 # =============================================================================
+
 
 class TestInferenceResultStrict:
     """InferenceResult严格测试"""
@@ -195,6 +195,7 @@ class TestInferenceResultStrict:
 # =============================================================================
 # Test VLLMEngine - 验证vLLM引擎
 # =============================================================================
+
 
 class TestVLLMEngineStrict:
     """VLLMEngine严格测试"""
@@ -271,6 +272,7 @@ class TestVLLMEngineStrict:
 # =============================================================================
 # Test EngineManager - 验证引擎管理器
 # =============================================================================
+
 
 class TestEngineManagerStrict:
     """EngineManager严格测试"""
@@ -360,6 +362,7 @@ class TestEngineManagerStrict:
 # Test Backend Types - 验证后端类型枚举
 # =============================================================================
 
+
 class TestBackendTypesStrict:
     """后端类型严格测试"""
 
@@ -379,6 +382,7 @@ class TestBackendTypesStrict:
 # Test API Models - 验证API模型
 # =============================================================================
 
+
 class TestAPIModelsStrict:
     """API模型严格测试"""
 
@@ -392,7 +396,7 @@ class TestAPIModelsStrict:
 
     def test_chat_request_validation(self):
         """验证聊天请求验证"""
-        from quantumflow.api.models import ChatMessage, ChatRequest
+        from quantumflow.api.models import ChatMessage
 
         msg = ChatMessage(role="user", content="Hello")
         assert msg.role == "user"
@@ -409,6 +413,7 @@ class TestAPIModelsStrict:
 # =============================================================================
 # Test Exceptions - 验证异常
 # =============================================================================
+
 
 class TestExceptionsStrict:
     """异常严格测试"""
@@ -440,6 +445,7 @@ class TestExceptionsStrict:
 # =============================================================================
 # Test VLLM Config Passing - 验证vLLM配置传递
 # =============================================================================
+
 
 class TestVLLMConfigPassing:
     """vLLM配置传递测试"""
@@ -488,14 +494,14 @@ class TestVLLMConfigPassing:
 # Test Conversation History Handling - 验证对话历史处理
 # =============================================================================
 
+
 class TestConversationHistory:
     """对话历史处理测试"""
 
     @pytest.mark.asyncio
     async def test_chat_request_converts_history_correctly(self):
         """验证聊天请求正确转换对话历史"""
-        from quantumflow.api.models import ChatMessage, ChatRequest
-        from quantumflow.api.routes.inference import _convert_sampling_params
+        from quantumflow.api.models import ChatMessage
 
         messages = [
             ChatMessage(role="system", content="You are a helpful assistant"),
@@ -516,13 +522,14 @@ class TestConversationHistory:
 # Test SamplingParams Conversion - 验证采样参数转换
 # =============================================================================
 
+
 class TestSamplingParamsConversion:
     """采样参数转换测试"""
 
     def test_convert_sampling_params_from_dict(self):
         """验证从字典转换采样参数"""
-        from quantumflow.api.routes.inference import _convert_sampling_params
         from quantumflow.api.models import InferenceRequest
+        from quantumflow.api.routes.inference import _convert_sampling_params
 
         request = InferenceRequest(
             model="test-model",
@@ -539,8 +546,8 @@ class TestSamplingParamsConversion:
 
     def test_convert_sampling_params_none(self):
         """验证None采样参数使用默认值"""
-        from quantumflow.api.routes.inference import _convert_sampling_params
         from quantumflow.api.models import InferenceRequest
+        from quantumflow.api.routes.inference import _convert_sampling_params
 
         request = InferenceRequest(
             model="test-model",

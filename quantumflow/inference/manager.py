@@ -1,22 +1,24 @@
 """推理引擎管理器 - 单例模式管理所有推理后端"""
 
-from typing import Dict, Optional, AsyncIterator
 import asyncio
+from collections.abc import AsyncIterator
+from typing import Optional
+
 import structlog
 
-from quantumflow.inference.engine import (
-    InferenceEngine,
-    ModelConfig,
-    SamplingParams,
-    InferenceResult,
-)
-from quantumflow.inference.backends.vllm import VLLMEngine
-from quantumflow.inference.backends.huggingface import HuggingFaceEngine
-from quantumflow.inference.vram_manager import VRAMManager
-from quantumflow.inference.batch_accumulator import BatchAccumulator
-from quantumflow.inference.gpu_monitor import GPUMonitor
 from quantumflow.core.constants import InferenceBackendType
 from quantumflow.core.exceptions import InferenceError, ModelNotFoundError
+from quantumflow.inference.backends.huggingface import HuggingFaceEngine
+from quantumflow.inference.backends.vllm import VLLMEngine
+from quantumflow.inference.batch_accumulator import BatchAccumulator
+from quantumflow.inference.engine import (
+    InferenceEngine,
+    InferenceResult,
+    ModelConfig,
+    SamplingParams,
+)
+from quantumflow.inference.gpu_monitor import GPUMonitor
+from quantumflow.inference.vram_manager import VRAMManager
 
 logger = structlog.get_logger().bind(component="engine_manager")
 
@@ -44,19 +46,21 @@ class EngineManager:
             return
 
         self._initialized = True
-        self._engines: Dict[InferenceBackendType, InferenceEngine] = {}
-        self._default_engine: Optional[InferenceEngine] = None
-        self._loaded_models: Dict[str, InferenceEngine] = {}  # model_name -> engine
+        self._engines: dict[InferenceBackendType, InferenceEngine] = {}
+        self._default_engine: InferenceEngine | None = None
+        self._loaded_models: dict[str, InferenceEngine] = {}  # model_name -> engine
         self._vram_manager = VRAMManager(
             safety_factor=0.7,
             idle_ttl_seconds=0.0,  # 默认禁用空闲卸载
         )
-        self._batch_accumulators: Dict[str, BatchAccumulator] = {}
-        self._batch_sampling_params: Dict[str, SamplingParams] = {}
+        self._batch_accumulators: dict[str, BatchAccumulator] = {}
+        self._batch_sampling_params: dict[str, SamplingParams] = {}
         self._gpu_monitor = GPUMonitor(interval_seconds=5.0)
-        self._eviction_task: Optional[asyncio.Task] = None
+        self._eviction_task: asyncio.Task | None = None
 
-    async def initialize(self, backend: InferenceBackendType = InferenceBackendType.HUGGINGFACE) -> bool:
+    async def initialize(
+        self, backend: InferenceBackendType = InferenceBackendType.HUGGINGFACE
+    ) -> bool:
         """
         初始化指定后端的推理引擎
 
@@ -112,7 +116,9 @@ class EngineManager:
         can_load, reason, to_evict = self._vram_manager.can_load(model_name, required_vram)
 
         if not can_load:
-            logger.warning("vram_reject", model=model_name, required_vram_gb=required_vram, reason=reason)
+            logger.warning(
+                "vram_reject", model=model_name, required_vram_gb=required_vram, reason=reason
+            )
             return False, reason
 
         # 2. 如需淘汰，先淘汰LRU模型
@@ -149,8 +155,12 @@ class EngineManager:
             self._vram_manager.record_loaded(model_name, required_vram)
             # 记录实际显存占用（加载后立即读取）
             self._vram_manager.update_actual_vram(model_name)
-            logger.info("model_loaded", model=model_name, backend=backend.value,
-                        estimated_vram_gb=required_vram)
+            logger.info(
+                "model_loaded",
+                model=model_name,
+                backend=backend.value,
+                estimated_vram_gb=required_vram,
+            )
             return True, reason
 
         return False, "引擎加载失败"
@@ -185,6 +195,7 @@ class EngineManager:
         # BlockPool: 分配 KV Cache blocks（基于预估 token 数）
         # prompt_tokens 估算 + max_tokens = 本次推理预估总 token 数
         import uuid
+
         request_id = str(uuid.uuid4())
         # 简单估算：每 token ≈ 4 字符
         est_prompt_tokens = sum(len(p) // 4 for p in prompts)
@@ -224,6 +235,7 @@ class EngineManager:
 
         # BlockPool: 分配
         import uuid
+
         request_id = str(uuid.uuid4())
         est_tokens = len(prompt) // 4 + sampling_params.max_tokens
         block_ids = self._vram_manager.allocate_blocks(model_name, est_tokens, request_id)
@@ -284,6 +296,7 @@ class EngineManager:
         """
         key = f"{model_name}_{sampling_params.temperature}_{sampling_params.max_tokens}"
         if key not in self._batch_accumulators:
+
             async def _batched_infer(prompts: list[str]):
                 return await self.generate(model_name, prompts, sampling_params)
 
@@ -296,10 +309,7 @@ class EngineManager:
 
     def get_batch_stats(self) -> dict:
         """获取批处理统计"""
-        return {
-            key: acc.stats
-            for key, acc in self._batch_accumulators.items()
-        }
+        return {key: acc.stats for key, acc in self._batch_accumulators.items()}
 
     # ── 空闲淘汰 ───────────────────────────────────────
 
@@ -349,7 +359,7 @@ class EngineManager:
 
 
 # 全局单例
-_engine_manager: Optional[EngineManager] = None
+_engine_manager: EngineManager | None = None
 
 
 def get_engine_manager() -> EngineManager:

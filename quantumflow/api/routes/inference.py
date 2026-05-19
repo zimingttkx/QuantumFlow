@@ -1,30 +1,31 @@
 """推理路由"""
 
-from typing import AsyncIterator
-from fastapi import APIRouter, HTTPException, status, Query
-from fastapi.responses import StreamingResponse
 import asyncio
 import time
+from collections.abc import AsyncIterator
+
 import structlog
+from fastapi import APIRouter, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 
 from quantumflow.api.models import (
-    InferenceRequest,
-    InferenceResponse,
-    StreamResponse,
     BatchInferenceRequest,
     BatchInferenceResponse,
     ChatRequest,
+    InferenceRequest,
+    InferenceResponse,
+    StreamResponse,
 )
 from quantumflow.core.exceptions import (
     InferenceError,
     ModelNotFoundError,
     SchedulerError,
 )
-from quantumflow.inference import get_engine_manager, SamplingParams
+from quantumflow.inference import SamplingParams, get_engine_manager
 from quantumflow.storage import (
-    RedisQueue,
     QueuedRequest,
     QueuePriority,
+    RedisQueue,
     get_redis_manager,
 )
 
@@ -121,6 +122,7 @@ async def generate(request: InferenceRequest) -> InferenceResponse:
             results = [results]
 
         latency_ms = (time.time() - start_time) * 1000
+        logger.debug("generate_latency", request_id=request_id, latency_ms=latency_ms)
 
         if results and len(results) > 0:
             result = results[0]
@@ -146,19 +148,19 @@ async def generate(request: InferenceRequest) -> InferenceResponse:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=e.to_dict(),
-        )
+        ) from e
     except SchedulerError as e:
         logger.error("scheduler_error", request_id=request_id, error=str(e))
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=e.to_dict(),
-        )
+        ) from e
     except Exception as e:
         logger.error("generate_error", request_id=request_id, error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": "INFERENCE_ERROR", "message": str(e)}},
-        )
+        ) from e
 
 
 @router.post(
@@ -434,7 +436,9 @@ async def submit_to_queue(
         if not redis_mgr.is_connected:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail={"error": {"code": "REDIS_UNAVAILABLE", "message": "Redis is not available"}},
+                detail={
+                    "error": {"code": "REDIS_UNAVAILABLE", "message": "Redis is not available"}
+                },
             )
 
         redis_queue = RedisQueue()
@@ -465,7 +469,9 @@ async def submit_to_queue(
             if not success:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail={"error": {"code": "ENQUEUE_FAILED", "message": "Failed to enqueue request"}},
+                    detail={
+                        "error": {"code": "ENQUEUE_FAILED", "message": "Failed to enqueue request"}
+                    },
                 )
 
             # 如果等待结果，轮询结果
@@ -507,7 +513,7 @@ async def submit_to_queue(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": "SUBMIT_ERROR", "message": str(e)}},
-        )
+        ) from e
 
 
 @router.post(
@@ -536,7 +542,9 @@ async def batch_submit_to_queue(
         if not redis_mgr.is_connected:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail={"error": {"code": "REDIS_UNAVAILABLE", "message": "Redis is not available"}},
+                detail={
+                    "error": {"code": "REDIS_UNAVAILABLE", "message": "Redis is not available"}
+                },
             )
 
         redis_queue = RedisQueue()
@@ -566,7 +574,11 @@ async def batch_submit_to_queue(
                     request_id=request_id,
                     model_name=request.model,
                     prompt=prompt,
-                    priority=request.sampling_params.priority if request.sampling_params else QueuePriority.NORMAL.value,
+                    priority=(
+                        request.sampling_params.priority
+                        if request.sampling_params
+                        else QueuePriority.NORMAL.value
+                    ),
                     created_at=datetime_now(),
                     metadata={
                         "temperature": sampling_params.temperature,
@@ -598,7 +610,7 @@ async def batch_submit_to_queue(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": "BATCH_SUBMIT_ERROR", "message": str(e)}},
-        )
+        ) from e
 
 
 @router.get(
@@ -615,7 +627,9 @@ async def get_queue_result(request_id: str) -> dict:
         if not redis_mgr.is_connected:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail={"error": {"code": "REDIS_UNAVAILABLE", "message": "Redis is not available"}},
+                detail={
+                    "error": {"code": "REDIS_UNAVAILABLE", "message": "Redis is not available"}
+                },
             )
 
         redis_queue = RedisQueue()
@@ -635,7 +649,12 @@ async def get_queue_result(request_id: str) -> dict:
                 else:
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
-                        detail={"error": {"code": "RESULT_NOT_FOUND", "message": f"Result not found for {request_id}"}},
+                        detail={
+                            "error": {
+                                "code": "RESULT_NOT_FOUND",
+                                "message": f"Result not found for {request_id}",
+                            }
+                        },
                     )
 
             return {
@@ -654,7 +673,7 @@ async def get_queue_result(request_id: str) -> dict:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": "GET_RESULT_ERROR", "message": str(e)}},
-        )
+        ) from e
 
 
 @router.get(
@@ -702,4 +721,5 @@ async def get_queue_stats() -> dict:
 def datetime_now():
     """获取当前时间"""
     from datetime import datetime
+
     return datetime.now()

@@ -14,14 +14,14 @@ Prompt 设计原则（覆盖多样性）：
   - 复杂度：单步推理 / 多步推理 / 需要外部知识 / 需要生成能力
 """
 
-import os
 import asyncio
-import httpx
-import time
 import json
+import os
+import time
+from dataclasses import asdict, dataclass
+
+import httpx
 import numpy as np
-from dataclasses import dataclass, asdict
-from typing import List
 
 # 禁用代理
 for k in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"]:
@@ -68,7 +68,6 @@ SCENARIOS = {
         "concurrent": 1,
         "rounds": 5,
     },
-
     # ── 场景 B: 短对话 8 并发 (经 BatchAccumulator) ───────────────────────
     # API: /generate (BatchAccumulator 路径)
     # 采样: temperature=0.7, max_tokens=64
@@ -89,7 +88,6 @@ SCENARIOS = {
         "concurrent": 8,
         "rounds": 4,
     },
-
     # ── 场景 C: 代码生成 (长输出, 中等 prompt) ─────────────────────────────
     # API: /generate (BatchAccumulator 路径)
     # 采样: temperature=0.3, max_tokens=256 (更长输出)
@@ -107,7 +105,6 @@ SCENARIOS = {
         "concurrent": 4,
         "rounds": 3,
     },
-
     # ── 场景 D: 长 prompt + 长输出 (压力测试) ───────────────────────────────
     # API: /generate (BatchAccumulator 路径)
     # 采样: temperature=0.7, max_tokens=128
@@ -125,7 +122,6 @@ SCENARIOS = {
         "concurrent": 4,
         "rounds": 3,
     },
-
     # ── 场景 E: 流式生成 (完整测试 /generate/stream 路径) ─────────────────
     # API: /generate/stream
     # 采样: temperature=0.7, max_tokens=128
@@ -143,7 +139,6 @@ SCENARIOS = {
         "concurrent": 4,
         "rounds": 3,
     },
-
     # ── 场景 F: Chat API (测试 ChatML 格式转换) ────────────────────────────
     # API: /chat (内部调用 /generate，ChatML 格式组装 prompt)
     # 采样: temperature=0.7, max_tokens=64
@@ -159,7 +154,6 @@ SCENARIOS = {
         "concurrent": 3,
         "rounds": 3,
     },
-
     # ── 场景 G: Batch API (直接到 engine.generate, 不走 BatchAccumulator) ──
     # API: /batch (引擎直接批量处理)
     # 采样: temperature=0.3, max_tokens=64
@@ -180,7 +174,6 @@ SCENARIOS = {
         "concurrent": 8,
         "rounds": 4,
     },
-
     # ── 场景 H: 高并发压力 (32 并发, 经 BatchAccumulator) ─────────────────
     # API: /generate (BatchAccumulator 路径)
     # 采样: temperature=0.7, max_tokens=32
@@ -225,7 +218,6 @@ SCENARIOS = {
         "concurrent": 32,
         "rounds": 2,
     },
-
     # ── 场景 I: 极端采样参数 (greedy vs random 对比) ───────────────────────
     # API: /generate (BatchAccumulator 路径)
     # 采样: temperature=0 vs temperature=1.0 — 对比确定性 vs 随机性
@@ -242,7 +234,6 @@ SCENARIOS = {
         "concurrent": 4,
         "rounds": 3,
     },
-
     # ── 场景 J: repetition_penalty 测试 (长输出防复读) ────────────────────
     # API: /generate (BatchAccumulator 路径)
     # 采样: temperature=0.7, repetition_penalty=1.2, max_tokens=192
@@ -254,7 +245,13 @@ SCENARIOS = {
             "Explain the CAP theorem in distributed systems, including what consistency, availability, and partition tolerance mean in practice.",
             "Describe the internals of Python's asyncio module: event loop, coroutines, futures, and how await works under the hood.",
         ],
-        "sampling_params": {"temperature": 0.7, "max_tokens": 192, "top_p": 0.9, "top_k": 50, "repetition_penalty": 1.2},
+        "sampling_params": {
+            "temperature": 0.7,
+            "max_tokens": 192,
+            "top_p": 0.9,
+            "top_k": 50,
+            "repetition_penalty": 1.2,
+        },
         "concurrent": 3,
         "rounds": 3,
     },
@@ -296,8 +293,14 @@ async def send_generate(client: httpx.AsyncClient, prompt: str, sp: dict) -> dic
             "tokens": data.get("usage", {}).get("total_tokens", 0) if data else 0,
             "status": r.status_code,
         }
-    except Exception as e:
-        return {"ok": False, "elapsed_ms": (time.time() - t0) * 1000, "latency_ms": 0, "tokens": 0, "status": 0}
+    except Exception:
+        return {
+            "ok": False,
+            "elapsed_ms": (time.time() - t0) * 1000,
+            "latency_ms": 0,
+            "tokens": 0,
+            "status": 0,
+        }
 
 
 async def send_stream(client: httpx.AsyncClient, prompt: str, sp: dict) -> dict:
@@ -317,6 +320,7 @@ async def send_stream(client: httpx.AsyncClient, prompt: str, sp: dict) -> dict:
                         break
                     try:
                         import json as _json
+
                         chunk = _json.loads(line[6:])
                         if chunk.get("delta"):
                             text_len += len(chunk["delta"])
@@ -331,8 +335,14 @@ async def send_stream(client: httpx.AsyncClient, prompt: str, sp: dict) -> dict:
             "tokens": text_len // 4,
             "status": resp.status_code,
         }
-    except Exception as e:
-        return {"ok": False, "elapsed_ms": (time.time() - t0) * 1000, "latency_ms": 0, "tokens": 0, "status": 0}
+    except Exception:
+        return {
+            "ok": False,
+            "elapsed_ms": (time.time() - t0) * 1000,
+            "latency_ms": 0,
+            "tokens": 0,
+            "status": 0,
+        }
 
 
 async def send_chat(client: httpx.AsyncClient, prompt: str, sp: dict) -> dict:
@@ -358,11 +368,17 @@ async def send_chat(client: httpx.AsyncClient, prompt: str, sp: dict) -> dict:
             "tokens": data.get("usage", {}).get("total_tokens", 0) if data else 0,
             "status": r.status_code,
         }
-    except Exception as e:
-        return {"ok": False, "elapsed_ms": (time.time() - t0) * 1000, "latency_ms": 0, "tokens": 0, "status": 0}
+    except Exception:
+        return {
+            "ok": False,
+            "elapsed_ms": (time.time() - t0) * 1000,
+            "latency_ms": 0,
+            "tokens": 0,
+            "status": 0,
+        }
 
 
-async def send_batch(client: httpx.AsyncClient, prompts: List[str], sp: dict) -> dict:
+async def send_batch(client: httpx.AsyncClient, prompts: list[str], sp: dict) -> dict:
     """POST /api/v1/inference/batch"""
     t0 = time.time()
     try:
@@ -378,14 +394,19 @@ async def send_batch(client: httpx.AsyncClient, prompts: List[str], sp: dict) ->
             "elapsed_ms": elapsed_ms,
             "latency_ms": data.get("avg_latency_ms", 0),
             "tokens": sum(
-                u.get("total_tokens", 0)
-                for u in (data.get("results", []) if data else [])
+                u.get("total_tokens", 0) for u in (data.get("results", []) if data else [])
             ),
             "count": len(data.get("results", [])) if data else 0,
             "status": r.status_code,
         }
-    except Exception as e:
-        return {"ok": False, "elapsed_ms": (time.time() - t0) * 1000, "latency_ms": 0, "tokens": 0, "status": 0}
+    except Exception:
+        return {
+            "ok": False,
+            "elapsed_ms": (time.time() - t0) * 1000,
+            "latency_ms": 0,
+            "tokens": 0,
+            "status": 0,
+        }
 
 
 async def run_scenario(name: str, cfg: dict) -> ScenarioResult:
@@ -423,9 +444,11 @@ async def run_scenario(name: str, cfg: dict) -> ScenarioResult:
             else:
                 # generate / stream / chat: 并发发送多个请求
                 tasks = [
-                    (send_stream if api == "stream" else send_chat if api == "chat" else send_generate)(
-                        client, prompts[i % len(prompts)], sp
-                    )
+                    (
+                        send_stream
+                        if api == "stream"
+                        else send_chat if api == "chat" else send_generate
+                    )(client, prompts[i % len(prompts)], sp)
                     for i in range(concurrent)
                 ]
                 results = await asyncio.gather(*tasks)
@@ -485,10 +508,12 @@ async def main():
         try:
             r = await c.get(f"{BASE}/api/v1/cluster/status")
             if r.status_code != 200:
-                print("Server not ready"); return
+                print("Server not ready")
+                return
             print("Server OK\n")
         except Exception as e:
-            print(f"Cannot connect: {e}"); return
+            print(f"Cannot connect: {e}")
+            return
 
     results = []
 
@@ -517,8 +542,8 @@ async def main():
             f"{r['success']}/{r['total_requests']}"
         )
 
-    print(f"\nData: docs/benchmark_data.json")
-    print(f"Chart: tests/regenerate_chart.py")
+    print("\nData: docs/benchmark_data.json")
+    print("Chart: tests/regenerate_chart.py")
 
 
 if __name__ == "__main__":

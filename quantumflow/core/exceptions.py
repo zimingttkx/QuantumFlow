@@ -4,13 +4,18 @@
 class QuantumFlowError(Exception):
     """QuantumFlow 基础异常类"""
 
-    def __init__(self, message: str, code: str = "UNKNOWN", details: dict = None):
+    def __init__(
+        self,
+        message: str,
+        code: str = "UNKNOWN",
+        details: dict[str, object] | None = None,
+    ):
         self.message = message
         self.code = code
         self.details = details or {}
         super().__init__(message)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, object]:
         """转换为字典格式"""
         return {
             "error": {
@@ -24,7 +29,7 @@ class QuantumFlowError(Exception):
 class SchedulerError(QuantumFlowError):
     """调度器相关错误"""
 
-    def __init__(self, message: str, details: dict = None):
+    def __init__(self, message: str, details: dict[str, object] | None = None):
         super().__init__(message, code="SCHEDULER_ERROR", details=details)
 
 
@@ -67,7 +72,12 @@ class SchedulerTimeoutError(SchedulerError):
 class NodeError(QuantumFlowError):
     """节点相关错误"""
 
-    def __init__(self, message: str, node_id: str = None, details: dict = None):
+    def __init__(
+        self,
+        message: str,
+        node_id: str | None = None,
+        details: dict[str, object] | None = None,
+    ):
         details = details or {}
         if node_id:
             details["node_id"] = node_id
@@ -85,7 +95,7 @@ class NodeNotFoundError(NodeError):
 class NodeUnhealthyError(NodeError):
     """节点不健康"""
 
-    def __init__(self, node_id: str, reason: str = None):
+    def __init__(self, node_id: str, reason: str | None = None):
         details = {"reason": reason} if reason else {}
         super().__init__(f"Node {node_id} is unhealthy", node_id=node_id, details=details)
         self.code = "NODE_UNHEALTHY"
@@ -106,7 +116,12 @@ class NodeConnectionError(NodeError):
 class ModelError(QuantumFlowError):
     """模型相关错误"""
 
-    def __init__(self, message: str, model: str = None, details: dict = None):
+    def __init__(
+        self,
+        message: str,
+        model: str | None = None,
+        details: dict[str, object] | None = None,
+    ):
         details = details or {}
         if model:
             details["model"] = model
@@ -148,7 +163,12 @@ class ModelAlreadyLoadedError(ModelError):
 class InferenceError(QuantumFlowError):
     """推理相关错误"""
 
-    def __init__(self, message: str, request_id: str = None, details: dict = None):
+    def __init__(
+        self,
+        message: str,
+        request_id: str | None = None,
+        details: dict[str, object] | None = None,
+    ):
         details = details or {}
         if request_id:
             details["request_id"] = request_id
@@ -182,7 +202,12 @@ class InferenceFailedError(InferenceError):
 class ResourceError(QuantumFlowError):
     """资源相关错误"""
 
-    def __init__(self, message: str, resource_type: str = None, details: dict = None):
+    def __init__(
+        self,
+        message: str,
+        resource_type: str | None = None,
+        details: dict[str, object] | None = None,
+    ):
         details = details or {}
         if resource_type:
             details["resource_type"] = resource_type
@@ -209,8 +234,13 @@ class GPUOutOfMemoryError(ResourceError):
 class ValidationError(QuantumFlowError):
     """验证错误"""
 
-    def __init__(self, message: str, field: str = None, value: any = None):
-        details = {}
+    def __init__(
+        self,
+        message: str,
+        field: str | None = None,
+        value: object | None = None,
+    ):
+        details: dict[str, object] = {}
         if field:
             details["field"] = field
         if value is not None:
@@ -221,7 +251,7 @@ class ValidationError(QuantumFlowError):
 class ConfigurationError(QuantumFlowError):
     """配置错误"""
 
-    def __init__(self, message: str, config_key: str = None):
+    def __init__(self, message: str, config_key: str | None = None):
         details = {"config_key": config_key} if config_key else {}
         super().__init__(message, code="CONFIGURATION_ERROR", details=details)
 
@@ -229,7 +259,12 @@ class ConfigurationError(QuantumFlowError):
 class StorageError(QuantumFlowError):
     """存储相关错误"""
 
-    def __init__(self, message: str, storage_type: str = None, details: dict = None):
+    def __init__(
+        self,
+        message: str,
+        storage_type: str | None = None,
+        details: dict[str, object] | None = None,
+    ):
         details = details or {}
         if storage_type:
             details["storage_type"] = storage_type

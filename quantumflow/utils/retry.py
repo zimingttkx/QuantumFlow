@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import functools
-from typing import Any, Callable, Optional, Tuple, Type, Union
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
+
 import structlog
 
 logger = structlog.get_logger()
@@ -20,8 +22,8 @@ class RetryConfig:
     max_delay: float = 60.0
     backoff_factor: float = 2.0
     jitter: bool = True
-    exceptions: Tuple[Type[Exception], ...] = (Exception,)
-    on_retry: Optional[Callable[[Exception, int], None]] = None
+    exceptions: tuple[type[Exception], ...] = (Exception,)
+    on_retry: Callable[[Exception, int], None] | None = None
 
 
 def retry(
@@ -30,10 +32,10 @@ def retry(
     max_delay: float = 60.0,
     backoff_factor: float = 2.0,
     jitter: bool = True,
-    exceptions: Tuple[Type[Exception], ...] = (Exception,),
-    on_retry: Optional[Callable[[Exception, int], None]] = None,
+    exceptions: tuple[type[Exception], ...] = (Exception,),
+    on_retry: Callable[[Exception, int], None] | None = None,
     reraise: bool = True,
-):
+) -> Callable[..., Any]:
     """同步重试装饰器
 
     Args:
@@ -50,17 +52,15 @@ def retry(
         装饰后的函数
     """
 
-    def decorator(func: Callable) -> Callable:
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            last_exception = None
             current_delay = initial_delay
 
             for attempt in range(1, max_attempts + 1):
                 try:
                     return func(*args, **kwargs)
                 except exceptions as e:
-                    last_exception = e
 
                     if attempt == max_attempts:
                         logger.error(
@@ -110,10 +110,10 @@ def async_retry(
     max_delay: float = 60.0,
     backoff_factor: float = 2.0,
     jitter: bool = True,
-    exceptions: Tuple[Type[Exception], ...] = (Exception,),
-    on_retry: Optional[Callable[[Exception, int], None]] = None,
+    exceptions: tuple[type[Exception], ...] = (Exception,),
+    on_retry: Callable[[Exception, int], None] | None = None,
     reraise: bool = True,
-):
+) -> Callable[..., Any]:
     """异步重试装饰器
 
     Args:
@@ -130,17 +130,15 @@ def async_retry(
         装饰后的异步函数
     """
 
-    def decorator(func: Callable) -> Callable:
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
-            last_exception = None
             current_delay = initial_delay
 
             for attempt in range(1, max_attempts + 1):
                 try:
                     return await func(*args, **kwargs)
                 except exceptions as e:
-                    last_exception = e
 
                     if attempt == max_attempts:
                         logger.error(
@@ -195,7 +193,7 @@ class RetryContext:
         max_delay: float = 60.0,
         backoff_factor: float = 2.0,
         jitter: bool = True,
-        exceptions: Tuple[Type[Exception], ...] = (Exception,),
+        exceptions: tuple[type[Exception], ...] = (Exception,),
     ):
         self.max_attempts = max_attempts
         self.initial_delay = initial_delay
@@ -205,16 +203,16 @@ class RetryContext:
         self.exceptions = exceptions
 
         self.attempt = 0
-        self.last_exception: Optional[Exception] = None
+        self.last_exception: Exception | None = None
 
-    async def __aenter__(self) -> "RetryContext":
+    async def __aenter__(self) -> RetryContext:
         self.attempt += 1
         return self
 
     async def __aexit__(
         self,
-        exc_type: Optional[Type[Exception]],
-        exc_val: Optional[Exception],
+        exc_type: type[Exception] | None,
+        exc_val: Exception | None,
         exc_tb: Any,
     ) -> bool:
         if exc_val is None:
@@ -236,7 +234,9 @@ class RetryContext:
         # 计算延迟
         import random
 
-        current_delay = min(self.initial_delay * (self.backoff_factor ** (self.attempt - 1)), self.max_delay)
+        current_delay = min(
+            self.initial_delay * (self.backoff_factor ** (self.attempt - 1)), self.max_delay
+        )
         if self.jitter:
             current_delay = current_delay * (0.5 + random.random())
 

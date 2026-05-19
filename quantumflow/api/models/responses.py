@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field
 from datetime import datetime
-from enum import Enum
+from typing import Any
+
+from pydantic import BaseModel, Field
 
 
 class InferenceResponse(BaseModel):
@@ -17,30 +17,27 @@ class InferenceResponse(BaseModel):
     generated_text: str = Field(..., description="生成的文本")
     finish_reason: str = Field(..., description="结束原因: stop, length, timeout")
     latency_ms: float = Field(..., description="延迟（毫秒）")
-    usage: Dict[str, int] = Field(
-        ..., description="Token使用统计",
+    usage: dict[str, int] = Field(
+        ...,
+        description="Token使用统计",
         json_schema_extra={
-            "example": {
-                "prompt_tokens": 100,
-                "completion_tokens": 500,
-                "total_tokens": 600
-            }
-        }
+            "example": {"prompt_tokens": 100, "completion_tokens": 500, "total_tokens": 600}
+        },
     )
 
-    model_config = {"json_schema_extra": {"example": {
-        "request_id": "req_00000001",
-        "model": "Qwen2.5-7B-Instruct",
-        "prompt": "解释量子计算的基本原理",
-        "generated_text": "量子计算是一种利用量子力学原理进行信息处理的计算方式...",
-        "finish_reason": "stop",
-        "latency_ms": 1523.4,
-        "usage": {
-            "prompt_tokens": 50,
-            "completion_tokens": 500,
-            "total_tokens": 550
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "request_id": "req_00000001",
+                "model": "Qwen2.5-7B-Instruct",
+                "prompt": "解释量子计算的基本原理",
+                "generated_text": "量子计算是一种利用量子力学原理进行信息处理的计算方式...",
+                "finish_reason": "stop",
+                "latency_ms": 1523.4,
+                "usage": {"prompt_tokens": 50, "completion_tokens": 500, "total_tokens": 550},
+            }
         }
-    }}}
+    }
 
 
 class StreamResponse(BaseModel):
@@ -49,12 +46,8 @@ class StreamResponse(BaseModel):
     request_id: str = Field(..., description="请求ID")
     delta: str = Field(..., description="增量文本")
     is_final: bool = Field(..., description="是否是最后一个片段")
-    usage: Optional[Dict[str, int]] = Field(
-        default=None, description="Token使用统计"
-    )
-    finish_reason: Optional[str] = Field(
-        default=None, description="结束原因"
-    )
+    usage: dict[str, int] | None = Field(default=None, description="Token使用统计")
+    finish_reason: str | None = Field(default=None, description="结束原因")
 
 
 class BatchInferenceResponse(BaseModel):
@@ -65,9 +58,7 @@ class BatchInferenceResponse(BaseModel):
     total: int = Field(..., description="总请求数")
     completed: int = Field(..., description="完成数")
     failed: int = Field(..., description="失败数")
-    results: List[InferenceResponse] = Field(
-        ..., description="推理结果列表"
-    )
+    results: list[InferenceResponse] = Field(..., description="推理结果列表")
     total_latency_ms: float = Field(..., description="总延迟（毫秒）")
     avg_latency_ms: float = Field(..., description="平均延迟（毫秒）")
 
@@ -106,35 +97,35 @@ class ModelInfo(BaseModel):
     name: str = Field(..., description="模型名称")
     architecture: str = Field(..., description="模型架构")
     parameter_count: int = Field(..., description="参数量")
-    quantization: Optional[str] = Field(default=None, description="量化方式")
+    quantization: str | None = Field(default=None, description="量化方式")
     dtype: str = Field(..., description="数据类型")
     status: str = Field(..., description="状态: loading, ready, error")
     replicas: int = Field(..., description="副本数")
     tensor_parallel: int = Field(..., description="张量并行度")
     max_model_length: int = Field(..., description="最大模型长度")
     backend: str = Field(..., description="推理后端")
-    loaded_on_nodes: List[str] = Field(
-        default_factory=list, description="加载该模型的节点列表"
-    )
-    gpu_usage: Dict[str, float] = Field(
-        default_factory=dict, description="GPU显存使用"
-    )
+    loaded_on_nodes: list[str] = Field(default_factory=list, description="加载该模型的节点列表")
+    gpu_usage: dict[str, float] = Field(default_factory=dict, description="GPU显存使用")
     request_count: int = Field(default=0, description="请求计数")
     avg_latency_ms: float = Field(default=0.0, description="平均延迟")
 
-    model_config = {"json_schema_extra": {"example": {
-        "model_id": "qwen2.5-7b",
-        "name": "Qwen2.5-7B-Instruct",
-        "architecture": "Qwen2ForCausalLM",
-        "parameter_count": 7_000_000_000,
-        "dtype": "bfloat16",
-        "status": "ready",
-        "replicas": 2,
-        "tensor_parallel": 1,
-        "max_model_length": 8192,
-        "backend": "vllm",
-        "loaded_on_nodes": ["node-1", "node-2"]
-    }}}
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "model_id": "qwen2.5-7b",
+                "name": "Qwen2.5-7B-Instruct",
+                "architecture": "Qwen2ForCausalLM",
+                "parameter_count": 7_000_000_000,
+                "dtype": "bfloat16",
+                "status": "ready",
+                "replicas": 2,
+                "tensor_parallel": 1,
+                "max_model_length": 8192,
+                "backend": "vllm",
+                "loaded_on_nodes": ["node-1", "node-2"],
+            }
+        }
+    }
 
 
 class NodeInfo(BaseModel):
@@ -146,18 +137,18 @@ class NodeInfo(BaseModel):
     port: int = Field(..., description="端口")
     status: str = Field(..., description="状态: healthy, unhealthy, draining, offline")
     gpu_count: int = Field(..., description="GPU数量")
-    gpu_info: List[GPUInfo] = Field(default_factory=list, description="GPU详细信息")
+    gpu_info: list[GPUInfo] = Field(default_factory=list, description="GPU详细信息")
     cpu_count: int = Field(..., description="CPU核心数")
     memory_total: int = Field(..., description="总内存（字节）")
     memory_available: int = Field(..., description="可用内存（字节）")
     disk_total: int = Field(..., description="总磁盘空间（字节）")
     disk_available: int = Field(..., description="可用磁盘空间（字节）")
     current_load: float = Field(..., description="当前负载（0-1）")
-    labels: Dict[str, str] = Field(default_factory=dict, description="节点标签")
+    labels: dict[str, str] = Field(default_factory=dict, description="节点标签")
     version: str = Field(..., description="QuantumFlow版本")
     uptime_seconds: int = Field(..., description="运行时间（秒）")
     last_heartbeat: datetime = Field(..., description="最后心跳时间")
-    loaded_models: List[str] = Field(default_factory=list, description="已加载模型")
+    loaded_models: list[str] = Field(default_factory=list, description="已加载模型")
 
     @property
     def memory_available_percent(self) -> float:
@@ -177,13 +168,13 @@ class JobInfo(BaseModel):
     )
     priority: int = Field(..., description="优先级")
     created_at: datetime = Field(..., description="创建时间")
-    started_at: Optional[datetime] = Field(default=None, description="开始时间")
-    completed_at: Optional[datetime] = Field(default=None, description="完成时间")
+    started_at: datetime | None = Field(default=None, description="开始时间")
+    completed_at: datetime | None = Field(default=None, description="完成时间")
     progress: float = Field(..., description="进度（0-1）")
     prompt: str = Field(..., description="输入提示")
-    result: Optional[str] = Field(default=None, description="生成结果")
-    error: Optional[str] = Field(default=None, description="错误信息")
-    allocated_nodes: List[str] = Field(default_factory=list, description="分配的节点")
+    result: str | None = Field(default=None, description="生成结果")
+    error: str | None = Field(default=None, description="错误信息")
+    allocated_nodes: list[str] = Field(default_factory=list, description="分配的节点")
     retry_count: int = Field(default=0, description="重试次数")
 
 
@@ -199,9 +190,7 @@ class ClusterStatus(BaseModel):
     active_models: int = Field(..., description="活跃模型数")
     pending_jobs: int = Field(..., description="等待中的作业数")
     running_jobs: int = Field(..., description="运行中的作业数")
-    system_metrics: Dict[str, float] = Field(
-        default_factory=dict, description="系统指标"
-    )
+    system_metrics: dict[str, float] = Field(default_factory=dict, description="系统指标")
     uptime_seconds: int = Field(..., description="运行时间")
 
 
@@ -228,9 +217,7 @@ class HealthResponse(BaseModel):
     status: str = Field(..., description="状态: healthy, degraded, unhealthy")
     version: str = Field(..., description="版本")
     uptime_seconds: int = Field(..., description="运行时间")
-    checks: Dict[str, Any] = Field(
-        default_factory=dict, description="各项检查结果"
-    )
+    checks: dict[str, Any] = Field(default_factory=dict, description="各项检查结果")
 
 
 class ErrorResponse(BaseModel):
@@ -238,13 +225,17 @@ class ErrorResponse(BaseModel):
 
     error: ErrorDetail = Field(..., description="错误详情")
 
-    model_config = {"json_schema_extra": {"example": {
-        "error": {
-            "code": "MODEL_NOT_FOUND",
-            "message": "Model not found: Qwen2.5-7B",
-            "details": {}
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "error": {
+                    "code": "MODEL_NOT_FOUND",
+                    "message": "Model not found: Qwen2.5-7B",
+                    "details": {},
+                }
+            }
         }
-    }}}
+    }
 
 
 class ErrorDetail(BaseModel):
@@ -252,7 +243,7 @@ class ErrorDetail(BaseModel):
 
     code: str = Field(..., description="错误码")
     message: str = Field(..., description="错误消息")
-    details: Dict[str, Any] = Field(default_factory=dict, description="详细信息")
+    details: dict[str, Any] = Field(default_factory=dict, description="详细信息")
 
 
 class BenchmarkResponse(BaseModel):
@@ -264,46 +255,46 @@ class BenchmarkResponse(BaseModel):
     status: str = Field(..., description="状态")
     total_samples: int = Field(..., description="总样本数")
     completed_samples: int = Field(..., description="已完成样本数")
-    results: Optional[Dict[str, Any]] = Field(
-        default=None, description="测试结果"
-    )
-    metrics: Optional[Dict[str, float]] = Field(
-        default=None, description="性能指标"
-    )
+    results: dict[str, Any] | None = Field(default=None, description="测试结果")
+    metrics: dict[str, float] | None = Field(default=None, description="性能指标")
 
 
 class MetricsResponse(BaseModel):
     """指标响应"""
 
     timestamp: datetime = Field(..., description="时间戳")
-    system: Dict[str, float] = Field(default_factory=dict, description="系统指标")
-    models: Dict[str, Dict[str, float]] = Field(
-        default_factory=dict, description="模型指标"
-    )
-    nodes: Dict[str, Dict[str, float]] = Field(
-        default_factory=dict, description="节点指标"
-    )
+    system: dict[str, float] = Field(default_factory=dict, description="系统指标")
+    models: dict[str, dict[str, float]] = Field(default_factory=dict, description="模型指标")
+    nodes: dict[str, dict[str, float]] = Field(default_factory=dict, description="节点指标")
 
 
 class LoadModelRequest(BaseModel):
     """加载模型请求"""
 
     model: str = Field(..., description="模型名称（简称，如 Qwen2.5-7B）")
-    model_path: Optional[str] = Field(None, description="模型路径（HuggingFace ID 或本地路径）")
-    backend: Optional[str] = Field("huggingface", description="推理后端: huggingface, vllm, tgi, sglang")
-    tensor_parallel: Optional[int] = Field(1, description="张量并行度")
-    gpu_memory_utilization: Optional[float] = Field(0.6, description="GPU显存利用率")  # 降低显存使用率适应RTX 4080 Laptop
-    max_model_len: Optional[int] = Field(2048, description="最大模型长度")  # 降低max_model_len适应显存
-    dtype: Optional[str] = Field("auto", description="数据类型: auto, float16, bfloat16, float32")
-    quantization: Optional[str] = Field(None, description="量化方式: awq, gptq, gguf")
+    model_path: str | None = Field(None, description="模型路径（HuggingFace ID 或本地路径）")
+    backend: str | None = Field(
+        "huggingface", description="推理后端: huggingface, vllm, tgi, sglang"
+    )
+    tensor_parallel: int | None = Field(1, description="张量并行度")
+    gpu_memory_utilization: float | None = Field(
+        0.6, description="GPU显存利用率"
+    )  # 降低显存使用率适应RTX 4080 Laptop
+    max_model_len: int | None = Field(2048, description="最大模型长度")  # 降低max_model_len适应显存
+    dtype: str | None = Field("auto", description="数据类型: auto, float16, bfloat16, float32")
+    quantization: str | None = Field(None, description="量化方式: awq, gptq, gguf")
 
-    model_config = {"json_schema_extra": {"example": {
-        "model": "Qwen2.5-1.5B",
-        "model_path": "Qwen/Qwen2.5-1.5B-Instruct",
-        "backend": "huggingface",
-        "tensor_parallel": 1,
-        "gpu_memory_utilization": 0.8,
-    }}}
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "model": "Qwen2.5-1.5B",
+                "model_path": "Qwen/Qwen2.5-1.5B-Instruct",
+                "backend": "huggingface",
+                "tensor_parallel": 1,
+                "gpu_memory_utilization": 0.8,
+            }
+        }
+    }
 
 
 class LoadModelResponse(BaseModel):

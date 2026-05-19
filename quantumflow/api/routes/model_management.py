@@ -1,25 +1,24 @@
 """模型管理路由 - 处理模型的加载和卸载"""
 
-from typing import Dict
-from fastapi import APIRouter, HTTPException, status
 import structlog
+from fastapi import APIRouter, HTTPException, status
 
 from quantumflow.api.models import (
     LoadModelRequest,
     LoadModelResponse,
-    UnloadModelResponse,
     ModelStatusResponse,
+    UnloadModelResponse,
 )
-from quantumflow.inference import get_engine_manager
+from quantumflow.api.services.hub_service import get_downloaded_models, validate_model
 from quantumflow.core.constants import InferenceBackendType
-from quantumflow.api.services.hub_service import validate_model, get_downloaded_models
+from quantumflow.inference import get_engine_manager
 
 logger = structlog.get_logger().bind(component="api_model_management")
 
 router = APIRouter(prefix="/models", tags=["Model Management"])
 
 # 模型路径映射 - HuggingFace可以直接使用Hub ID
-MODEL_PATH_MAPPING: Dict[str, str] = {
+MODEL_PATH_MAPPING: dict[str, str] = {
     "Qwen2.5-0.5B": "Qwen/Qwen2.5-0.5B-Instruct",
     "Qwen2.5-1.5B": "Qwen/Qwen2.5-1.5B-Instruct",
     "Qwen2.5-3B": "Qwen/Qwen2.5-3B-Instruct",
@@ -89,7 +88,8 @@ async def load_model(request: LoadModelRequest) -> LoadModelResponse:
                     detail={
                         "error": {
                             "code": "MODEL_NOT_FOUND",
-                            "message": validation["error"] or f"模型 '{model_path}' 在HuggingFace上不存在",
+                            "message": validation["error"]
+                            or f"模型 '{model_path}' 在HuggingFace上不存在",
                         }
                     },
                 )
@@ -114,7 +114,11 @@ async def load_model(request: LoadModelRequest) -> LoadModelResponse:
         success, message = await engine_manager.load_model(
             model_name=request.model,
             model_path=model_path,
-            backend=InferenceBackendType(request.backend) if request.backend else InferenceBackendType.HUGGINGFACE,
+            backend=(
+                InferenceBackendType(request.backend)
+                if request.backend
+                else InferenceBackendType.HUGGINGFACE
+            ),
             tensor_parallel=request.tensor_parallel or 1,
             gpu_memory_utilization=request.gpu_memory_utilization or 0.8,
             max_model_len=request.max_model_len or 2048,
@@ -143,7 +147,7 @@ async def load_model(request: LoadModelRequest) -> LoadModelResponse:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e),
-        )
+        ) from e
 
 
 @router.post(
@@ -181,7 +185,7 @@ async def unload_model(request: LoadModelRequest) -> UnloadModelResponse:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e),
-        )
+        ) from e
 
 
 @router.get(
@@ -203,11 +207,11 @@ async def get_model_status() -> ModelStatusResponse:
 
 @router.get(
     "/list",
-    response_model=Dict,
+    response_model=dict,
     summary="可用模型列表",
     description="获取支持的模型列表（含已下载的模型）",
 )
-async def list_available_models() -> Dict:
+async def list_available_models() -> dict:
     """获取可用模型列表"""
     downloaded = get_downloaded_models()
     return {

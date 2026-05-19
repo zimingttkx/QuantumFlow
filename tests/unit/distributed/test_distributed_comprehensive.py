@@ -14,39 +14,39 @@
 4. 专项测试核心功能和易错细节
 """
 
-import pytest
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch, call
-from datetime import datetime, timedelta
-from typing import Dict, Any, Optional
-import httpx
 import json
+from datetime import datetime
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from quantumflow.storage.redis_queue import (
-    RedisQueue,
-    QueuedRequest,
-    QueuePriority,
-)
-from quantumflow.storage.connection import RedisConnectionManager, get_redis_manager
+import httpx
+import pytest
+
+from quantumflow.scheduler.distributed import DistributedScheduler
+from quantumflow.scheduler.strategy.base import SchedulingRequest
 from quantumflow.scheduler.worker_client import (
     WorkerClient,
     WorkerEndpoint,
     WorkerRegistry,
     get_worker_registry,
 )
-from quantumflow.scheduler.distributed import DistributedScheduler
-from quantumflow.scheduler.strategy.base import SchedulingRequest, SchedulingResult
-
+from quantumflow.storage.redis_queue import (
+    QueuedRequest,
+    QueuePriority,
+    RedisQueue,
+)
 
 # ==================== 测试数据准备 ====================
+
 
 def create_queued_request(
     request_id: str = "test-req-1",
     model_name: str = "test-model",
     prompt: str = "Hello world",
     priority: int = QueuePriority.NORMAL.value,
-    created_at: Optional[datetime] = None,
-    metadata: Optional[Dict[str, Any]] = None,
+    created_at: datetime | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> QueuedRequest:
     """创建测试用QueuedRequest"""
     return QueuedRequest(
@@ -76,6 +76,7 @@ def create_scheduling_request(
 
 
 # ==================== QueuedRequest 序列化测试 ====================
+
 
 class TestQueuedRequestSerialization:
     """QueuedRequest 序列化/反序列化测试"""
@@ -143,6 +144,7 @@ class TestQueuedRequestSerialization:
 
 # ==================== QueuePriority 优先级测试 ====================
 
+
 class TestQueuePriorityValues:
     """队列优先级枚举值测试"""
 
@@ -161,6 +163,7 @@ class TestQueuePriorityValues:
 
 
 # ==================== RedisQueue 入队/出队核心逻辑测试 ====================
+
 
 class TestRedisQueueEnqueueDequeueLogic:
     """RedisQueue 入队/出队核心业务逻辑测试"""
@@ -255,21 +258,23 @@ class TestRedisQueueEnqueueDequeueLogic:
     async def test_dequeue_returns_request_with_scheduled_time(self, queue, mock_redis):
         """[核心功能] 出队必须返回请求并设置scheduled_at时间"""
         # 模拟ZPOPMIN返回
-        mock_redis.zpopmin = AsyncMock(return_value=[
-            ("priority-test", -7.123456)
-        ])
-        mock_redis.get = AsyncMock(return_value=json.dumps({
-            "request_id": "priority-test",
-            "model_name": "test-model",
-            "prompt": "Test",
-            "priority": 7,
-            "created_at": datetime.now().isoformat(),
-            "scheduled_at": None,
-            "completed_at": None,
-            "result": None,
-            "error": None,
-            "metadata": {},
-        }))
+        mock_redis.zpopmin = AsyncMock(return_value=[("priority-test", -7.123456)])
+        mock_redis.get = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "request_id": "priority-test",
+                    "model_name": "test-model",
+                    "prompt": "Test",
+                    "priority": 7,
+                    "created_at": datetime.now().isoformat(),
+                    "scheduled_at": None,
+                    "completed_at": None,
+                    "result": None,
+                    "error": None,
+                    "metadata": {},
+                }
+            )
+        )
         mock_redis.setex = AsyncMock(return_value=True)
         mock_redis.hincrby = AsyncMock(return_value=1)
 
@@ -286,18 +291,22 @@ class TestRedisQueueEnqueueDequeueLogic:
     async def test_dequeue_increments_dequeued_metric(self, queue, mock_redis):
         """[核心功能] 出队必须增加dequeued指标"""
         mock_redis.zpopmin = AsyncMock(return_value=[("req-1", -5.0)])
-        mock_redis.get = AsyncMock(return_value=json.dumps({
-            "request_id": "req-1",
-            "model_name": "m",
-            "prompt": "p",
-            "priority": 5,
-            "created_at": datetime.now().isoformat(),
-            "scheduled_at": None,
-            "completed_at": None,
-            "result": None,
-            "error": None,
-            "metadata": {},
-        }))
+        mock_redis.get = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "request_id": "req-1",
+                    "model_name": "m",
+                    "prompt": "p",
+                    "priority": 5,
+                    "created_at": datetime.now().isoformat(),
+                    "scheduled_at": None,
+                    "completed_at": None,
+                    "result": None,
+                    "error": None,
+                    "metadata": {},
+                }
+            )
+        )
         mock_redis.setex = AsyncMock(return_value=True)
         mock_redis.hincrby = AsyncMock(return_value=1)
 
@@ -325,6 +334,7 @@ class TestRedisQueueEnqueueDequeueLogic:
 
 
 # ==================== RedisQueue 结果存储测试 ====================
+
 
 class TestRedisQueueResultStorage:
     """RedisQueue 结果存储逻辑测试"""
@@ -393,6 +403,7 @@ class TestRedisQueueResultStorage:
 
 # ==================== RedisQueue 重试逻辑测试 ====================
 
+
 class TestRedisQueueRetryLogic:
     """RedisQueue 重试逻辑测试"""
 
@@ -453,6 +464,7 @@ class TestRedisQueueRetryLogic:
 
 # ==================== RedisQueue 队列统计测试 ====================
 
+
 class TestRedisQueueStats:
     """RedisQueue 队列统计测试"""
 
@@ -465,12 +477,14 @@ class TestRedisQueueStats:
         mock = AsyncMock()
         mock.zcard = AsyncMock(return_value=10)
         mock.zcount = AsyncMock(side_effect=[2, 5, 2, 1])
-        mock.hgetall = AsyncMock(return_value={
-            "enqueued": "100",
-            "dequeued": "90",
-            "completed": "85",
-            "failed": "5",
-        })
+        mock.hgetall = AsyncMock(
+            return_value={
+                "enqueued": "100",
+                "dequeued": "90",
+                "completed": "85",
+                "failed": "5",
+            }
+        )
         return mock
 
     @pytest.mark.asyncio
@@ -513,6 +527,7 @@ class TestRedisQueueStats:
 
 
 # ==================== WorkerClient HTTP通信测试 ====================
+
 
 class TestWorkerClientInference:
     """WorkerClient 推理请求HTTP通信测试"""
@@ -720,6 +735,7 @@ class TestWorkerClientInference:
 
 # ==================== WorkerClient LoadModel测试 ====================
 
+
 class TestWorkerClientLoadModel:
     """WorkerClient 加载模型测试"""
 
@@ -758,6 +774,7 @@ class TestWorkerClientLoadModel:
 
 # ==================== WorkerClient GetStatus测试 ====================
 
+
 class TestWorkerClientGetStatus:
     """WorkerClient 获取状态测试"""
 
@@ -794,6 +811,7 @@ class TestWorkerClientGetStatus:
 
 # ==================== WorkerClient 资源清理测试 ====================
 
+
 class TestWorkerClientCleanup:
     """WorkerClient 资源清理测试"""
 
@@ -822,6 +840,7 @@ class TestWorkerClientCleanup:
 
 
 # ==================== WorkerRegistry 注册管理测试 ====================
+
 
 class TestWorkerRegistryManagement:
     """WorkerRegistry 注册管理测试"""
@@ -907,6 +926,7 @@ class TestWorkerRegistryManagement:
 
 # ==================== WorkerRegistry 并发安全测试 ====================
 
+
 class TestWorkerRegistryConcurrency:
     """WorkerRegistry 并发安全测试"""
 
@@ -955,6 +975,7 @@ class TestWorkerRegistryConcurrency:
 
 # ==================== WorkerEndpoint 数据测试 ====================
 
+
 class TestWorkerEndpoint:
     """WorkerEndpoint 数据类测试"""
 
@@ -986,6 +1007,7 @@ class TestWorkerEndpoint:
 
 # ==================== Global Registry Singleton测试 ====================
 
+
 class TestGlobalRegistrySingleton:
     """全局注册表单例测试"""
 
@@ -993,6 +1015,7 @@ class TestGlobalRegistrySingleton:
         """[核心功能] 获取全局注册表必须返回单例"""
         # 重置全局单例
         import quantumflow.scheduler.worker_client as wc
+
         wc._registry = None
 
         registry1 = get_worker_registry()
@@ -1002,6 +1025,7 @@ class TestGlobalRegistrySingleton:
 
 
 # ==================== DistributedScheduler 核心逻辑测试 ====================
+
 
 class TestDistributedSchedulerDispatch:
     """DistributedScheduler 分发逻辑测试"""
@@ -1058,6 +1082,7 @@ class TestDistributedSchedulerDispatch:
 
 # ==================== DistributedScheduler 停止逻辑测试 ====================
 
+
 class TestDistributedSchedulerStop:
     """DistributedScheduler 停止逻辑测试"""
 
@@ -1074,6 +1099,7 @@ class TestDistributedSchedulerStop:
 
 
 # ==================== Integration: 端到端流程测试 ====================
+
 
 class TestEndToEndFlow:
     """端到端流程集成测试"""
@@ -1136,6 +1162,7 @@ class TestEndToEndFlow:
 
 
 # ==================== 错误码和边界值测试 ====================
+
 
 class TestErrorHandling:
     """错误处理边界值测试"""

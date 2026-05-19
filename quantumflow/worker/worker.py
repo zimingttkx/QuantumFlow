@@ -7,11 +7,11 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Any
 
 import psutil
 import structlog
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from pydantic import BaseModel
 
 from quantumflow.core.constants import NodeStatus
@@ -26,8 +26,9 @@ logger = structlog.get_logger().bind(component="worker")
 
 class LoadModelRequest(BaseModel):
     """加载模型请求"""
+
     model_name: str
-    model_path: Optional[str] = None
+    model_path: str | None = None
     backend: str = "huggingface"
     tensor_parallel: int = 1
     gpu_memory_utilization: float = 0.8
@@ -37,23 +38,26 @@ class LoadModelRequest(BaseModel):
 
 class UnloadModelRequest(BaseModel):
     """卸载模型请求"""
+
     model_name: str
 
 
 class InferenceRequest(BaseModel):
     """推理请求"""
+
     request_id: str
     model_name: str
-    prompts: List[str]
-    sampling_params: Optional[Dict[str, Any]] = None
+    prompts: list[str]
+    sampling_params: dict[str, Any] | None = None
 
 
 class InferenceResponse(BaseModel):
     """推理响应"""
+
     request_id: str
     status: str
-    results: Optional[List[Dict[str, Any]]] = None
-    error: Optional[str] = None
+    results: list[dict[str, Any]] | None = None
+    error: str | None = None
     latency_ms: float
 
 
@@ -84,7 +88,7 @@ class WorkerNode:
     def __init__(
         self,
         config: WorkerConfig,
-        engine: Optional[InferenceEngine] = None,
+        engine: InferenceEngine | None = None,
     ):
         self.config = config
         self.engine = engine
@@ -94,26 +98,26 @@ class WorkerNode:
         self.started_at = datetime.now()
 
         # 资源信息
-        self._gpu_info: List[Dict[str, Any]] = []
+        self._gpu_info: list[dict[str, Any]] = []
 
         # 请求跟踪
-        self.active_requests: Dict[str, float] = {}
+        self.active_requests: dict[str, float] = {}
         self.completed_requests: int = 0
         self.failed_requests: int = 0
 
         # 运行状态
         self._running = False
-        self._heartbeat_task: Optional[asyncio.Task] = None
-        self._api_server_task: Optional[asyncio.Task] = None
+        self._heartbeat_task: asyncio.Task | None = None
+        self._api_server_task: asyncio.Task | None = None
 
         # 控制器地址
-        self.controller_url: Optional[str] = None
+        self.controller_url: str | None = None
 
         # FastAPI app
-        self._app: Optional[FastAPI] = None
+        self._app: FastAPI | None = None
 
         # 关闭事件，用于优雅停止 API 服务器
-        self._shutdown_event: Optional[asyncio.Event] = None
+        self._shutdown_event: asyncio.Event | None = None
 
         logger.info(
             "worker_created",
@@ -123,7 +127,7 @@ class WorkerNode:
         )
 
     @property
-    def node_info(self) -> Dict[str, Any]:
+    def node_info(self) -> dict[str, Any]:
         """获取节点信息"""
         return {
             "node_id": self.config.node_id,
@@ -138,8 +142,16 @@ class WorkerNode:
             "cpu_count": psutil.cpu_count(logical=True),
             "memory_total": psutil.virtual_memory().total,
             "memory_available": psutil.virtual_memory().available,
-            "disk_total": psutil.disk_usage("/").total if platform.system() != "Windows" else psutil.disk_usage("C:\\").total,
-            "disk_available": psutil.disk_usage("/").free if platform.system() != "Windows" else psutil.disk_usage("C:\\").free,
+            "disk_total": (
+                psutil.disk_usage("/").total
+                if platform.system() != "Windows"
+                else psutil.disk_usage("C:\\").total
+            ),
+            "disk_available": (
+                psutil.disk_usage("/").free
+                if platform.system() != "Windows"
+                else psutil.disk_usage("C:\\").free
+            ),
             "current_load": self._get_load(),
             "loaded_models": self.engine.loaded_model_names if self.engine else [],
             "active_requests": len(self.active_requests),
@@ -147,7 +159,7 @@ class WorkerNode:
             "failed_requests": self.failed_requests,
         }
 
-    async def start(self, controller_url: Optional[str] = None):
+    async def start(self, controller_url: str | None = None):
         """启动Worker"""
         if self._running:
             return
@@ -263,7 +275,7 @@ class WorkerNode:
 
         self._shutdown_event = None
 
-    async def start(self, controller_url: Optional[str] = None):
+    async def start(self, controller_url: str | None = None):
         """启动Worker"""
         if self._running:
             return
@@ -396,9 +408,9 @@ class WorkerNode:
         self,
         request_id: str,
         model_name: str,
-        prompts: List[str],
+        prompts: list[str],
         sampling_params: SamplingParams,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         执行推理
 
@@ -497,7 +509,7 @@ class WorkerNode:
                 model=model_name,
             ).dec()
 
-    async def get_stats(self, model_name: str) -> Dict[str, Any]:
+    async def get_stats(self, model_name: str) -> dict[str, Any]:
         """获取统计信息"""
         if not self.engine:
             return {}
@@ -526,7 +538,7 @@ class WorkerNode:
         """获取负载"""
         return psutil.getloadavg()[0] if hasattr(psutil, "getloadavg") else 0.0
 
-    def _get_labels(self) -> Dict[str, str]:
+    def _get_labels(self) -> dict[str, str]:
         """获取节点标签"""
         return {
             "platform": platform.system().lower(),
@@ -538,6 +550,7 @@ class WorkerNode:
         """获取GPU温度"""
         try:
             import pynvml
+
             pynvml.nvmlInit()
             handle = pynvml.nvmlDeviceGetHandleByIndex(gpu_id)
             temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
@@ -546,7 +559,7 @@ class WorkerNode:
         except Exception:
             return 0.0
 
-    async def _collect_gpu_info(self) -> List[Dict[str, Any]]:
+    async def _collect_gpu_info(self) -> list[dict[str, Any]]:
         """收集GPU信息"""
         gpu_info = []
 
@@ -557,18 +570,22 @@ class WorkerNode:
                 for i in range(torch.cuda.device_count()):
                     props = torch.cuda.get_device_properties(i)
                     memory_allocated = torch.cuda.memory_allocated(i)
-                    memory_reserved = torch.cuda.memory_reserved(i)
+                    torch.cuda.memory_reserved(i)
 
-                    gpu_info.append({
-                        "gpu_id": i,
-                        "name": props.name,
-                        "memory_total": props.total_memory,
-                        "memory_used": memory_allocated,
-                        "utilization": (memory_allocated / props.total_memory) * 100
-                        if props.total_memory > 0
-                        else 0,
-                        "temperature": self._get_gpu_temperature(i),
-                    })
+                    gpu_info.append(
+                        {
+                            "gpu_id": i,
+                            "name": props.name,
+                            "memory_total": props.total_memory,
+                            "memory_used": memory_allocated,
+                            "utilization": (
+                                (memory_allocated / props.total_memory) * 100
+                                if props.total_memory > 0
+                                else 0
+                            ),
+                            "temperature": self._get_gpu_temperature(i),
+                        }
+                    )
 
                     # 更新监控指标
                     metrics.GPU_MEMORY.labels(
@@ -578,8 +595,11 @@ class WorkerNode:
                     metrics.GPU_UTILIZATION.labels(
                         node_id=self.config.node_id,
                         gpu_id=str(i),
-                    ).set((memory_allocated / props.total_memory) * 100
-                          if props.total_memory > 0 else 0)
+                    ).set(
+                        (memory_allocated / props.total_memory) * 100
+                        if props.total_memory > 0
+                        else 0
+                    )
 
         except ImportError:
             logger.warning("torch_not_available_gpu_info_unavailable")

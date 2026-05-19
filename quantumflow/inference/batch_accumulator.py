@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Callable, List, Optional
+from collections.abc import Callable
+from typing import Any
+
 import structlog
 
 logger = structlog.get_logger().bind(component="batch_accumulator")
@@ -33,7 +35,7 @@ class BatchAccumulator:
         self.max_batch_size = max_batch_size
 
         # 缓冲区: (prompt, future)
-        self._buffer: List[tuple[str, asyncio.Future]] = []
+        self._buffer: list[tuple[str, asyncio.Future]] = []
         self._wake_event = asyncio.Event()
         self._shutting_down = False
 
@@ -45,7 +47,7 @@ class BatchAccumulator:
         }
 
         # 启动后台 worker
-        self._worker_task: Optional[asyncio.Task] = None
+        self._worker_task: asyncio.Task | None = None
 
     def _ensure_worker(self):
         if self._worker_task is None or self._worker_task.done():
@@ -114,7 +116,7 @@ class BatchAccumulator:
 
         try:
             result = self._infer_fn(prompts)
-            if hasattr(result, '__await__'):
+            if hasattr(result, "__await__"):
                 results = await result
             else:
                 results = result

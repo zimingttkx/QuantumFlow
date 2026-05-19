@@ -1,18 +1,18 @@
 """模型管理路由"""
 
-from typing import List, Optional
-from fastapi import APIRouter, HTTPException, status, Query
 import time
+
 import structlog
+from fastapi import APIRouter, HTTPException, Query, status
 
 from quantumflow.api.models import (
-    DeployRequest,
-    DeployResponse,
-    UndeployRequest,
-    UndeployResponse,
-    ModelInfo,
     BenchmarkRequest,
     BenchmarkResponse,
+    DeployRequest,
+    DeployResponse,
+    ModelInfo,
+    UndeployRequest,
+    UndeployResponse,
 )
 
 logger = structlog.get_logger().bind(component="api_models")
@@ -62,14 +62,14 @@ _init_mock_models()
 
 @router.get(
     "",
-    response_model=List[ModelInfo],
+    response_model=list[ModelInfo],
     summary="列出模型",
     description="列出所有可用模型",
 )
 async def list_models(
-    status_filter: Optional[str] = Query(None, description="状态过滤"),
-    backend: Optional[str] = Query(None, description="后端过滤"),
-) -> List[ModelInfo]:
+    status_filter: str | None = Query(None, description="状态过滤"),
+    backend: str | None = Query(None, description="后端过滤"),
+) -> list[ModelInfo]:
     """列出所有可用模型"""
     models = list(_mock_models.values())
 

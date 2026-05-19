@@ -9,39 +9,41 @@
 需要通过集成测试验证。
 """
 
-import pytest
-import asyncio
-from unittest.mock import MagicMock, patch
-from typing import List
-
 import sys
-sys.path.insert(0, '/home/dingziming/PycharmProjects/QuantumFlow')
 
-from quantumflow.inference.backends.huggingface import HuggingFaceEngine, CHUNKED_PREFILL_THRESHOLD_TOKENS
-from quantumflow.inference.engine import ModelConfig, SamplingParams, InferenceResult
+import pytest
 
+sys.path.insert(0, "/home/dingziming/PycharmProjects/QuantumFlow")
+
+from quantumflow.inference.backends.huggingface import (
+    CHUNKED_PREFILL_THRESHOLD_TOKENS,
+    HuggingFaceEngine,
+)
+from quantumflow.inference.engine import InferenceResult, ModelConfig, SamplingParams
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 常量验证
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestChunkedPrefillConstants:
     """验证 Chunked Prefill 相关的常量定义"""
 
     def test_threshold_constant_is_512(self):
         """[正常用例] CHUNKED_PREFILL_THRESHOLD_TOKENS 常量值正确"""
-        assert CHUNKED_PREFILL_THRESHOLD_TOKENS == 512, \
-            f"阈值应为512，实际: {CHUNKED_PREFILL_THRESHOLD_TOKENS}"
+        assert (
+            CHUNKED_PREFILL_THRESHOLD_TOKENS == 512
+        ), f"阈值应为512，实际: {CHUNKED_PREFILL_THRESHOLD_TOKENS}"
 
     def test_threshold_constant_is_positive(self):
         """[边界用例] 阈值必须为正数"""
-        assert CHUNKED_PREFILL_THRESHOLD_TOKENS > 0, \
-            "阈值必须为正数"
+        assert CHUNKED_PREFILL_THRESHOLD_TOKENS > 0, "阈值必须为正数"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Fixtures
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 @pytest.fixture
 def engine():
@@ -65,6 +67,7 @@ def model_config():
 # ═══════════════════════════════════════════════════════════════════════════════
 # 测试类：模型未加载错误处理
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestChunkedErrorHandling:
     """验证 Chunked Prefill 的错误处理"""
@@ -109,20 +112,19 @@ class TestChunkedErrorHandling:
 # 测试类：ModelConfig 验证
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestModelConfigChunkedPrefill:
     """验证 ModelConfig 中与 Chunked Prefill 相关的配置"""
 
     def test_enable_chunked_prefill_defaults_to_false(self):
         """[正常用例] enable_chunked_prefill 默认为 False"""
         config = ModelConfig(model_name="test", model_path="path")
-        assert config.enable_chunked_prefill is False, \
-            "enable_chunked_prefill 默认值应为 False"
+        assert config.enable_chunked_prefill is False, "enable_chunked_prefill 默认值应为 False"
 
     def test_prefill_chunk_size_defaults_to_512(self):
         """[正常用例] prefill_chunk_size 默认为 512"""
         config = ModelConfig(model_name="test", model_path="path")
-        assert config.prefill_chunk_size == 512, \
-            "prefill_chunk_size 默认值应为 512"
+        assert config.prefill_chunk_size == 512, "prefill_chunk_size 默认值应为 512"
 
     def test_chunked_prefill_config_accepted(self, model_config):
         """[正常用例] Chunked Prefill 配置可被接受"""
@@ -145,6 +147,7 @@ class TestModelConfigChunkedPrefill:
 # ═══════════════════════════════════════════════════════════════════════════════
 # 测试类：SamplingParams 验证
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestSamplingParamsValidation:
     """验证 SamplingParams 的参数验证"""
@@ -189,6 +192,7 @@ class TestSamplingParamsValidation:
 # 测试类：InferenceResult 验证
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestInferenceResult:
     """验证 InferenceResult 数据类"""
 
@@ -227,6 +231,7 @@ class TestInferenceResult:
 # 测试类：引擎初始化
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestEngineInitialization:
     """验证引擎初始化状态"""
 
@@ -244,6 +249,7 @@ class TestEngineInitialization:
 # 测试类：分块决策逻辑（单元测试友好部分）
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestChunkingDecisionLogic:
     """验证 prompt 长度与分块决策的逻辑关系
 
@@ -256,34 +262,36 @@ class TestChunkingDecisionLogic:
         # 测试不同 prompt 长度的分块数量计算
         test_cases = [
             # (prompt_len, chunk_size, expected_chunks)
-            (100, 512, 1),      # 短于 chunk_size
-            (512, 512, 1),      # 等于 chunk_size
-            (513, 512, 2),      # 略大于 chunk_size
-            (1024, 512, 2),     # 2x chunk_size
-            (1025, 512, 3),     # 略大于 2x
-            (1536, 512, 3),     # 3x chunk_size
-            (1537, 512, 4),     # 略大于 3x
+            (100, 512, 1),  # 短于 chunk_size
+            (512, 512, 1),  # 等于 chunk_size
+            (513, 512, 2),  # 略大于 chunk_size
+            (1024, 512, 2),  # 2x chunk_size
+            (1025, 512, 3),  # 略大于 2x
+            (1536, 512, 3),  # 3x chunk_size
+            (1537, 512, 4),  # 略大于 3x
         ]
 
         for prompt_len, chunk_size, expected_chunks in test_cases:
             actual_chunks = (prompt_len + chunk_size - 1) // chunk_size
-            assert actual_chunks == expected_chunks, \
-                f"prompt_len={prompt_len}, chunk_size={chunk_size} 时应有 {expected_chunks} 个 chunks，实际: {actual_chunks}"
+            assert (
+                actual_chunks == expected_chunks
+            ), f"prompt_len={prompt_len}, chunk_size={chunk_size} 时应有 {expected_chunks} 个 chunks，实际: {actual_chunks}"
 
     def test_threshold_comparison_for_decision(self):
         """[正常用例] prompt_len > threshold 时应使用 chunked prefill"""
         test_cases = [
             # (prompt_len, threshold, should_use_chunked)
-            (100, 512, False),   # 短于阈值
+            (100, 512, False),  # 短于阈值
             (512, 512, False),  # 等于阈值（不算长）
-            (513, 512, True),   # 大于阈值
+            (513, 512, True),  # 大于阈值
             (1000, 512, True),  # 明显大于阈值
         ]
 
         for prompt_len, threshold, should_use_chunked in test_cases:
             decision = prompt_len > threshold
-            assert decision == should_use_chunked, \
-                f"prompt_len={prompt_len}, threshold={threshold} 时 should_use_chunked 应为 {should_use_chunked}"
+            assert (
+                decision == should_use_chunked
+            ), f"prompt_len={prompt_len}, threshold={threshold} 时 should_use_chunked 应为 {should_use_chunked}"
 
 
 if __name__ == "__main__":

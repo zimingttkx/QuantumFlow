@@ -1,6 +1,6 @@
 """集群模块"""
 
-from quantumflow.cluster.manager import ClusterManager, Node, NodeStatus, GPUInfo
+from quantumflow.cluster.manager import ClusterManager, GPUInfo, Node, NodeStatus
 
 # 全局单例
 _cluster_manager: ClusterManager = None

@@ -1,15 +1,14 @@
 """集群管理器"""
 
-from typing import Dict, List, Optional, Callable
+import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
-import asyncio
+
 import structlog
 
 from quantumflow.core.constants import NodeStatus
-from quantumflow.scheduler.strategy.base import NodeResource, GPUResource
-from quantumflow.core.exceptions import NodeNotFoundError, NodeUnhealthyError
+from quantumflow.scheduler.strategy.base import GPUResource, NodeResource
 
 logger = structlog.get_logger().bind(component="cluster_manager")
 
@@ -46,9 +45,9 @@ class Node:
     ip: str
     port: int
     gpu_count: int
-    gpu_info: List[GPUInfo]
+    gpu_info: list[GPUInfo]
     status: NodeStatus
-    labels: Dict[str, str] = field(default_factory=dict)
+    labels: dict[str, str] = field(default_factory=dict)
     version: str = "1.0.0"
     last_heartbeat: datetime = field(default_factory=datetime.now)
 
@@ -59,7 +58,7 @@ class Node:
     disk_total: int = 0
     disk_available: int = 0
     current_load: float = 0.0
-    loaded_models: List[str] = field(default_factory=list)
+    loaded_models: list[str] = field(default_factory=list)
 
     def to_resource(self) -> NodeResource:
         """转换为NodeResource"""
@@ -83,7 +82,7 @@ class Node:
         )
 
     @property
-    def available_gpus(self) -> List[GPUInfo]:
+    def available_gpus(self) -> list[GPUInfo]:
         """获取可用GPU"""
         return [gpu for gpu in self.gpu_info if gpu.memory_used < gpu.memory_total * 0.95]
 
@@ -113,14 +112,14 @@ class ClusterManager:
         self.heartbeat_timeout = heartbeat_timeout
 
         # 节点存储
-        self.nodes: Dict[str, Node] = {}
+        self.nodes: dict[str, Node] = {}
         self._lock = asyncio.Lock()
 
         # 心跳任务
-        self._heartbeat_tasks: Dict[str, asyncio.Task] = {}
+        self._heartbeat_tasks: dict[str, asyncio.Task] = {}
 
         # 事件回调
-        self._event_handlers: Dict[str, List[Callable]] = {
+        self._event_handlers: dict[str, list[Callable]] = {
             "node_joined": [],
             "node_left": [],
             "node_health_changed": [],
@@ -153,7 +152,7 @@ class ClusterManager:
 
     # ==================== 节点管理 ====================
 
-    async def register_node(self, node_info: Dict) -> Node:
+    async def register_node(self, node_info: dict) -> Node:
         """
         注册新节点
 
@@ -170,9 +169,7 @@ class ClusterManager:
                 ip=node_info["ip"],
                 port=node_info["port"],
                 gpu_count=node_info["gpu_count"],
-                gpu_info=[
-                    GPUInfo(**gpu) for gpu in node_info.get("gpu_info", [])
-                ],
+                gpu_info=[GPUInfo(**gpu) for gpu in node_info.get("gpu_info", [])],
                 status=NodeStatus.HEALTHY,
                 labels=node_info.get("labels", {}),
                 version=node_info.get("version", "1.0.0"),
@@ -215,9 +212,7 @@ class ClusterManager:
 
             logger.info("node_unregistered", node_id=node_id)
 
-    async def update_node_status(
-        self, node_id: str, status: NodeStatus
-    ) -> bool:
+    async def update_node_status(self, node_id: str, status: NodeStatus) -> bool:
         """更新节点状态"""
         async with self._lock:
             if node_id not in self.nodes:
@@ -240,17 +235,13 @@ class ClusterManager:
 
             return True
 
-    async def update_node_info(
-        self, node_id: str, gpu_info: List[Dict], load: float = None
-    ):
+    async def update_node_info(self, node_id: str, gpu_info: list[dict], load: float = None):
         """更新节点信息"""
         async with self._lock:
             if node_id not in self.nodes:
                 return
 
-            self.nodes[node_id].gpu_info = [
-                GPUInfo(**gpu) for gpu in gpu_info
-            ]
+            self.nodes[node_id].gpu_info = [GPUInfo(**gpu) for gpu in gpu_info]
             self.nodes[node_id].last_heartbeat = datetime.now()
 
             if load is not None:
@@ -272,20 +263,20 @@ class ClusterManager:
 
     # ==================== 查询接口 ====================
 
-    async def get_node(self, node_id: str) -> Optional[Node]:
+    async def get_node(self, node_id: str) -> Node | None:
         """获取节点"""
         return self.nodes.get(node_id)
 
-    async def get_node_resource(self, node_id: str) -> Optional[NodeResource]:
+    async def get_node_resource(self, node_id: str) -> NodeResource | None:
         """获取节点资源信息"""
         node = self.nodes.get(node_id)
         return node.to_resource() if node else None
 
     async def get_nodes(
         self,
-        status: Optional[NodeStatus] = None,
-        labels: Optional[Dict[str, str]] = None,
-    ) -> List[Node]:
+        status: NodeStatus | None = None,
+        labels: dict[str, str] | None = None,
+    ) -> list[Node]:
         """获取节点列表"""
         nodes = list(self.nodes.values())
 
@@ -293,38 +284,32 @@ class ClusterManager:
             nodes = [n for n in nodes if n.status == status]
 
         if labels:
-            nodes = [
-                n
-                for n in nodes
-                if all(n.labels.get(k) == v for k, v in labels.items())
-            ]
+            nodes = [n for n in nodes if all(n.labels.get(k) == v for k, v in labels.items())]
 
         return nodes
 
     async def get_node_resources(
         self,
-        status: Optional[NodeStatus] = None,
-        labels: Optional[Dict[str, str]] = None,
-    ) -> List[NodeResource]:
+        status: NodeStatus | None = None,
+        labels: dict[str, str] | None = None,
+    ) -> list[NodeResource]:
         """获取节点资源列表"""
         nodes = await self.get_nodes(status=status, labels=labels)
         return [n.to_resource() for n in nodes]
 
-    async def get_healthy_nodes(self) -> List[Node]:
+    async def get_healthy_nodes(self) -> list[Node]:
         """获取健康节点"""
         return await self.get_nodes(status=NodeStatus.HEALTHY)
 
     async def find_best_nodes(
-        self, required_gpus: int, labels: Optional[Dict[str, str]] = None
-    ) -> List[Node]:
+        self, required_gpus: int, labels: dict[str, str] | None = None
+    ) -> list[Node]:
         """查找最优节点组合"""
         healthy_nodes = await self.get_healthy_nodes()
 
         if labels:
             healthy_nodes = [
-                n
-                for n in healthy_nodes
-                if all(n.labels.get(k) == v for k, v in labels.items())
+                n for n in healthy_nodes if all(n.labels.get(k) == v for k, v in labels.items())
             ]
 
         # 按可用GPU数量排序
@@ -348,7 +333,7 @@ class ClusterManager:
 
         return selected
 
-    async def get_cluster_stats(self) -> Dict:
+    async def get_cluster_stats(self) -> dict:
         """获取集群统计"""
         nodes = list(self.nodes.values())
 
@@ -361,7 +346,7 @@ class ClusterManager:
             "unhealthy_nodes": sum(1 for n in nodes if n.status == NodeStatus.UNHEALTHY),
             "total_gpus": total_gpus,
             "available_gpus": available_gpus,
-            "total_models": len(set(m for n in nodes for m in n.loaded_models)),
+            "total_models": len({m for n in nodes for m in n.loaded_models}),
         }
 
     # ==================== 心跳监控 ====================
@@ -394,9 +379,7 @@ class ClusterManager:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(
-                    "heartbeat_error", node_id=node_id, error=str(e)
-                )
+                logger.error("heartbeat_error", node_id=node_id, error=str(e))
 
     async def _handle_node_timeout(self, node_id: str):
         """处理节点超时"""
@@ -427,6 +410,4 @@ class ClusterManager:
                 else:
                     handler(*args, **kwargs)
             except Exception as e:
-                logger.error(
-                    "event_handler_error", event_name=event, error=str(e)
-                )
+                logger.error("event_handler_error", event_name=event, error=str(e))

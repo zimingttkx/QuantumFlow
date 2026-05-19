@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set
+
 import structlog
 
 logger = structlog.get_logger().bind(component="vram_manager")
@@ -20,6 +20,7 @@ DEFAULT_MAX_BLOCKS_PER_MODEL = 256  # 每个模型最大 block 数
 @dataclass
 class LoadedModelInfo:
     """已加载模型的VRAM追踪信息"""
+
     model_name: str
     estimated_vram_gb: float
     actual_vram_gb: float = 0.0
@@ -30,6 +31,7 @@ class LoadedModelInfo:
 @dataclass
 class Block:
     """VRAM 显存块 — 类比 PagedAttention 的物理页"""
+
     block_id: int
     num_tokens: int  # 该 block 承载的 token 数
     owner_request_id: str = ""  # 当前占用该 block 的请求
@@ -62,10 +64,10 @@ class BlockPool:
         self.max_blocks = max_blocks
 
         # 初始化 block 池
-        self._blocks: Dict[int, Block] = {
+        self._blocks: dict[int, Block] = {
             i: Block(block_id=i, num_tokens=block_size) for i in range(max_blocks)
         }
-        self._free_blocks: Set[int] = set(range(max_blocks))
+        self._free_blocks: set[int] = set(range(max_blocks))
 
         # 统计
         self.stats = {
@@ -76,7 +78,7 @@ class BlockPool:
             "rejected_requests": 0,
         }
 
-    def allocate(self, num_tokens: int, request_id: str) -> Optional[List[int]]:
+    def allocate(self, num_tokens: int, request_id: str) -> list[int] | None:
         """
         为请求分配足够的 blocks 承载 num_tokens。
 
@@ -120,7 +122,9 @@ class BlockPool:
 
         self.stats["allocated_blocks"] += len(allocated)
         self.stats["total_requests"] += 1
-        self.stats["peak_allocated"] = max(self.stats["peak_allocated"], self.stats["allocated_blocks"])
+        self.stats["peak_allocated"] = max(
+            self.stats["peak_allocated"], self.stats["allocated_blocks"]
+        )
 
         logger.debug(
             "blocks_allocated",
@@ -131,7 +135,7 @@ class BlockPool:
         )
         return allocated
 
-    def release(self, block_ids: List[int], request_id: str):
+    def release(self, block_ids: list[int], request_id: str):
         """释放指定 blocks"""
         if block_ids is None:
             return
@@ -166,9 +170,7 @@ class BlockPool:
             "free_blocks": len(self._free_blocks),
             "allocated_blocks": self.stats["allocated_blocks"],
             "peak_allocated": self.stats["peak_allocated"],
-            "utilization_pct": round(
-                self.stats["peak_allocated"] / self.max_blocks * 100, 1
-            ),
+            "utilization_pct": round(self.stats["peak_allocated"] / self.max_blocks * 100, 1),
             "rejected_requests": self.stats["rejected_requests"],
         }
 
@@ -199,8 +201,8 @@ class VRAMManager:
     ):
         self.safety_factor = safety_factor
         self.idle_ttl_seconds = idle_ttl_seconds
-        self._loaded: Dict[str, LoadedModelInfo] = {}
-        self._block_pools: Dict[str, BlockPool] = {}  # model_name -> BlockPool
+        self._loaded: dict[str, LoadedModelInfo] = {}
+        self._block_pools: dict[str, BlockPool] = {}  # model_name -> BlockPool
 
     # ── public API ─────────────────────────────────────────────
 
@@ -347,7 +349,9 @@ class VRAMManager:
 
     # ── Block 级别细粒度 VRAM 管理 ──────────────────────────────
 
-    def allocate_blocks(self, model_name: str, num_tokens: int, request_id: str) -> Optional[List[int]]:
+    def allocate_blocks(
+        self, model_name: str, num_tokens: int, request_id: str
+    ) -> list[int] | None:
         """
         为请求分配 KV Cache blocks。
 
@@ -364,13 +368,13 @@ class VRAMManager:
             return None
         return pool.allocate(num_tokens, request_id)
 
-    def release_blocks(self, model_name: str, block_ids: List[int], request_id: str):
+    def release_blocks(self, model_name: str, block_ids: list[int], request_id: str):
         """释放指定 blocks"""
         pool = self._block_pools.get(model_name)
         if pool:
             pool.release(block_ids, request_id)
 
-    def get_block_status(self, model_name: str) -> Optional[dict]:
+    def get_block_status(self, model_name: str) -> dict | None:
         """获取模型的 block 池状态"""
         pool = self._block_pools.get(model_name)
         if not pool:
@@ -379,10 +383,7 @@ class VRAMManager:
 
     def get_all_block_status(self) -> dict:
         """获取所有模型的 block 池状态"""
-        return {
-            name: pool.get_status()
-            for name, pool in self._block_pools.items()
-        }
+        return {name: pool.get_status() for name, pool in self._block_pools.items()}
 
     # ── internal ───────────────────────────────────────────────
 
@@ -420,7 +421,7 @@ class VRAMManager:
 
         def score(m: LoadedModelInfo) -> float:
             age_norm = (now - m.last_used_at) / max_age  # 0=最近, 1=最久
-            size_norm = m.estimated_vram_gb / max_vram    # 0=最小, 1=最大
+            size_norm = m.estimated_vram_gb / max_vram  # 0=最小, 1=最大
             # 得分=年龄(70%权重) + 大小(30%权重) — 高年龄+大体积=高分=优先淘汰
             return age_norm * 0.7 + size_norm * 0.3
 
@@ -433,6 +434,7 @@ class VRAMManager:
         # pynvml first
         try:
             import pynvml
+
             pynvml.nvmlInit()
             total_free = 0.0
             for i in range(pynvml.nvmlDeviceGetCount()):
@@ -447,6 +449,7 @@ class VRAMManager:
         # PyTorch fallback
         try:
             import torch
+
             if torch.cuda.is_available():
                 total_free = 0.0
                 for i in range(torch.cuda.device_count()):
@@ -463,6 +466,7 @@ class VRAMManager:
         """读取已用VRAM (GB)"""
         try:
             import pynvml
+
             pynvml.nvmlInit()
             total_used = 0.0
             for i in range(pynvml.nvmlDeviceGetCount()):
@@ -474,8 +478,11 @@ class VRAMManager:
             pass
         try:
             import torch
+
             if torch.cuda.is_available():
-                return sum(torch.cuda.memory_allocated(i) for i in range(torch.cuda.device_count())) / (1024**3)
+                return sum(
+                    torch.cuda.memory_allocated(i) for i in range(torch.cuda.device_count())
+                ) / (1024**3)
         except Exception:
             pass
         return 0.0
@@ -484,14 +491,22 @@ class VRAMManager:
     def _estimate_param_count(model_path: str) -> int:
         """从模型名称估算参数量"""
         patterns = [
-            ("0.5b", 500_000_000), ("1.5b", 1_500_000_000),
-            ("2.6b", 2_600_000_000), ("3.8b", 3_800_000_000),
-            ("14b", 14_000_000_000), ("13b", 13_000_000_000),
-            ("11b", 11_000_000_000), ("9b", 9_000_000_000),
-            ("8b", 8_000_000_000), ("7b", 7_000_000_000),
-            ("72b", 72_000_000_000), ("70b", 70_000_000_000),
-            ("34b", 34_000_000_000), ("20b", 20_000_000_000),
-            ("3b", 3_000_000_000), ("2b", 2_000_000_000),
+            ("0.5b", 500_000_000),
+            ("1.5b", 1_500_000_000),
+            ("2.6b", 2_600_000_000),
+            ("3.8b", 3_800_000_000),
+            ("14b", 14_000_000_000),
+            ("13b", 13_000_000_000),
+            ("11b", 11_000_000_000),
+            ("9b", 9_000_000_000),
+            ("8b", 8_000_000_000),
+            ("7b", 7_000_000_000),
+            ("72b", 72_000_000_000),
+            ("70b", 70_000_000_000),
+            ("34b", 34_000_000_000),
+            ("20b", 20_000_000_000),
+            ("3b", 3_000_000_000),
+            ("2b", 2_000_000_000),
             ("1b", 1_000_000_000),
         ]
         path_lower = model_path.lower()

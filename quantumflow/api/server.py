@@ -1,21 +1,20 @@
 """FastAPI应用"""
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
+import structlog
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
-import structlog
 
 from quantumflow.api.routes import router
-from quantumflow.api.models import ErrorResponse
 from quantumflow.core.exceptions import QuantumFlowError
-from quantumflow.version import __version__
 from quantumflow.utils.config import get_config
 from quantumflow.utils.logging import setup_logging
+from quantumflow.version import __version__
 
 logger = structlog.get_logger().bind(component="api_server")
 
@@ -39,6 +38,7 @@ def create_app() -> FastAPI:
 
         # 启动 GPU 监控和空闲淘汰检查
         from quantumflow.inference import get_engine_manager
+
         mgr = get_engine_manager()
         await mgr.start_gpu_monitoring()
         # idle_ttl 默认 0（禁用），若需启用可在配置中设置
@@ -98,8 +98,10 @@ def create_app() -> FastAPI:
     @app.get("/", include_in_schema=False)
     async def root():
         """返回前端页面"""
-        from fastapi.responses import FileResponse
         import os
+
+        from fastapi.responses import FileResponse
+
         static_path = os.path.join(os.path.dirname(__file__), "static", "index.html")
         return FileResponse(static_path)
 

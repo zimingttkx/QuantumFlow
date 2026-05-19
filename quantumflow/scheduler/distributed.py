@@ -5,25 +5,23 @@ Controller将推理请求放入Redis队列，Worker从队列中拉取任务执�
 """
 
 import asyncio
-from typing import Dict, List, Optional, Callable, Any
 from datetime import datetime
+from typing import Any
+
 import structlog
 
-from quantumflow.scheduler.scheduler import Scheduler, QueueItem
+from quantumflow.scheduler.scheduler import QueueItem, Scheduler
 from quantumflow.scheduler.strategy.base import (
     SchedulingRequest,
     SchedulingResult,
-    NodeResource,
 )
-from quantumflow.storage.redis_queue import RedisQueue, QueuedRequest, QueuePriority
-from quantumflow.storage.connection import get_redis_manager
-from quantumflow.core.exceptions import SchedulerError
 from quantumflow.scheduler.worker_client import (
     WorkerClient,
     WorkerEndpoint,
-    WorkerRegistry,
     get_worker_registry,
 )
+from quantumflow.storage.connection import get_redis_manager
+from quantumflow.storage.redis_queue import QueuedRequest, RedisQueue
 
 logger = structlog.get_logger().bind(component="distributed_scheduler")
 
@@ -55,7 +53,7 @@ class DistributedScheduler(Scheduler):
         )
 
         self.redis_url = redis_url
-        self._redis_queue: Optional[RedisQueue] = None
+        self._redis_queue: RedisQueue | None = None
         self._use_redis = True
 
         # Worker 通信
@@ -267,9 +265,7 @@ class DistributedScheduler(Scheduler):
                 {"status": "error", "reason": result.reason},
             )
 
-    async def _dispatch(
-        self, request: SchedulingRequest, result: SchedulingResult
-    ):
+    async def _dispatch(self, request: SchedulingRequest, result: SchedulingResult):
         """分发请求到Worker（真实HTTP调用）"""
         request_id = request.request_id
 
@@ -315,15 +311,13 @@ class DistributedScheduler(Scheduler):
         }
 
         # 异步发送到Worker（不阻塞调度循环）
-        asyncio.create_task(
-            self._send_to_worker(request, worker_endpoint, sampling_params)
-        )
+        asyncio.create_task(self._send_to_worker(request, worker_endpoint, sampling_params))
 
     async def _send_to_worker(
         self,
         request: SchedulingRequest,
         worker_endpoint: WorkerEndpoint,
-        sampling_params: Dict[str, Any],
+        sampling_params: dict[str, Any],
     ):
         """发送请求到Worker并处理响应"""
         request_id = request.request_id
@@ -475,7 +469,7 @@ class DistributedScheduler(Scheduler):
         """获取已注册Worker数量"""
         return await self._worker_registry.get_worker_count()
 
-    def get_queue_stats(self) -> Dict[str, Any]:
+    def get_queue_stats(self) -> dict[str, Any]:
         """获取队列统计"""
         stats = {
             **self.stats,
@@ -494,7 +488,7 @@ class DistributedScheduler(Scheduler):
 
 
 # 全局单例
-_scheduler: Optional[DistributedScheduler] = None
+_scheduler: DistributedScheduler | None = None
 
 
 def get_scheduler() -> DistributedScheduler:

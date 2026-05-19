@@ -1,13 +1,12 @@
 """集群管理器单元测试"""
 
-import pytest
 import asyncio
-from datetime import datetime, timedelta
-from unittest.mock import Mock, AsyncMock, MagicMock, patch
-from enum import Enum
+from unittest.mock import Mock
 
-from quantumflow.cluster.manager import ClusterManager, Node, NodeStatus, GPUInfo
-from quantumflow.scheduler.strategy.base import NodeResource, GPUResource
+import pytest
+
+from quantumflow.cluster.manager import ClusterManager, GPUInfo, Node, NodeStatus
+from quantumflow.scheduler.strategy.base import GPUResource, NodeResource
 
 
 class TestNodeStatus:
@@ -113,9 +112,7 @@ class TestNode:
 
         available = node.available_gpus
         assert len(available) == 3
-        assert all(
-            gpu.memory_used < gpu.memory_total * 0.95 for gpu in available
-        )
+        assert all(gpu.memory_used < gpu.memory_total * 0.95 for gpu in available)
 
     def test_is_healthy(self, sample_gpu_infos):
         """测试健康状态"""
@@ -512,6 +509,7 @@ class TestClusterManager:
     @pytest.mark.asyncio
     async def test_concurrent_registration(self, manager):
         """测试并发注册"""
+
         async def register_node(node_id):
             node_info = {
                 "node_id": node_id,
@@ -524,9 +522,7 @@ class TestClusterManager:
             return await manager.register_node(node_info)
 
         # 并发注册多个节点
-        nodes = await asyncio.gather(
-            *[register_node(f"node-{i}") for i in range(10)]
-        )
+        nodes = await asyncio.gather(*[register_node(f"node-{i}") for i in range(10)])
 
         assert len(nodes) == 10
         assert len(manager.nodes) == 10

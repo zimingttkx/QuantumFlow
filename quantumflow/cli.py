@@ -1,12 +1,11 @@
 """CLI命令行工具"""
 
 import asyncio
-import sys
-import json
 import time
+
 import click
-import structlog
 import httpx
+import structlog
 from rich.console import Console
 from rich.table import Table
 
@@ -44,9 +43,10 @@ def version():
 def serve(host, port, workers, reload):
     """启动API服务器"""
     import uvicorn
+
     from quantumflow.api.server import create_app
 
-    console.print(f"[bold green]启动QuantumFlow API服务器[/bold green]")
+    console.print("[bold green]启动QuantumFlow API服务器[/bold green]")
     console.print(f"  地址: {host}:{port}")
     console.print(f"  工作进程: {workers}")
 
@@ -66,15 +66,17 @@ def serve(host, port, workers, reload):
 @click.option("--controller-url", default="http://localhost:8000", help="Controller URL")
 @click.option("--host", default="0.0.0.0", help="监听地址")
 @click.option("--port", default=8080, help="监听端口")
-@click.option("--backend", default="vllm", type=click.Choice(["vllm", "tgi", "sglang"]), help="推理后端")
+@click.option(
+    "--backend", default="vllm", type=click.Choice(["vllm", "tgi", "sglang"]), help="推理后端"
+)
 @click.option("--tgi-url", default="http://localhost:8080", help="TGI服务URL")
 @click.option("--sglang-url", default="http://localhost:30000", help="SGLang服务URL")
 def worker(controller_url, host, port, backend, tgi_url, sglang_url):
     """启动Worker节点"""
-    from quantumflow.worker import WorkerNode, WorkerConfig
-    from quantumflow.inference.backends import VLLMEngine, TGIEngine, SGLangEngine
+    from quantumflow.inference.backends import SGLangEngine, TGIEngine, VLLMEngine
+    from quantumflow.worker import WorkerConfig, WorkerNode
 
-    console.print(f"[bold green]启动QuantumFlow Worker节点[/bold green]")
+    console.print("[bold green]启动QuantumFlow Worker节点[/bold green]")
     console.print(f"  Controller: {controller_url}")
     console.print(f"  地址: {host}:{port}")
     console.print(f"  后端: {backend}")
@@ -99,7 +101,7 @@ def worker(controller_url, host, port, backend, tgi_url, sglang_url):
 
     async def run():
         await worker.start(controller_url=controller_url)
-        console.print(f"[green]Worker已启动，按Ctrl+C停止[/green]")
+        console.print("[green]Worker已启动，按Ctrl+C停止[/green]")
 
         try:
             while True:
@@ -113,12 +115,19 @@ def worker(controller_url, host, port, backend, tgi_url, sglang_url):
 
 @cli.command()
 @click.argument("model")
-@click.option("--backend", "-b", default="huggingface", type=click.Choice(["huggingface", "vllm", "tgi", "sglang"]), help="推理后端")
+@click.option(
+    "--backend",
+    "-b",
+    default="huggingface",
+    type=click.Choice(["huggingface", "vllm", "tgi", "sglang"]),
+    help="推理后端",
+)
 @click.option("--tensor-parallel", "-tp", default=1, help="张量并行度")
 @click.option("--gpu-memory", "-m", default=0.8, help="GPU显存利用率")
 @click.option("--url", default="http://localhost:8000", help="API服务器地址")
 def load(model, backend, tensor_parallel, gpu_memory, url):
     """加载模型"""
+
     async def do_load():
         async with httpx.AsyncClient() as client:
             try:
@@ -150,6 +159,7 @@ def load(model, backend, tensor_parallel, gpu_memory, url):
 @click.option("--url", default="http://localhost:8000", help="API服务器地址")
 def unload(model, url):
     """卸载模型"""
+
     async def do_unload():
         async with httpx.AsyncClient() as client:
             try:
@@ -160,7 +170,7 @@ def unload(model, url):
                     timeout=30.0,
                 )
                 if response.status_code == 200:
-                    data = response.json()
+                    response.json()
                     console.print(f"[green]✓ 模型 {model} 卸载成功[/green]")
                 else:
                     console.print(f"[red]✗ 卸载失败: {response.text}[/red]")
@@ -176,6 +186,7 @@ def unload(model, url):
 @click.option("--interval", default=5, help="刷新间隔（秒）")
 def status(url, watch, interval):
     """查看集群状态"""
+
     async def do_status():
         while True:
             async with httpx.AsyncClient() as client:
@@ -186,7 +197,7 @@ def status(url, watch, interval):
                         data = response.json()
 
                         console.clear()
-                        console.print(f"[bold blue]QuantumFlow 集群状态[/bold blue]")
+                        console.print("[bold blue]QuantumFlow 集群状态[/bold blue]")
                         console.print()
 
                         # 创建统计表
@@ -223,12 +234,13 @@ def status(url, watch, interval):
 @click.option("--url", default="http://localhost:8000", help="API服务器地址")
 def generate(model, prompt, max_tokens, temperature, url):
     """测试生成"""
+
     async def do_generate():
         start_time = time.time()
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             try:
-                console.print(f"[cyan]正在生成...[/cyan]")
+                console.print("[cyan]正在生成...[/cyan]")
                 console.print(f"  模型: {model}")
                 console.print(f"  提示: {prompt}")
 
@@ -244,7 +256,7 @@ def generate(model, prompt, max_tokens, temperature, url):
                     },
                 )
 
-                elapsed = (time.time() - start_time) * 1000
+                (time.time() - start_time) * 1000
 
                 if response.status_code == 200:
                     data = response.json()
@@ -269,10 +281,11 @@ def generate(model, prompt, max_tokens, temperature, url):
 @click.option("--url", default="http://localhost:8000", help="API服务器地址")
 def chat(model, prompt, max_tokens, url):
     """测试对话"""
+
     async def do_chat():
         async with httpx.AsyncClient(timeout=120.0) as client:
             try:
-                console.print(f"[cyan]对话中...[/cyan]")
+                console.print("[cyan]对话中...[/cyan]")
 
                 response = await client.post(
                     f"{url}/api/v1/inference/chat",
@@ -306,6 +319,7 @@ def chat(model, prompt, max_tokens, url):
 @click.option("--url", default="http://localhost:8000", help="API服务器地址")
 def models(url):
     """列出可用模型和已加载模型"""
+
     async def do_list():
         async with httpx.AsyncClient() as client:
             try:
@@ -323,7 +337,7 @@ def models(url):
                     if resp_loaded.status_code == 200:
                         loaded = resp_loaded.json().get("loaded_models", [])
 
-                    console.print(f"[bold blue]QuantumFlow 模型[/bold blue]")
+                    console.print("[bold blue]QuantumFlow 模型[/bold blue]")
                     console.print()
 
                     table = Table(show_header=True, header_style="bold magenta")
@@ -332,12 +346,14 @@ def models(url):
                     table.add_column("状态", style="green")
 
                     for name in available:
-                        status = "[green]已加载[/green]" if name in loaded else "[yellow]未加载[/yellow]"
+                        status = (
+                            "[green]已加载[/green]" if name in loaded else "[yellow]未加载[/yellow]"
+                        )
                         table.add_row(name, mappings.get(name, "N/A"), status)
 
                     console.print(table)
                 else:
-                    console.print(f"[red]✗ 获取模型列表失败[/red]")
+                    console.print("[red]✗ 获取模型列表失败[/red]")
 
             except Exception as e:
                 console.print(f"[red]✗ 连接失败: {e}[/red]")
@@ -355,6 +371,7 @@ def queue():
 @click.option("--url", default="http://localhost:8000", help="API服务器地址")
 def queue_stats(url):
     """查看分布式队列统计信息"""
+
     async def do_stats():
         async with httpx.AsyncClient(timeout=10.0) as client:
             try:
@@ -362,7 +379,7 @@ def queue_stats(url):
                 if response.status_code == 200:
                     data = response.json()
 
-                    console.print(f"[bold blue]分布式队列状态[/bold blue]")
+                    console.print("[bold blue]分布式队列状态[/bold blue]")
                     console.print()
 
                     connected = data.get("connected", False)
@@ -394,7 +411,9 @@ def queue_stats(url):
 
                     perf_table.add_row("入队速率", f"{metrics.get('enqueue_rate', 0):.2f}/s")
                     perf_table.add_row("出队速率", f"{metrics.get('dequeue_rate', 0):.2f}/s")
-                    perf_table.add_row("平均等待时间", f"{metrics.get('avg_wait_time_ms', 0):.0f}ms")
+                    perf_table.add_row(
+                        "平均等待时间", f"{metrics.get('avg_wait_time_ms', 0):.0f}ms"
+                    )
                     perf_table.add_row("成功率", f"{metrics.get('success_rate', 0):.1%}")
 
                     console.print(perf_table)
@@ -417,10 +436,11 @@ def queue_stats(url):
 @click.option("--timeout", default=30000, help="等待超时(毫秒)")
 def queue_submit(model, prompt, max_tokens, temperature, priority, url, wait, timeout):
     """提交推理请求到分布式队列"""
+
     async def do_submit():
         async with httpx.AsyncClient(timeout=60.0) as client:
             try:
-                console.print(f"[cyan]正在提交请求到队列...[/cyan]")
+                console.print("[cyan]正在提交请求到队列...[/cyan]")
                 console.print(f"  模型: {model}")
                 console.print(f"  提示: {prompt[:50]}...")
 
@@ -451,7 +471,9 @@ def queue_submit(model, prompt, max_tokens, temperature, priority, url, wait, ti
                         console.print()
                         console.print(f"[green]✓ 请求已提交: {data.get('request_id')}[/green]")
                         console.print(f"[dim]状态: {data.get('status')}[/dim]")
-                        console.print(f"[dim]使用 'qf queue result {data.get('request_id')}' 查询结果[/dim]")
+                        console.print(
+                            f"[dim]使用 'qf queue result {data.get('request_id')}' 查询结果[/dim]"
+                        )
                 else:
                     console.print(f"[red]✗ 提交失败: {response.text}[/red]")
             except Exception as e:
@@ -465,6 +487,7 @@ def queue_submit(model, prompt, max_tokens, temperature, priority, url, wait, ti
 @click.option("--url", default="http://localhost:8000", help="API服务器地址")
 def queue_result(request_id, url):
     """查询分布式队列请求结果"""
+
     async def do_result():
         async with httpx.AsyncClient(timeout=10.0) as client:
             try:
@@ -484,7 +507,9 @@ def queue_result(request_id, url):
                     elif status == "pending":
                         console.print("[yellow]请求正在处理中...[/yellow]")
                     elif status == "error":
-                        console.print(f"[red]错误: {data.get('result', {}).get('reason', 'Unknown')}[/red]")
+                        console.print(
+                            f"[red]错误: {data.get('result', {}).get('reason', 'Unknown')}[/red]"
+                        )
                     elif status == "timeout":
                         console.print("[yellow]等待结果超时[/yellow]")
                 elif response.status_code == 404:
@@ -510,6 +535,7 @@ def worker():
 @click.option("--url", default="http://localhost:8000", help="Controller URL")
 def worker_register(node_id, host, port, url):
     """注册Worker节点到Controller"""
+
     async def do_register():
         async with httpx.AsyncClient(timeout=10.0) as client:
             try:
@@ -542,6 +568,7 @@ def worker_register(node_id, host, port, url):
 @click.option("--url", default="http://localhost:8000", help="Controller URL")
 def worker_unregister(node_id, url):
     """从Controller注销Worker节点"""
+
     async def do_unregister():
         async with httpx.AsyncClient(timeout=10.0) as client:
             try:
@@ -565,14 +592,16 @@ def worker_unregister(node_id, url):
 @click.option("--node-id", default="local-worker", help="节点ID")
 @click.option("--host", default="0.0.0.0", help="监听地址")
 @click.option("--port", default=8080, type=int, help="监听端口")
-@click.option("--backend", default="huggingface", type=click.Choice(["huggingface", "vllm"]), help="推理后端")
+@click.option(
+    "--backend", default="huggingface", type=click.Choice(["huggingface", "vllm"]), help="推理后端"
+)
 @click.option("--controller-url", default="http://localhost:8000", help="Controller URL")
 def worker_start(node_id, host, port, backend, controller_url):
     """启动Worker节点（连接到Controller接收任务）"""
-    from quantumflow.worker import WorkerNode, WorkerConfig
     from quantumflow.inference.backends import HuggingFaceEngine, VLLMEngine
+    from quantumflow.worker import WorkerConfig, WorkerNode
 
-    console.print(f"[bold green]启动QuantumFlow Worker节点[/bold green]")
+    console.print("[bold green]启动QuantumFlow Worker节点[/bold green]")
     console.print(f"  节点ID: {node_id}")
     console.print(f"  地址: {host}:{port}")
     console.print(f"  后端: {backend}")
@@ -596,7 +625,7 @@ def worker_start(node_id, host, port, backend, controller_url):
 
     async def run():
         await worker.start(controller_url=controller_url)
-        console.print(f"[green]Worker已启动，按Ctrl+C停止[/green]")
+        console.print("[green]Worker已启动，按Ctrl+C停止[/green]")
 
         try:
             while True:
@@ -612,6 +641,7 @@ def worker_start(node_id, host, port, backend, controller_url):
 @click.option("--url", default="http://localhost:8000", help="API服务器地址")
 def workers(url):
     """列出已注册的Worker节点"""
+
     async def do_list():
         async with httpx.AsyncClient(timeout=10.0) as client:
             try:
@@ -654,7 +684,7 @@ def workers(url):
 
                     console.print(table)
                 else:
-                    console.print(f"[red]✗ 获取节点列表失败[/red]")
+                    console.print("[red]✗ 获取节点列表失败[/red]")
             except Exception as e:
                 console.print(f"[red]✗ 连接失败: {e}[/red]")
 
@@ -667,6 +697,7 @@ def workers(url):
 @click.option("--interval", default=5, help="刷新间隔（秒）")
 def monitor(url, watch, interval):
     """监控集群和GPU状态"""
+
     async def do_monitor():
         while True:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -677,10 +708,12 @@ def monitor(url, watch, interval):
 
                     if cluster_resp.status_code == 200:
                         cluster = cluster_resp.json()
-                        scheduler = scheduler_resp.json() if scheduler_resp.status_code == 200 else {}
+                        scheduler = (
+                            scheduler_resp.json() if scheduler_resp.status_code == 200 else {}
+                        )
 
                         console.clear()
-                        console.print(f"[bold blue]QuantumFlow 集群监控[/bold blue]")
+                        console.print("[bold blue]QuantumFlow 集群监控[/bold blue]")
                         console.print(f"  时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
                         console.print()
 
@@ -714,7 +747,9 @@ def monitor(url, watch, interval):
                                 temp = gpu.get("temperature", 0)
 
                                 util_str = f"{util*100:.0f}%" if util else "N/A"
-                                mem_str = f"{mem_used:.1f}/{mem_total:.1f} GB" if mem_total else "N/A"
+                                mem_str = (
+                                    f"{mem_used:.1f}/{mem_total:.1f} GB" if mem_total else "N/A"
+                                )
                                 temp_str = f"{temp:.0f}°C" if temp else "N/A"
 
                                 gpu_table.add_row(
@@ -731,7 +766,9 @@ def monitor(url, watch, interval):
                         # VRAM状态
                         vram = scheduler.get("vram", {})
                         if vram:
-                            console.print(f"[bold]VRAM 可用:[/bold] {vram.get('available_vram_gb', 0):.1f} GB")
+                            console.print(
+                                f"[bold]VRAM 可用:[/bold] {vram.get('available_vram_gb', 0):.1f} GB"
+                            )
                             console.print(f"[bold]已加载模型:[/bold] {vram.get('loaded_count', 0)}")
 
                         if not watch:
@@ -753,6 +790,7 @@ def monitor(url, watch, interval):
 @click.option("--limit", default=20, help="返回数量")
 def hub(url, limit):
     """浏览 HuggingFace 热门模型"""
+
     async def do_hub():
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
@@ -769,12 +807,21 @@ def hub(url, limit):
 
                     for i, m in enumerate(models_list, 1):
                         downloads = m.get("downloads", 0) or 0
-                        dl_str = f"{downloads/1_000_000:.1f}M" if downloads >= 1_000_000 else f"{downloads/1_000:.0f}K" if downloads >= 1_000 else str(downloads)
-                        table.add_row(str(i), m.get("model_id", "")[:60], dl_str, m.get("pipeline_tag", "unknown"))
+                        dl_str = (
+                            f"{downloads/1_000_000:.1f}M"
+                            if downloads >= 1_000_000
+                            else f"{downloads/1_000:.0f}K" if downloads >= 1_000 else str(downloads)
+                        )
+                        table.add_row(
+                            str(i),
+                            m.get("model_id", "")[:60],
+                            dl_str,
+                            m.get("pipeline_tag", "unknown"),
+                        )
 
                     console.print(table)
                 else:
-                    console.print(f"[red]获取失败[/red]")
+                    console.print("[red]获取失败[/red]")
             except Exception as e:
                 console.print(f"[red]连接失败: {e}[/red]")
 
@@ -787,11 +834,14 @@ def hub(url, limit):
 @click.option("--limit", default=15, help="返回数量")
 def search(query, url, limit):
     """搜索 HuggingFace 模型"""
+
     async def do_search():
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 console.print(f"[cyan]搜索 '{query}'...[/cyan]")
-                resp = await client.get(f"{url}/api/v1/hub/search", params={"q": query, "limit": limit})
+                resp = await client.get(
+                    f"{url}/api/v1/hub/search", params={"q": query, "limit": limit}
+                )
                 if resp.status_code == 200:
                     data = resp.json()
                     models_list = data.get("models", [])
@@ -808,13 +858,21 @@ def search(query, url, limit):
 
                     for i, m in enumerate(models_list, 1):
                         downloads = m.get("downloads", 0) or 0
-                        dl_str = f"{downloads/1_000_000:.1f}M" if downloads >= 1_000_000 else f"{downloads/1_000:.0f}K" if downloads >= 1_000 else str(downloads)
-                        table.add_row(str(i), m.get("model_id", ""), dl_str, m.get("author", "unknown"))
+                        dl_str = (
+                            f"{downloads/1_000_000:.1f}M"
+                            if downloads >= 1_000_000
+                            else f"{downloads/1_000:.0f}K" if downloads >= 1_000 else str(downloads)
+                        )
+                        table.add_row(
+                            str(i), m.get("model_id", ""), dl_str, m.get("author", "unknown")
+                        )
 
                     console.print(table)
-                    console.print(f"\n[dim]使用 'python -m quantumflow.cli download <model_id>' 下载[/dim]")
+                    console.print(
+                        "\n[dim]使用 'python -m quantumflow.cli download <model_id>' 下载[/dim]"
+                    )
                 else:
-                    console.print(f"[red]搜索失败[/red]")
+                    console.print("[red]搜索失败[/red]")
             except Exception as e:
                 console.print(f"[red]连接失败: {e}[/red]")
 
@@ -826,6 +884,7 @@ def search(query, url, limit):
 @click.option("--url", default="http://localhost:8000", help="API服务器地址")
 def download(model_id, url):
     """从 HuggingFace 下载模型"""
+
     async def do_download():
         async with httpx.AsyncClient(timeout=300.0) as client:
             try:
@@ -839,18 +898,20 @@ def download(model_id, url):
                         return
                     if val_data.get("gated"):
                         console.print("[yellow]⚠ 该模型需要授权访问[/yellow]")
-                    console.print(f"[green]✓ 模型存在[/green]")
+                    console.print("[green]✓ 模型存在[/green]")
                 else:
-                    console.print(f"[red]✗ 验证失败[/red]")
+                    console.print("[red]✗ 验证失败[/red]")
                     return
 
                 # 触发下载
-                console.print(f"[cyan]开始下载...[/cyan]")
+                console.print("[cyan]开始下载...[/cyan]")
                 # fire and forget — 后端会异步下载
-                asyncio.create_task(client.post(f"{url}/api/v1/hub/download", json={"model_id": model_id}))
+                asyncio.create_task(
+                    client.post(f"{url}/api/v1/hub/download", json={"model_id": model_id})
+                )
 
                 # 轮询进度
-                from rich.progress import Progress, BarColumn, TextColumn, TimeElapsedColumn
+                from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 
                 with Progress(
                     TextColumn("[bold blue]{task.description}"),
@@ -865,7 +926,9 @@ def download(model_id, url):
                     for _ in range(600):  # max 10 minutes
                         await asyncio.sleep(1)
                         try:
-                            pr = await client.get(f"{url}/api/v1/hub/download/progress", params={"model_id": model_id})
+                            pr = await client.get(
+                                f"{url}/api/v1/hub/download/progress", params={"model_id": model_id}
+                            )
                             if pr.status_code == 200:
                                 pd = pr.json()
                                 pct = max(0.0, pd.get("progress", -1))
@@ -878,7 +941,7 @@ def download(model_id, url):
                                 last_pct = pct
                                 if pct >= 100:
                                     progress.update(task, description=f"[green]✓ {model_id} 完成")
-                                    console.print(f"[green]✓ 下载完成[/green]")
+                                    console.print("[green]✓ 下载完成[/green]")
                                     return
                             # detect stall
                             if pct == last_pct:
@@ -900,6 +963,7 @@ def download(model_id, url):
 @click.option("--url", default="http://localhost:8000", help="API服务器地址")
 def recommend(url):
     """基于系统配置推荐模型"""
+
     async def do_recommend():
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
@@ -912,8 +976,12 @@ def recommend(url):
                     summary = data.get("summary", {})
 
                     console.print("\n[bold]系统配置:[/bold]")
-                    console.print(f"  GPU: {sys_info.get('gpu_names', ['无'])[0]} × {sys_info.get('gpu_count', 0)}")
-                    console.print(f"  显存: {sys_info.get('total_vram_gb', 0)} GB (可用: {sys_info.get('free_vram_gb', 0)} GB)")
+                    console.print(
+                        f"  GPU: {sys_info.get('gpu_names', ['无'])[0]} × {sys_info.get('gpu_count', 0)}"
+                    )
+                    console.print(
+                        f"  显存: {sys_info.get('total_vram_gb', 0)} GB (可用: {sys_info.get('free_vram_gb', 0)} GB)"
+                    )
                     console.print(f"  内存: {sys_info.get('ram_total_gb', 0)} GB")
 
                     if recs:
@@ -925,14 +993,26 @@ def recommend(url):
                         table.add_column("说明", style="dim")
 
                         for m in recs[:15]:
-                            badge = "[green]✓[/green]" if m["status"] == "compatible" else "[yellow]⚠[/yellow]"
-                            table.add_row(badge, m["name"], f"{m['params']}B", f"~{m['vram_gb']}GB", m.get("description", ""))
+                            badge = (
+                                "[green]✓[/green]"
+                                if m["status"] == "compatible"
+                                else "[yellow]⚠[/yellow]"
+                            )
+                            table.add_row(
+                                badge,
+                                m["name"],
+                                f"{m['params']}B",
+                                f"~{m['vram_gb']}GB",
+                                m.get("description", ""),
+                            )
 
                         console.print(table)
 
-                    console.print(f"\n[dim]兼容: {summary.get('compatible_count', 0)}个 | 可跑7B: {'是' if summary.get('can_run_7b') else '否'}[/dim]")
+                    console.print(
+                        f"\n[dim]兼容: {summary.get('compatible_count', 0)}个 | 可跑7B: {'是' if summary.get('can_run_7b') else '否'}[/dim]"
+                    )
                 else:
-                    console.print(f"[red]获取失败[/red]")
+                    console.print("[red]获取失败[/red]")
             except Exception as e:
                 console.print(f"[red]连接失败: {e}[/red]")
 
@@ -944,15 +1024,15 @@ def recommend(url):
 def interactive(url):
     """进入交互式终端"""
     from rich.panel import Panel
-    from rich.prompt import Prompt, Confirm
-    from rich.markdown import Markdown
+    from rich.prompt import Confirm, Prompt
 
     console.clear()
-    console.print(Panel.fit(
-        "[bold blue]⚡ QuantumFlow 交互式终端[/bold blue]\n"
-        f"[dim]服务地址: {url}[/dim]",
-        border_style="blue"
-    ))
+    console.print(
+        Panel.fit(
+            "[bold blue]⚡ QuantumFlow 交互式终端[/bold blue]\n" f"[dim]服务地址: {url}[/dim]",
+            border_style="blue",
+        )
+    )
 
     async def check_connection():
         try:
@@ -970,17 +1050,27 @@ def interactive(url):
                     data = resp.json()
                     console.print()
                     console.print("[bold]集群状态[/bold]")
-                    console.print(f"  节点: {data['total_nodes']} | 健康: {data['healthy_nodes']} | GPU: {data['total_gpus']}")
-                    console.print(f"  已加载模型: {data['active_models']} | CPU: {data['system_metrics']['cpu_usage']*100:.0f}% | GPU: {data['system_metrics']['gpu_usage']*100:.0f}%")
+                    console.print(
+                        f"  节点: {data['total_nodes']} | 健康: {data['healthy_nodes']} | GPU: {data['total_gpus']}"
+                    )
+                    console.print(
+                        f"  已加载模型: {data['active_models']} | CPU: {data['system_metrics']['cpu_usage']*100:.0f}% | GPU: {data['system_metrics']['gpu_usage']*100:.0f}%"
+                    )
                     console.print()
         except Exception:
             pass
 
     async def do_load_model():
         resp_available = httpx.get(f"{url}/api/v1/models/list", timeout=5.0)
-        available = resp_available.json().get("available_models", []) if resp_available.status_code == 200 else []
+        available = (
+            resp_available.json().get("available_models", [])
+            if resp_available.status_code == 200
+            else []
+        )
         resp_loaded = httpx.get(f"{url}/api/v1/models/status", timeout=5.0)
-        loaded = resp_loaded.json().get("loaded_models", []) if resp_loaded.status_code == 200 else []
+        loaded = (
+            resp_loaded.json().get("loaded_models", []) if resp_loaded.status_code == 200 else []
+        )
 
         console.print("\n[bold]可用模型:[/bold]")
         for i, m in enumerate(available, 1):
@@ -997,8 +1087,9 @@ def interactive(url):
                 backend = Prompt.ask("后端", default="huggingface", choices=["huggingface", "vllm"])
                 console.print(f"[cyan]正在加载 {model}...[/cyan]")
                 async with httpx.AsyncClient(timeout=300.0) as client:
-                    resp = await client.post(f"{url}/api/v1/models/load",
-                        json={"model": model, "backend": backend})
+                    resp = await client.post(
+                        f"{url}/api/v1/models/load", json={"model": model, "backend": backend}
+                    )
                     if resp.status_code in [200, 201]:
                         console.print(f"[green]✓ {model} 加载成功[/green]")
                     else:
@@ -1071,12 +1162,18 @@ def interactive(url):
             console.print("[bold green]助手[/bold green] ", end="")
             try:
                 async with httpx.AsyncClient(timeout=120.0) as client:
-                    resp = await client.post(f"{url}/api/v1/inference/chat",
+                    resp = await client.post(
+                        f"{url}/api/v1/inference/chat",
                         json={
                             "model": model,
                             "messages": messages,
-                            "sampling_params": {"temperature": 0.7, "max_tokens": 500, "repetition_penalty": 1.1},
-                        })
+                            "sampling_params": {
+                                "temperature": 0.7,
+                                "max_tokens": 500,
+                                "repetition_penalty": 1.1,
+                            },
+                        },
+                    )
                     if resp.status_code == 200:
                         data = resp.json()
                         reply = data.get("generated_text", "[无响应]")
@@ -1118,7 +1215,8 @@ def interactive(url):
         console.print("[cyan]生成中...[/cyan]")
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
-                resp = await client.post(f"{url}/api/v1/inference/generate",
+                resp = await client.post(
+                    f"{url}/api/v1/inference/generate",
                     json={
                         "model": model,
                         "prompt": prompt,
@@ -1126,10 +1224,11 @@ def interactive(url):
                             "max_tokens": int(max_tokens),
                             "temperature": float(temperature),
                         },
-                    })
+                    },
+                )
                 if resp.status_code == 200:
                     data = resp.json()
-                    console.print(f"\n[bold green]结果:[/bold green]")
+                    console.print("\n[bold green]结果:[/bold green]")
                     console.print(data.get("generated_text", "[无响应]"))
                     console.print(f"[dim]延迟: {data.get('latency_ms', 0):.0f}ms[/dim]")
                 else:
@@ -1173,7 +1272,9 @@ def interactive(url):
 
                     console.print(table)
                     console.print(f"\n[dim]共 {len(models_list)} 个模型[/dim]")
-                    console.print("[dim]使用 'python -m quantumflow.cli download <model_id>' 下载模型[/dim]")
+                    console.print(
+                        "[dim]使用 'python -m quantumflow.cli download <model_id>' 下载模型[/dim]"
+                    )
                 else:
                     console.print(f"[red]获取失败: {resp.status_code}[/red]")
         except Exception as e:
@@ -1188,7 +1289,9 @@ def interactive(url):
         console.print(f"\n[cyan]正在搜索 '{query}'...[/cyan]")
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.get(f"{url}/api/v1/hub/search", params={"q": query, "limit": 15})
+                resp = await client.get(
+                    f"{url}/api/v1/hub/search", params={"q": query, "limit": 15}
+                )
                 if resp.status_code == 200:
                     data = resp.json()
                     models_list = data.get("models", [])
@@ -1199,8 +1302,14 @@ def interactive(url):
                     console.print(f"\n[bold]搜索结果 ({len(models_list)} 个):[/bold]")
                     for i, m in enumerate(models_list, 1):
                         downloads = m.get("downloads", 0) or 0
-                        dl_str = f"{downloads/1_000_000:.1f}M" if downloads >= 1_000_000 else f"{downloads/1_000:.0f}K" if downloads >= 1_000 else str(downloads)
-                        console.print(f"  {i}. [cyan]{m.get('model_id', '')}[/cyan] [dim]↓{dl_str}[/dim]")
+                        dl_str = (
+                            f"{downloads/1_000_000:.1f}M"
+                            if downloads >= 1_000_000
+                            else f"{downloads/1_000:.0f}K" if downloads >= 1_000 else str(downloads)
+                        )
+                        console.print(
+                            f"  {i}. [cyan]{m.get('model_id', '')}[/cyan] [dim]↓{dl_str}[/dim]"
+                        )
 
                     choice = Prompt.ask("输入编号下载 (Q返回)", default="Q")
                     if choice.upper() == "Q":
@@ -1229,26 +1338,40 @@ def interactive(url):
                     summary = data.get("summary", {})
 
                     console.print("\n[bold]系统配置:[/bold]")
-                    console.print(f"  GPU: {sys_info.get('gpu_names', ['无'])[0]} × {sys_info.get('gpu_count', 0)}")
-                    console.print(f"  总显存: {sys_info.get('total_vram_gb', 0)} GB | 可用: {sys_info.get('free_vram_gb', 0)} GB")
+                    console.print(
+                        f"  GPU: {sys_info.get('gpu_names', ['无'])[0]} × {sys_info.get('gpu_count', 0)}"
+                    )
+                    console.print(
+                        f"  总显存: {sys_info.get('total_vram_gb', 0)} GB | 可用: {sys_info.get('free_vram_gb', 0)} GB"
+                    )
                     console.print(f"  系统内存: {sys_info.get('ram_total_gb', 0)} GB")
 
                     if recs:
                         console.print(f"\n[bold green]推荐模型 ({len(recs)} 个):[/bold green]")
                         for i, m in enumerate(recs[:10], 1):
-                            badge = "[green]✓[/green]" if m["status"] == "compatible" else "[yellow]⚠[/yellow]"
-                            console.print(f"  {badge} {i}. [cyan]{m['name']}[/cyan] - {m['description']} [dim]({m['params']}B, ~{m['vram_gb']}GB)[/dim]")
+                            badge = (
+                                "[green]✓[/green]"
+                                if m["status"] == "compatible"
+                                else "[yellow]⚠[/yellow]"
+                            )
+                            console.print(
+                                f"  {badge} {i}. [cyan]{m['name']}[/cyan] - {m['description']} [dim]({m['params']}B, ~{m['vram_gb']}GB)[/dim]"
+                            )
 
-                    console.print(f"\n[dim]兼容模型: {summary.get('compatible_count', 0)} 个 | 支持7B: {'是' if summary.get('can_run_7b') else '否'}[/dim]")
+                    console.print(
+                        f"\n[dim]兼容模型: {summary.get('compatible_count', 0)} 个 | 支持7B: {'是' if summary.get('can_run_7b') else '否'}[/dim]"
+                    )
                 else:
-                    console.print(f"[red]获取推荐失败[/red]")
+                    console.print("[red]获取推荐失败[/red]")
         except Exception as e:
             console.print(f"[red]连接失败: {e}[/red]")
 
     async def do_download_model(model_id: str = None):
         """下载模型"""
         if not model_id:
-            model_id = Prompt.ask("[bold]输入 HuggingFace 模型ID[/bold] (如 Qwen/Qwen2.5-1.5B-Instruct)")
+            model_id = Prompt.ask(
+                "[bold]输入 HuggingFace 模型ID[/bold] (如 Qwen/Qwen2.5-1.5B-Instruct)"
+            )
         if not model_id or not model_id.strip():
             return
 
@@ -1263,16 +1386,18 @@ def interactive(url):
                         console.print(f"[red]✗ {val_data.get('error', '模型不存在')}[/red]")
                         return
                     if val_data.get("gated"):
-                        console.print(f"[yellow]⚠ 该模型需要授权访问[/yellow]")
+                        console.print("[yellow]⚠ 该模型需要授权访问[/yellow]")
                         if not Confirm.ask("继续尝试下载?", default=False):
                             return
 
                 # 触发下载 (fire and forget)
                 console.print(f"[cyan]开始下载 {model_id}...[/cyan]")
-                asyncio.create_task(client.post(f"{url}/api/v1/hub/download", json={"model_id": model_id}))
+                asyncio.create_task(
+                    client.post(f"{url}/api/v1/hub/download", json={"model_id": model_id})
+                )
 
                 # 轮询进度
-                from rich.progress import Progress, BarColumn, TextColumn, TimeElapsedColumn
+                from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 
                 with Progress(
                     TextColumn("[bold blue]{task.description}"),
@@ -1285,22 +1410,28 @@ def interactive(url):
                     for _ in range(600):
                         await asyncio.sleep(1)
                         try:
-                            pr = await client.get(f"{url}/api/v1/hub/download/progress", params={"model_id": model_id})
+                            pr = await client.get(
+                                f"{url}/api/v1/hub/download/progress", params={"model_id": model_id}
+                            )
                             if pr.status_code == 200:
                                 pd = pr.json()
                                 pct = max(0.0, pd.get("progress", -1))
                                 if pct < 0:
-                                    console.print(f"[red]✗ 下载失败[/red]")
+                                    console.print("[red]✗ 下载失败[/red]")
                                     return
                                 progress.update(task, completed=pct)
                                 if pct >= 100:
-                                    progress.update(task, description=f"[green]✓ {model_id.split('/')[-1]} 完成")
-                                    console.print(f"[green]✓ 下载成功[/green]")
+                                    progress.update(
+                                        task, description=f"[green]✓ {model_id.split('/')[-1]} 完成"
+                                    )
+                                    console.print("[green]✓ 下载成功[/green]")
                                     # 询问是否加载
                                     if Confirm.ask("是否立即加载模型?", default=True):
                                         short_name = model_id.split("/")[-1]
-                                        resp = await client.post(f"{url}/api/v1/models/load",
-                                            json={"model": short_name, "model_path": model_id})
+                                        resp = await client.post(
+                                            f"{url}/api/v1/models/load",
+                                            json={"model": short_name, "model_path": model_id},
+                                        )
                                         if resp.status_code in [200, 201]:
                                             console.print(f"[green]✓ {short_name} 加载成功[/green]")
                                         else:

@@ -11,6 +11,7 @@
 - infer_fn: 同步/异步/异常
 - 边界: 空prompt/空flush/重复submit
 """
+
 import asyncio
 import time
 
@@ -48,6 +49,7 @@ def report():
 # 1. 基础功能 — submit / merge / flush
 # ═══════════════════════════════════════════════════════════
 
+
 def test_single_request():
     """单个请求直接返回正确结果"""
     print("\n── 单个请求 ──")
@@ -83,7 +85,9 @@ def test_multiple_requests_merged():
     async def run():
         acc = BatchAccumulator(infer_fn=infer_fn, max_delay_ms=100, max_batch_size=8)
         results = await asyncio.gather(
-            acc.submit("a"), acc.submit("b"), acc.submit("c"),
+            acc.submit("a"),
+            acc.submit("b"),
+            acc.submit("c"),
         )
         await acc.shutdown()
         return results
@@ -93,8 +97,7 @@ def test_multiple_requests_merged():
     check("仅1次infer调用", call_count[0] == 1, f"calls={call_count[0]}")
     if call_sizes:
         check("批大小=3", call_sizes[0] == 3, f"got={call_sizes[0]}")
-    check("结果无重复无遗漏", set(results) == {"R:a", "R:b", "R:c"},
-          f"results={results}")
+    check("结果无重复无遗漏", set(results) == {"R:a", "R:b", "R:c"}, f"results={results}")
 
 
 def test_max_batch_size_immediate_trigger():
@@ -185,6 +188,7 @@ def test_empty_prompt():
 # 2. 错误处理
 # ═══════════════════════════════════════════════════════════
 
+
 def test_inference_error_propagates():
     """推理错误传播到单个等待者，且保持原始异常类型"""
     print("\n── 错误: 单等待者 ──")
@@ -237,8 +241,7 @@ def test_error_propagates_to_all_waiters():
 
     errors = asyncio.run(run())
     check("3个等待者", len(errors) == 3)
-    check("全是BatchError", all(e == "batch_error" for e in errors),
-          f"errors={errors}")
+    check("全是BatchError", all(e == "batch_error" for e in errors), f"errors={errors}")
 
 
 def test_error_only_affects_current_batch():
@@ -299,8 +302,7 @@ def test_result_count_less_than_batch():
 
     results, errors = asyncio.run(run())
     check("2个成功", len(results) == 2, f"got={len(results)}")
-    check("1个IndexError", len(errors) == 1 and errors[0] == "IndexError",
-          f"errors={errors}")
+    check("1个IndexError", len(errors) == 1 and errors[0] == "IndexError", f"errors={errors}")
 
 
 def test_result_count_more_than_batch():
@@ -348,6 +350,7 @@ def test_infer_fn_returns_non_list():
 # 3. 结果分发 — 顺序保持
 # ═══════════════════════════════════════════════════════════
 
+
 def test_results_preserve_submission_order():
     """结果顺序与提交顺序严格一致"""
     print("\n── 顺序: 保持提交顺序 ──")
@@ -367,8 +370,7 @@ def test_results_preserve_submission_order():
     results, prompts = asyncio.run(run())
     expected = [f"R:{p}" for p in prompts]
     check("10个结果", len(results) == 10)
-    check("顺序严格一致", results == expected,
-          f"got={results[:3]}... expected={expected[:3]}...")
+    check("顺序严格一致", results == expected, f"got={results[:3]}... expected={expected[:3]}...")
 
 
 def test_order_across_multiple_batches():
@@ -384,7 +386,9 @@ def test_order_across_multiple_batches():
         acc = BatchAccumulator(infer_fn=infer_fn, max_delay_ms=30, max_batch_size=2)
         # max_batch=2 → p0,p1 成批1; p2,p3 成批2 顺序取决于提交时序
         r1, r2, r3 = await asyncio.gather(
-            acc.submit("a"), acc.submit("b"), acc.submit("c"),
+            acc.submit("a"),
+            acc.submit("b"),
+            acc.submit("c"),
         )
         await acc.shutdown()
         return r1, r2, r3
@@ -398,6 +402,7 @@ def test_order_across_multiple_batches():
 # ═══════════════════════════════════════════════════════════
 # 4. 统计信息
 # ═══════════════════════════════════════════════════════════
+
 
 def test_stats_tracking():
     """统计字段正确追踪"""
@@ -452,13 +457,13 @@ def test_stats_avg_batch_size_correct():
 
     stats = asyncio.run(run())
     # avg = (2+2+1)/3 = 1.67...
-    check("avg≈1.7", 1.5 < stats["avg_batch_size"] < 2.0,
-          f"got={stats['avg_batch_size']}")
+    check("avg≈1.7", 1.5 < stats["avg_batch_size"] < 2.0, f"got={stats['avg_batch_size']}")
 
 
 # ═══════════════════════════════════════════════════════════
 # 5. 配置参数行为
 # ═══════════════════════════════════════════════════════════
+
 
 def test_long_delay_accumulates():
     """长延迟窗口积累更多请求"""
@@ -476,8 +481,7 @@ def test_long_delay_accumulates():
         return call_sizes
 
     sizes = asyncio.run(run())
-    check("所有10个合并为1批", len(sizes) == 1 and sizes[0] == 10,
-          f"sizes={sizes}")
+    check("所有10个合并为1批", len(sizes) == 1 and sizes[0] == 10, f"sizes={sizes}")
 
 
 def test_short_delay_splits_batches():
@@ -559,6 +563,7 @@ def test_max_batch_size_one():
 # 6. 异步 infer_fn
 # ═══════════════════════════════════════════════════════════
 
+
 def test_async_infer_fn():
     """支持异步 infer_fn"""
     print("\n── 异步: infer_fn ──")
@@ -603,6 +608,7 @@ def test_async_infer_fn_error():
 # 7. 并发安全性
 # ═══════════════════════════════════════════════════════════
 
+
 def test_concurrent_100_no_loss():
     """100 并发 submit 无丢失/无重复"""
     print("\n── 并发: 100个无丢失 ──")
@@ -617,9 +623,7 @@ def test_concurrent_100_no_loss():
     async def run():
         acc = BatchAccumulator(infer_fn=infer_fn, max_delay_ms=20, max_batch_size=50)
         n = 100
-        results = await asyncio.gather(
-            *[acc.submit(f"c-{i:03d}") for i in range(n)]
-        )
+        results = await asyncio.gather(*[acc.submit(f"c-{i:03d}") for i in range(n)])
         await acc.shutdown()
         return results, received
 
@@ -627,13 +631,13 @@ def test_concurrent_100_no_loss():
     check("100个结果", len(results) == 100, f"got={len(results)}")
     check("100个处理", len(received) == 100, f"got={len(received)}")
     check("无重复", len(set(received)) == 100)
-    check("无丢失",
-          set(received) == {f"c-{i:03d}" for i in range(100)})
+    check("无丢失", set(received) == {f"c-{i:03d}" for i in range(100)})
 
 
 # ═══════════════════════════════════════════════════════════
 # 8. shutdown 行为
 # ═══════════════════════════════════════════════════════════
+
 
 def test_shutdown_flushes_remaining():
     """shutdown 时缓冲区还有未处理请求 → flush 它们"""
@@ -693,6 +697,7 @@ def test_shutdown_idempotent():
 # 9. 边界情况
 # ═══════════════════════════════════════════════════════════
 
+
 def test_worker_recreates_after_done():
     """worker 完成后 submit 会重新创建"""
     print("\n── 边界: worker重建 ──")
@@ -733,15 +738,13 @@ def test_mixed_max_batch_and_delay():
 
     results, sizes = asyncio.run(run())
     check("5个结果", len(results) == 5)
-    check("至少2批", len(sizes) >= 2,
-          f"got={len(sizes)} batches, sizes={sizes}")
+    check("至少2批", len(sizes) >= 2, f"got={len(sizes)} batches, sizes={sizes}")
     # 第1批应为3
     check("批1大小=3", sizes[0] == 3, f"got={sizes[0]}")
     # 后续批次总大小为2
     leftover_sizes = sizes[1:]
     total_leftover = sum(leftover_sizes)
-    check("后续共2个请求", total_leftover == 2,
-          f"leftover sizes={leftover_sizes}")
+    check("后续共2个请求", total_leftover == 2, f"leftover sizes={leftover_sizes}")
 
 
 # ═══════════════════════════════════════════════════════════

@@ -9,24 +9,27 @@
 这些测试才会抓到真正的逻辑错误（mock 结构测试永远抓不到的那种）。
 """
 
+import sys
+from unittest.mock import Mock, patch
+
 import pytest
 import torch
-from unittest.mock import Mock, patch
-import sys
-sys.path.insert(0, '/home/dingziming/PycharmProjects/QuantumFlow')
+
+sys.path.insert(0, "/home/dingziming/PycharmProjects/QuantumFlow")
 
 
 def _token_list(tensor):
     """Helper: 将 tensor 安全转为 Python int list"""
     return tensor.flatten().tolist()
 
-from quantumflow.inference.backends.huggingface import HuggingFaceEngine, CHUNKED_PREFILL_THRESHOLD_TOKENS
-from quantumflow.inference.engine import ModelConfig, SamplingParams, InferenceResult
 
+from quantumflow.inference.backends.huggingface import HuggingFaceEngine
+from quantumflow.inference.engine import ModelConfig, SamplingParams
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Golden Test: Chunked Prefill 每一步喂给 model 的 token 序列
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestChunkedPrefillGoldenSequence:
     """
@@ -88,7 +91,14 @@ class TestChunkedPrefillGoldenSequence:
             prefill_chunk_size=2,  # chunk_size=2, 5 tokens → 3 chunks
         )
 
-        return engine, mock_model, mock_tokenizer, call_input_ids, call_past_key_values, sample_sequence
+        return (
+            engine,
+            mock_model,
+            mock_tokenizer,
+            call_input_ids,
+            call_past_key_values,
+            sample_sequence,
+        )
 
     @pytest.mark.asyncio
     async def test_prefill_chunks_fed_in_correct_order(self, setup_golden):
@@ -97,22 +107,30 @@ class TestChunkedPrefillGoldenSequence:
 
         # Mock _sample_token 返回固定序列
         sample_iter = iter(sample_sequence)
-        with patch.object(engine, '_sample_token', side_effect=lambda *args, **kwargs: torch.tensor([next(sample_iter)])):
+        with patch.object(
+            engine,
+            "_sample_token",
+            side_effect=lambda *args, **kwargs: torch.tensor([next(sample_iter)]),
+        ):
             await engine._chunked_generate_impl(
-                "golden_test", "ignored prompt text",
-                SamplingParams(max_tokens=3, temperature=1.0)
+                "golden_test", "ignored prompt text", SamplingParams(max_tokens=3, temperature=1.0)
             )
 
         # 验证 prefill 的前 3 个调用（chunk_size=2, 5 tokens）
         # Chunk 0: [101, 102]
         # Chunk 1: [103, 104]
         # Chunk 2: [105]
-        assert call_input_ids[0].flatten().tolist() == [101, 102], \
-            f"Prefill chunk 0 错误: {call_input_ids[0].flatten().tolist()}"
-        assert call_input_ids[1].flatten().tolist() == [103, 104], \
-            f"Prefill chunk 1 错误: {call_input_ids[1].flatten().tolist()}"
-        assert call_input_ids[2].flatten().tolist() == [105], \
-            f"Prefill chunk 2 错误: {call_input_ids[2].flatten().tolist()}"
+        assert call_input_ids[0].flatten().tolist() == [
+            101,
+            102,
+        ], f"Prefill chunk 0 错误: {call_input_ids[0].flatten().tolist()}"
+        assert call_input_ids[1].flatten().tolist() == [
+            103,
+            104,
+        ], f"Prefill chunk 1 错误: {call_input_ids[1].flatten().tolist()}"
+        assert call_input_ids[2].flatten().tolist() == [
+            105
+        ], f"Prefill chunk 2 错误: {call_input_ids[2].flatten().tolist()}"
 
     @pytest.mark.asyncio
     async def test_first_decode_token_is_from_sampling_not_last_prompt_token(self, setup_golden):
@@ -120,18 +138,22 @@ class TestChunkedPrefillGoldenSequence:
         engine, _, _, call_input_ids, _, sample_sequence = setup_golden
 
         sample_iter = iter(sample_sequence)
-        with patch.object(engine, '_sample_token', side_effect=lambda *args, **kwargs: torch.tensor([next(sample_iter)])):
+        with patch.object(
+            engine,
+            "_sample_token",
+            side_effect=lambda *args, **kwargs: torch.tensor([next(sample_iter)]),
+        ):
             await engine._chunked_generate_impl(
-                "golden_test", "ignored prompt text",
-                SamplingParams(max_tokens=3, temperature=1.0)
+                "golden_test", "ignored prompt text", SamplingParams(max_tokens=3, temperature=1.0)
             )
 
         # 第 4 个调用（index=3）是第一个 decode step
         # 它应该喂入第一个采样 token（201），而不是 input_ids[:, -1:]（105）
         first_decode_input = call_input_ids[3].flatten().tolist()
-        assert first_decode_input == [201], \
-            f"BUG: 第一个 decode token 错误! 期望 [201], 实际 {first_decode_input}. " \
+        assert first_decode_input == [201], (
+            f"BUG: 第一个 decode token 错误! 期望 [201], 实际 {first_decode_input}. "
             f"如果是 [105] 说明 off-by-one bug 仍存在"
+        )
 
     @pytest.mark.asyncio
     async def test_decode_sequence_matches_sampled_tokens(self, setup_golden):
@@ -139,19 +161,24 @@ class TestChunkedPrefillGoldenSequence:
         engine, _, _, call_input_ids, _, sample_sequence = setup_golden
 
         sample_iter = iter(sample_sequence)
-        with patch.object(engine, '_sample_token', side_effect=lambda *args, **kwargs: torch.tensor([next(sample_iter)])):
+        with patch.object(
+            engine,
+            "_sample_token",
+            side_effect=lambda *args, **kwargs: torch.tensor([next(sample_iter)]),
+        ):
             await engine._chunked_generate_impl(
-                "golden_test", "ignored prompt text",
-                SamplingParams(max_tokens=3, temperature=1.0)
+                "golden_test", "ignored prompt text", SamplingParams(max_tokens=3, temperature=1.0)
             )
 
         # Prefill: indices 0,1,2 (3 chunks)
         # Decode step 1: index 3 → feeds [201]
         # Decode step 2: index 4 → feeds [202]
-        assert call_input_ids[3].flatten().tolist() == [201], \
-            f"Decode step 1 应该 feed [201], 实际: {call_input_ids[3].flatten().tolist()}"
-        assert call_input_ids[4].flatten().tolist() == [202], \
-            f"Decode step 2 应该 feed [202], 实际: {call_input_ids[4].flatten().tolist()}"
+        assert call_input_ids[3].flatten().tolist() == [
+            201
+        ], f"Decode step 1 应该 feed [201], 实际: {call_input_ids[3].flatten().tolist()}"
+        assert call_input_ids[4].flatten().tolist() == [
+            202
+        ], f"Decode step 2 应该 feed [202], 实际: {call_input_ids[4].flatten().tolist()}"
 
     @pytest.mark.asyncio
     async def test_total_model_calls_equal_chunks_plus_decodes(self, setup_golden):
@@ -163,18 +190,22 @@ class TestChunkedPrefillGoldenSequence:
         engine, _, _, call_input_ids, _, sample_sequence = setup_golden
 
         sample_iter = iter(sample_sequence)
-        with patch.object(engine, '_sample_token', side_effect=lambda *args, **kwargs: torch.tensor([next(sample_iter)])):
+        with patch.object(
+            engine,
+            "_sample_token",
+            side_effect=lambda *args, **kwargs: torch.tensor([next(sample_iter)]),
+        ):
             await engine._chunked_generate_impl(
-                "golden_test", "ignored prompt text",
-                SamplingParams(max_tokens=3, temperature=1.0)
+                "golden_test", "ignored prompt text", SamplingParams(max_tokens=3, temperature=1.0)
             )
 
         # 5 tokens, chunk_size=2 → 3 prefill chunks
         # max_tokens=3 → (3-1) = 2 decode calls (第一个 token 从 prefill logits 来)
         expected_calls = 3 + 2  # 5
-        assert len(call_input_ids) == expected_calls, \
-            f"model 调用次数错误: 期望 {expected_calls}, 实际 {len(call_input_ids)}. " \
+        assert len(call_input_ids) == expected_calls, (
+            f"model 调用次数错误: 期望 {expected_calls}, 实际 {len(call_input_ids)}. "
             f"如果实际是 6 说明有 off-by-one bug（多喂了一次 input_ids[:, -1:]）"
+        )
 
     @pytest.mark.asyncio
     async def test_past_key_values_propagated_across_all_calls(self, setup_golden):
@@ -182,10 +213,13 @@ class TestChunkedPrefillGoldenSequence:
         engine, _, _, _, call_past_key_values, sample_sequence = setup_golden
 
         sample_iter = iter(sample_sequence)
-        with patch.object(engine, '_sample_token', side_effect=lambda *args, **kwargs: torch.tensor([next(sample_iter)])):
+        with patch.object(
+            engine,
+            "_sample_token",
+            side_effect=lambda *args, **kwargs: torch.tensor([next(sample_iter)]),
+        ):
             await engine._chunked_generate_impl(
-                "golden_test", "ignored prompt text",
-                SamplingParams(max_tokens=3, temperature=1.0)
+                "golden_test", "ignored prompt text", SamplingParams(max_tokens=3, temperature=1.0)
             )
 
         # 第一个 prefill chunk: past_key_values=None
@@ -193,8 +227,9 @@ class TestChunkedPrefillGoldenSequence:
 
         # 后续所有调用都应该收到非 None 的 past_key_values
         for i in range(1, len(call_past_key_values)):
-            assert call_past_key_values[i] is True, \
-                f"调用 {i} 的 past_key_values 应为非 None (从前一步传递过来)"
+            assert (
+                call_past_key_values[i] is True
+            ), f"调用 {i} 的 past_key_values 应为非 None (从前一步传递过来)"
 
     @pytest.mark.asyncio
     async def test_eos_at_first_token_stops_immediately(self, setup_golden):
@@ -202,15 +237,17 @@ class TestChunkedPrefillGoldenSequence:
         engine, mock_model, mock_tokenizer, call_input_ids, _, _ = setup_golden
 
         # 第一个采样就是 EOS
-        with patch.object(engine, '_sample_token', return_value=torch.tensor([0])):
+        with patch.object(engine, "_sample_token", return_value=torch.tensor([0])):
             text, prompt_tokens, completion_tokens, latency = await engine._chunked_generate_impl(
-                "golden_test", "ignored prompt text",
-                SamplingParams(max_tokens=100, temperature=1.0)
+                "golden_test",
+                "ignored prompt text",
+                SamplingParams(max_tokens=100, temperature=1.0),
             )
 
         # 只有 prefill 调用（3 chunks），没有 decode 调用
-        assert len(call_input_ids) == 3, \
-            f"EOS 在第一 token 时，不应有 decode 调用。实际调用次数: {len(call_input_ids)}"
+        assert (
+            len(call_input_ids) == 3
+        ), f"EOS 在第一 token 时，不应有 decode 调用。实际调用次数: {len(call_input_ids)}"
         assert completion_tokens == 0
         assert text == ""
 
@@ -218,6 +255,7 @@ class TestChunkedPrefillGoldenSequence:
 # ═══════════════════════════════════════════════════════════════════════════════
 # Behavior Test: generate 返回文本不得包含 prompt
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestGenerateOutputDoesNotContainPrompt:
     """BEHAVIOR TEST — 验证 generate 返回的文本不包含 prompt 原文"""
@@ -239,16 +277,25 @@ class TestGenerateOutputDoesNotContainPrompt:
         # 第二次调用（实际生成）：add_special_tokens=False
         # 两次都返回相同的 input_ids
         tokenized_input = torch.tensor([[10, 20, 30, 40, 50]])  # 5 prompt tokens
-        tokenized_output = torch.tensor([[10, 20, 30, 40, 50, 60, 70, 80]])  # prompt + 3 generated tokens
+        tokenized_output = torch.tensor(
+            [[10, 20, 30, 40, 50, 60, 70, 80]]
+        )  # prompt + 3 generated tokens
 
         def tokenizer_side_effect(texts, **kwargs):
             # 返回 prompt tokenization
             mock_result = Mock()
-            mock_result.__getitem__ = lambda self, key: tokenized_input[key] if key != "attention_mask" else torch.tensor([[1, 1, 1, 1, 1]])
-            mock_result.items = lambda: {"input_ids": tokenized_input, "attention_mask": torch.tensor([[1, 1, 1, 1, 1]])}.items()
+            mock_result.__getitem__ = lambda self, key: (
+                tokenized_input[key] if key != "attention_mask" else torch.tensor([[1, 1, 1, 1, 1]])
+            )
+            mock_result.items = lambda: {
+                "input_ids": tokenized_input,
+                "attention_mask": torch.tensor([[1, 1, 1, 1, 1]]),
+            }.items()
             if isinstance(texts, list):
-                mock_result = {"input_ids": tokenized_input.repeat(len(texts), 1),
-                               "attention_mask": torch.ones(len(texts), 5)}
+                mock_result = {
+                    "input_ids": tokenized_input.repeat(len(texts), 1),
+                    "attention_mask": torch.ones(len(texts), 5),
+                }
             return mock_result
 
         mock_tokenizer.side_effect = tokenizer_side_effect
@@ -257,18 +304,20 @@ class TestGenerateOutputDoesNotContainPrompt:
         def decode_side_effect(token_ids, skip_special_tokens=True):
             if isinstance(token_ids, list) and len(token_ids) > 0:
                 return GENERATED_TEXT
-            if hasattr(token_ids, 'tolist'):
-                ids_list = token_ids.tolist() if hasattr(token_ids, 'tolist') else list(token_ids)
+            if hasattr(token_ids, "tolist"):
+                ids_list = token_ids.tolist() if hasattr(token_ids, "tolist") else list(token_ids)
             else:
                 ids_list = list(token_ids) if token_ids else []
             if len(ids_list) > 0:
                 return GENERATED_TEXT
             return ""
+
         mock_tokenizer.decode = Mock(side_effect=decode_side_effect)
 
         # Mock model — generate 必须返回正确 batch_size 的结果
         mock_model = Mock()
         mock_model.device = torch.device("cpu")
+
         # model.generate 返回 prompt + generated（HuggingFace 默认行为）
         def generate_side_effect(**kwargs):
             # 如果传了 input_ids，根据 batch_size 返回对应数量的序列
@@ -276,6 +325,7 @@ class TestGenerateOutputDoesNotContainPrompt:
                 batch_size = kwargs["input_ids"].shape[0]
                 return tokenized_output.repeat(batch_size, 1)
             return tokenized_output
+
         mock_model.generate = Mock(side_effect=generate_side_effect)
 
         engine._models["test_model"] = mock_model
@@ -302,12 +352,14 @@ class TestGenerateOutputDoesNotContainPrompt:
         output_text = results[0].outputs[0]
 
         # 关键断言：输出文本不能包含 prompt
-        assert PROMPT_TEXT not in output_text, \
-            f"BUG: 输出包含了 prompt! output='{output_text}', prompt='{PROMPT_TEXT}'"
+        assert (
+            PROMPT_TEXT not in output_text
+        ), f"BUG: 输出包含了 prompt! output='{output_text}', prompt='{PROMPT_TEXT}'"
 
         # 额外验证：输出应该是纯生成文本
-        assert GENERATED_TEXT in output_text, \
-            f"输出应包含生成文本 '{GENERATED_TEXT}'，实际: '{output_text}'"
+        assert (
+            GENERATED_TEXT in output_text
+        ), f"输出应包含生成文本 '{GENERATED_TEXT}'，实际: '{output_text}'"
 
     @pytest.mark.asyncio
     async def test_batch_generate_preserves_prompt_output_separation(self, setup_generate):
@@ -324,13 +376,15 @@ class TestGenerateOutputDoesNotContainPrompt:
         assert len(results) == 3, f"批量结果数应为 3，实际: {len(results)}"
 
         for i, result in enumerate(results):
-            assert prompts[i] not in result.outputs[0], \
-                f"BUG: 结果[{i}] 包含了 prompt! output='{result.outputs[0]}', prompt='{prompts[i]}'"
+            assert (
+                prompts[i] not in result.outputs[0]
+            ), f"BUG: 结果[{i}] 包含了 prompt! output='{result.outputs[0]}', prompt='{prompts[i]}'"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Behavior Test: _sample_token 正确性
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestSampleTokenBehavior:
     """BEHAVIOR TEST — 验证 _sample_token 在所有边界条件下行为正确"""
@@ -358,13 +412,14 @@ class TestSampleTokenBehavior:
         )
 
         # 结果必须是有效的 token id，不能是 NaN
-        assert not torch.isnan(result) and not torch.isinf(result), \
-            f"BUG: 采样返回 NaN/Inf: {result}"
-        assert 0 <= result.item() < 1000, \
-            f"BUG: 返回值越界: {result.item()}"
+        assert not torch.isnan(result) and not torch.isinf(
+            result
+        ), f"BUG: 采样返回 NaN/Inf: {result}"
+        assert 0 <= result.item() < 1000, f"BUG: 返回值越界: {result.item()}"
         # 应该回落到 greedy（token 5）
-        assert result.item() == 5, \
-            f"所有 token 被过滤时应回落 greedy 选 token 5，实际: {result.item()}"
+        assert (
+            result.item() == 5
+        ), f"所有 token 被过滤时应回落 greedy 选 token 5，实际: {result.item()}"
 
     def test_nan_prevention_combined_filters(self, engine):
         """BEHAVIOR: top_k=1 只留最高 token，但 top_p 过滤掉它 → 回落 greedy"""
@@ -380,8 +435,7 @@ class TestSampleTokenBehavior:
             repetition_penalty=1.0,
         )
 
-        assert not torch.isnan(result) and not torch.isinf(result), \
-            f"BUG: 返回了 NaN/Inf"
+        assert not torch.isnan(result) and not torch.isinf(result), "BUG: 返回了 NaN/Inf"
 
     def test_repetition_penalty_uses_set_not_list(self, engine):
         """BEHAVIOR: 重复惩罚对同一 token 多次出现只惩罚一次（set 去重）"""
@@ -389,7 +443,7 @@ class TestSampleTokenBehavior:
         logits[7] = 10.0
 
         # 模拟 token 7 在 _generated_tokens 中出现 1000 次
-        engine._generated_tokens = {i: 7 for i in range(1000)}
+        engine._generated_tokens = dict.fromkeys(range(1000), 7)
 
         result = engine._sample_token(
             logits=logits.clone(),
@@ -408,6 +462,7 @@ class TestSampleTokenBehavior:
 # ═══════════════════════════════════════════════════════════════════════════════
 # Boundary Test: 边界条件
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestBoundaryConditions:
     """BOUNDARY TEST — 验证所有边界条件不会导致崩溃或错误行为"""
@@ -503,6 +558,7 @@ class TestBoundaryConditions:
         mock_model.parameters = Mock(return_value=iter([mock_param]))
 
         call_count = [0]
+
         def mock_forward(input_ids, past_key_values=None, use_cache=False):
             call_count[0] += 1
             mock_output = Mock()
@@ -510,6 +566,7 @@ class TestBoundaryConditions:
             mock_output.logits = torch.zeros(1, input_ids.shape[1], 100)
             mock_output.logits[0, -1, 5] = 100.0
             return mock_output
+
         mock_model.side_effect = mock_forward
 
         engine._models["test"] = mock_model
@@ -518,7 +575,7 @@ class TestBoundaryConditions:
             model_name="test", model_path="/test", prefill_chunk_size=512  # chunk > 1 token
         )
 
-        with patch.object(engine, '_sample_token', return_value=torch.tensor([7])):
+        with patch.object(engine, "_sample_token", return_value=torch.tensor([7])):
             text, prompt_tokens, completion_tokens, latency = await engine._chunked_generate_impl(
                 "test", "X", SamplingParams(max_tokens=2)
             )
@@ -532,6 +589,7 @@ class TestBoundaryConditions:
 # ═══════════════════════════════════════════════════════════════════════════════
 # Cardinality Test: 错误路径返回正确数量的结果
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestGenerateCardinality:
     """CARDINALITY TEST — 无论成功失败，len(results) 必须 == len(prompts)"""
@@ -549,14 +607,15 @@ class TestGenerateCardinality:
             SamplingParams(),
         )
 
-        assert len(results) == 3, \
-            f"3 个 prompts → 应返回 3 个结果，实际: {len(results)}"
+        assert len(results) == 3, f"3 个 prompts → 应返回 3 个结果，实际: {len(results)}"
 
         for i, r in enumerate(results):
-            assert r.finish_reason == "error", \
-                f"结果[{i}] 的 finish_reason 应为 'error'，实际: '{r.finish_reason}'"
-            assert r.request_id == f"nonexistent_{i}", \
-                f"结果[{i}] 的 request_id 应为 'nonexistent_{i}'，实际: '{r.request_id}'"
+            assert (
+                r.finish_reason == "error"
+            ), f"结果[{i}] 的 finish_reason 应为 'error'，实际: '{r.finish_reason}'"
+            assert (
+                r.request_id == f"nonexistent_{i}"
+            ), f"结果[{i}] 的 request_id 应为 'nonexistent_{i}'，实际: '{r.request_id}'"
 
     @pytest.mark.asyncio
     async def test_empty_prompts_list_returns_empty_results(self):
@@ -573,6 +632,7 @@ class TestGenerateCardinality:
 # ═══════════════════════════════════════════════════════════════════════════════
 # Behavior Test: generate_stream 流式行为
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestGenerateStreamBehavior:
     """BEHAVIOR TEST — 验证流式生成的行为正确性"""
@@ -601,6 +661,7 @@ class TestGenerateStreamBehavior:
         mock_model = Mock()
         mock_model.parameters = Mock(return_value=iter([mock_param]))
         call_count = [0]
+
         def mock_forward(input_ids, past_key_values=None, use_cache=False):
             call_count[0] += 1
             mock_output = Mock()
@@ -608,20 +669,31 @@ class TestGenerateStreamBehavior:
             mock_output.logits = torch.zeros(1, input_ids.shape[1], 100)
             mock_output.logits[0, -1, 5] = 100.0
             return mock_output
+
         mock_model.side_effect = mock_forward
 
         engine._models["test"] = mock_model
         engine._tokenizers["test"] = mock_tokenizer
         engine._loaded_models["test"] = ModelConfig(
-            model_name="test", model_path="/test",
-            prefill_chunk_size=512, enable_chunked_prefill=True,
+            model_name="test",
+            model_path="/test",
+            prefill_chunk_size=512,
+            enable_chunked_prefill=True,
         )
 
-        with patch.object(engine, '_sample_token', side_effect=[
-            torch.tensor([7]), torch.tensor([8]), torch.tensor([9]),
-        ]):
+        with patch.object(
+            engine,
+            "_sample_token",
+            side_effect=[
+                torch.tensor([7]),
+                torch.tensor([8]),
+                torch.tensor([9]),
+            ],
+        ):
             chunks = []
-            async for chunk in engine.generate_stream("test", "x" * 600, SamplingParams(max_tokens=3)):
+            async for chunk in engine.generate_stream(
+                "test", "x" * 600, SamplingParams(max_tokens=3)
+            ):
                 chunks.append(chunk)
 
         assert len(chunks) > 0, "Chunked prefill 流式必须 yield 内容"

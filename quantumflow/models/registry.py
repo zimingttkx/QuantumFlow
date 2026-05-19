@@ -1,8 +1,8 @@
 """模型注册表"""
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any
 from enum import Enum
+from typing import Any
 
 import structlog
 
@@ -30,9 +30,9 @@ class ModelInfo:
     recommended_tensor_parallel: int
     min_memory_gb: int
     max_memory_gb: int
-    supported_backends: List[str] = field(default_factory=list)
+    supported_backends: list[str] = field(default_factory=list)
     status: ModelStatus = ModelStatus.AVAILABLE
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class ModelRegistry:
@@ -44,7 +44,7 @@ class ModelRegistry:
     """
 
     # 内置模型列表
-    BUILTIN_MODELS: Dict[str, ModelInfo] = {
+    BUILTIN_MODELS: dict[str, ModelInfo] = {
         "Qwen2.5-7B-Instruct": ModelInfo(
             name="Qwen2.5-7B-Instruct",
             path="Qwen/Qwen2.5-7B-Instruct",
@@ -128,7 +128,7 @@ class ModelRegistry:
     }
 
     def __init__(self):
-        self._models: Dict[str, ModelInfo] = {}
+        self._models: dict[str, ModelInfo] = {}
         self._load_builtin_models()
 
     def _load_builtin_models(self):
@@ -177,7 +177,7 @@ class ModelRegistry:
             return True
         return False
 
-    def get_model(self, name: str) -> Optional[ModelInfo]:
+    def get_model(self, name: str) -> ModelInfo | None:
         """
         获取模型信息
 
@@ -191,9 +191,9 @@ class ModelRegistry:
 
     def list_models(
         self,
-        status: Optional[ModelStatus] = None,
-        backend: Optional[str] = None,
-    ) -> List[ModelInfo]:
+        status: ModelStatus | None = None,
+        backend: str | None = None,
+    ) -> list[ModelInfo]:
         """
         列出模型
 
@@ -239,12 +239,9 @@ class ModelRegistry:
         )
         return True
 
-    def get_models_by_backend(self, backend: str) -> List[ModelInfo]:
+    def get_models_by_backend(self, backend: str) -> list[ModelInfo]:
         """获取支持特定后端的所有模型"""
-        return [
-            m for m in self._models.values()
-            if backend in m.supported_backends
-        ]
+        return [m for m in self._models.values() if backend in m.supported_backends]
 
     def suggest_tensor_parallel(self, name: str) -> int:
         """获取推荐的tensor parallel大小"""
@@ -272,7 +269,7 @@ class ModelRegistry:
 
 
 # 全局注册表实例
-_registry: Optional[ModelRegistry] = None
+_registry: ModelRegistry | None = None
 
 
 def get_registry() -> ModelRegistry:

@@ -3,9 +3,10 @@
 测试 Worker HTTP 客户端的通信功能。
 """
 
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import httpx
+import pytest
 
 from quantumflow.scheduler.worker_client import (
     WorkerClient,
@@ -14,8 +15,8 @@ from quantumflow.scheduler.worker_client import (
     get_worker_registry,
 )
 
-
 # ==================== WorkerEndpoint 测试 ====================
+
 
 class TestWorkerEndpoint:
     """WorkerEndpoint 数据类测试"""
@@ -51,6 +52,7 @@ class TestWorkerEndpoint:
 
 
 # ==================== WorkerClient 测试 ====================
+
 
 class TestWorkerClient:
     """WorkerClient HTTP 客户端测试"""
@@ -247,6 +249,7 @@ class TestWorkerClient:
 
 
 # ==================== WorkerRegistry 测试 ====================
+
 
 class TestWorkerRegistry:
     """Worker 注册表测试"""

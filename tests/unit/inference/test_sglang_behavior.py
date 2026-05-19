@@ -7,20 +7,21 @@
 4. 错误定位精准：区分运行报错、逻辑错误、流程偏差
 """
 
-import pytest
 import asyncio
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import sys
-sys.path.insert(0, '/home/dingziming/PycharmProjects/QuantumFlow')
+import pytest
+
+sys.path.insert(0, "/home/dingziming/PycharmProjects/QuantumFlow")
 
 from quantumflow.inference.backends.sglang import SGLangEngine
-from quantumflow.inference.engine import ModelConfig, SamplingParams, InferenceResult
-
+from quantumflow.inference.engine import ModelConfig, SamplingParams
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Fixtures
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 @pytest.fixture
 def engine():
@@ -44,6 +45,7 @@ def model_config():
 # 辅助函数
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 def _mock_sse_response(chunks, status_code=200):
     """创建模拟 SSE 响应"""
     mock_response = MagicMock()
@@ -66,6 +68,7 @@ def _mock_sse_response(chunks, status_code=200):
 # ═══════════════════════════════════════════════════════════════════════════════
 # 测试类：初始化与生命周期
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestSGLangInitialization:
     """验证 SGLang 引擎初始化和生命周期管理"""
@@ -128,6 +131,7 @@ class TestSGLangInitialization:
 # 测试类：模型加载与卸载
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestSGLangModelLifecycle:
     """验证模型的加载/卸载状态管理"""
 
@@ -136,11 +140,13 @@ class TestSGLangModelLifecycle:
         """[正常用例] load_model 从 /v1/models 端点验证并跟踪模型"""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json = MagicMock(return_value={
-            "data": [
-                {"id": "test-sglang-model", "object": "model"},
-            ]
-        })
+        mock_response.json = MagicMock(
+            return_value={
+                "data": [
+                    {"id": "test-sglang-model", "object": "model"},
+                ]
+            }
+        )
         engine._client.get = AsyncMock(return_value=mock_response)
 
         result = await engine.load_model(model_config)
@@ -191,6 +197,7 @@ class TestSGLangModelLifecycle:
 # 测试类：generate() 业务逻辑
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestSGLangGenerateLogic:
     """验证 generate() 的业务逻辑正确性"""
 
@@ -200,10 +207,12 @@ class TestSGLangGenerateLogic:
         responses = [
             AsyncMock(
                 status_code=200,
-                json=MagicMock(return_value={
-                    "choices": [{"text": f"response_{i}", "finish_reason": "stop"}],
-                    "usage": {"prompt_tokens": 5, "completion_tokens": 3},
-                })
+                json=MagicMock(
+                    return_value={
+                        "choices": [{"text": f"response_{i}", "finish_reason": "stop"}],
+                        "usage": {"prompt_tokens": 5, "completion_tokens": 3},
+                    }
+                ),
             )
             for i in range(3)
         ]
@@ -211,8 +220,9 @@ class TestSGLangGenerateLogic:
 
         results = await engine.generate("test", ["p1", "p2", "p3"], SamplingParams())
 
-        assert engine._client.post.call_count == 3, \
-            f"3个prompt应发送3次HTTP POST，实际: {engine._client.post.call_count}"
+        assert (
+            engine._client.post.call_count == 3
+        ), f"3个prompt应发送3次HTTP POST，实际: {engine._client.post.call_count}"
         assert len(results) == 3
 
     @pytest.mark.asyncio
@@ -220,10 +230,12 @@ class TestSGLangGenerateLogic:
         """[正常用例] generate() 发送正确格式的请求体到 /v1/completions"""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json = MagicMock(return_value={
-            "choices": [{"text": "ok", "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 5, "completion_tokens": 2},
-        })
+        mock_response.json = MagicMock(
+            return_value={
+                "choices": [{"text": "ok", "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 2},
+            }
+        )
         engine._client.post = AsyncMock(return_value=mock_response)
 
         params = SamplingParams(
@@ -250,17 +262,21 @@ class TestSGLangGenerateLogic:
         """[正常用例] generate() 正确解析 /v1/completions 响应格式"""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json = MagicMock(return_value={
-            "choices": [{"text": "Hello world", "finish_reason": "length"}],
-            "usage": {"prompt_tokens": 5, "completion_tokens": 10},
-        })
+        mock_response.json = MagicMock(
+            return_value={
+                "choices": [{"text": "Hello world", "finish_reason": "length"}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 10},
+            }
+        )
         engine._client.post = AsyncMock(return_value=mock_response)
 
         results = await engine.generate("test", ["Hi"], SamplingParams())
 
         assert len(results) == 1
         result = results[0]
-        assert result.outputs[0] == "Hello world", f"outputs[0]应为'Hello world'，实际: {result.outputs[0]}"
+        assert (
+            result.outputs[0] == "Hello world"
+        ), f"outputs[0]应为'Hello world'，实际: {result.outputs[0]}"
         assert result.prompt_tokens == 5, "prompt_tokens解析错误"
         assert result.completion_tokens == 10, "completion_tokens解析错误"
         assert result.finish_reason == "length", "finish_reason应为length"
@@ -270,10 +286,12 @@ class TestSGLangGenerateLogic:
         """[错误用例] 响应choices为空时返回错误结果"""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json = MagicMock(return_value={
-            "choices": [],
-            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
-        })
+        mock_response.json = MagicMock(
+            return_value={
+                "choices": [],
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+            }
+        )
         engine._client.post = AsyncMock(return_value=mock_response)
 
         results = await engine.generate("test", ["prompt"], SamplingParams())
@@ -331,10 +349,12 @@ class TestSGLangGenerateLogic:
         responses = [
             AsyncMock(
                 status_code=200,
-                json=MagicMock(return_value={
-                    "choices": [{"text": f"resp{i}", "finish_reason": "stop"}],
-                    "usage": {"prompt_tokens": 5, "completion_tokens": 3},
-                })
+                json=MagicMock(
+                    return_value={
+                        "choices": [{"text": f"resp{i}", "finish_reason": "stop"}],
+                        "usage": {"prompt_tokens": 5, "completion_tokens": 3},
+                    }
+                ),
             )
             for i in range(3)
         ]
@@ -351,6 +371,7 @@ class TestSGLangGenerateLogic:
 # 测试类：generate_stream() 业务逻辑
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestSGLangGenerateStreamLogic:
     """验证 generate_stream() 的 SSE 解析逻辑"""
 
@@ -361,7 +382,7 @@ class TestSGLangGenerateStreamLogic:
             'data: {"choices":[{"text":"Hello","index":0,"finish_reason":null}]}\n\n',
             'data: {"choices":[{"text":" world","index":0,"finish_reason":null}]}\n\n',
             'data: {"choices":[{"text":"!","index":0,"finish_reason":"stop"}]}\n\n',
-            'data: [DONE]\n\n',
+            "data: [DONE]\n\n",
         ]
         engine._client.stream = MagicMock(return_value=_mock_sse_response(sse_chunks))
 
@@ -377,7 +398,7 @@ class TestSGLangGenerateStreamLogic:
         """[正常用例] SSE流兼容 /v1/chat/completions 的 choices[0].delta.text 字段"""
         sse_chunks = [
             'data: {"choices":[{"delta":{"text":"Hi"},"index":0}]}\n\n',
-            'data: [DONE]\n\n',
+            "data: [DONE]\n\n",
         ]
         engine._client.stream = MagicMock(return_value=_mock_sse_response(sse_chunks))
 
@@ -394,7 +415,7 @@ class TestSGLangGenerateStreamLogic:
         sse_chunks = [
             'data: {"choices":[]}\n\n',
             'data: {"choices":[{"text":"ok","index":0}]}\n\n',
-            'data: [DONE]\n\n',
+            "data: [DONE]\n\n",
         ]
         engine._client.stream = MagicMock(return_value=_mock_sse_response(sse_chunks))
 
@@ -409,9 +430,9 @@ class TestSGLangGenerateStreamLogic:
         """[错误处理] 非法JSON行被跳过，不中断流"""
         sse_chunks = [
             'data: {"choices":[{"text":"A"}]}\n\n',
-            'data: {invalid}\n\n',
+            "data: {invalid}\n\n",
             'data: {"choices":[{"text":"B"}]}\n\n',
-            'data: [DONE]\n\n',
+            "data: [DONE]\n\n",
         ]
         engine._client.stream = MagicMock(return_value=_mock_sse_response(sse_chunks))
 
@@ -426,7 +447,7 @@ class TestSGLangGenerateStreamLogic:
         """[正常用例] 收到[DONE]后停止迭代"""
         sse_chunks = [
             'data: {"choices":[{"text":"A"}]}\n\n',
-            'data: [DONE]\n\n',
+            "data: [DONE]\n\n",
             'data: {"choices":[{"text":"B"}]}\n\n',
         ]
         engine._client.stream = MagicMock(return_value=_mock_sse_response(sse_chunks))
@@ -466,7 +487,7 @@ class TestSGLangGenerateStreamLogic:
         """[正常用例] 流式请求必须设置 stream=True"""
         sse_chunks = [
             'data: {"choices":[{"text":"ok"}]}\n\n',
-            'data: [DONE]\n\n',
+            "data: [DONE]\n\n",
         ]
         engine._client.stream = MagicMock(return_value=_mock_sse_response(sse_chunks))
 
@@ -483,6 +504,7 @@ class TestSGLangGenerateStreamLogic:
 # 测试类：chat() 业务逻辑 (SGLang特有)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestSGLangChatLogic:
     """验证 chat() 方法的业务逻辑（SGLang特有接口）"""
 
@@ -491,12 +513,14 @@ class TestSGLangChatLogic:
         """[正常用例] chat() 发送正确格式到 /v1/chat/completions"""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json = MagicMock(return_value={
-            "choices": [
-                {"message": {"role": "assistant", "content": "Hello!"}, "finish_reason": "stop"}
-            ],
-            "usage": {"prompt_tokens": 10, "completion_tokens": 2},
-        })
+        mock_response.json = MagicMock(
+            return_value={
+                "choices": [
+                    {"message": {"role": "assistant", "content": "Hello!"}, "finish_reason": "stop"}
+                ],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 2},
+            }
+        )
         engine._client.post = AsyncMock(return_value=mock_response)
 
         messages = [{"role": "user", "content": "Hi"}]
@@ -516,12 +540,17 @@ class TestSGLangChatLogic:
         """[正常用例] chat() 正确解析 /v1/chat/completions 响应"""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json = MagicMock(return_value={
-            "choices": [
-                {"message": {"role": "assistant", "content": "I am helpful"}, "finish_reason": "stop"}
-            ],
-            "usage": {"prompt_tokens": 15, "completion_tokens": 5},
-        })
+        mock_response.json = MagicMock(
+            return_value={
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "I am helpful"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 15, "completion_tokens": 5},
+            }
+        )
         engine._client.post = AsyncMock(return_value=mock_response)
 
         result = await engine.chat("test", [{"role": "user", "content": "Hello"}], SamplingParams())
@@ -536,10 +565,12 @@ class TestSGLangChatLogic:
         """[正常用例] chat() 的request_id包含_chat后缀"""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json = MagicMock(return_value={
-            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 5, "completion_tokens": 1},
-        })
+        mock_response.json = MagicMock(
+            return_value={
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 1},
+            }
+        )
         engine._client.post = AsyncMock(return_value=mock_response)
 
         result = await engine.chat("test-model", [], SamplingParams())
@@ -583,6 +614,7 @@ class TestSGLangChatLogic:
 # ═══════════════════════════════════════════════════════════════════════════════
 # 测试类：get_stats() 业务逻辑
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestSGLangStats:
     """验证 get_stats() 的返回值格式"""
@@ -634,6 +666,7 @@ class TestSGLangStats:
 # 测试类：错误消息格式一致性
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestSGLangErrorMessages:
     """验证错误消息格式的一致性"""
 
@@ -644,8 +677,7 @@ class TestSGLangErrorMessages:
 
         results = await engine.generate("test", ["p1"], SamplingParams())
 
-        assert "[SGLang错误" in results[0].outputs[0] or \
-               "[SGLang超时]" in results[0].outputs[0]
+        assert "[SGLang错误" in results[0].outputs[0] or "[SGLang超时]" in results[0].outputs[0]
 
     @pytest.mark.asyncio
     async def test_error_results_have_error_finish_reason(self, engine):

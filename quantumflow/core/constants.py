@@ -7,6 +7,7 @@ VERSION = "1.0.0"
 API_VERSION = "v1"
 API_PREFIX = f"/api/{API_VERSION}"
 
+
 # 节点状态
 class NodeStatus(str, Enum):
     INITIALIZING = "initializing"
@@ -103,6 +104,7 @@ DEFAULT_CONFIG = {
 # GPU相关常量
 GPU_MEMORY_FRACTION = 0.92  # GPU显存使用比例
 GPU_UTILIZATION_THRESHOLD = 0.95  # GPU利用率阈值
+
 
 # 队列优先级
 class QueuePriority(int, Enum):

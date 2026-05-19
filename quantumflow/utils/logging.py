@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-import sys
+import json
 import logging
+import sys
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any
+
 import structlog
 from structlog.types import Processor
-import json
 
 from quantumflow.version import __version__
-
 
 # 类型别名
 BoundLogger = structlog.BoundLogger
@@ -19,9 +19,11 @@ BoundLogger = structlog.BoundLogger
 
 def _drop_key(key: str) -> Processor:
     """返回一个删除指定键的处理器"""
-    def drop_processor(logger: Any, method_name: str, event_dict: Dict[str, Any]) -> Dict[str, Any]:
+
+    def drop_processor(logger: Any, method_name: str, event_dict: dict[str, Any]) -> dict[str, Any]:
         event_dict.pop(key, None)
         return event_dict
+
     return drop_processor
 
 
@@ -32,7 +34,7 @@ class JsonRenderer:
     def __init__(
         self,
         *,
-        indent: Optional[int] = None,
+        indent: int | None = None,
         ensure_ascii: bool = False,
         include_timestamp: bool = True,
     ):
@@ -40,14 +42,10 @@ class JsonRenderer:
         self.ensure_ascii = ensure_ascii
         self.include_timestamp = include_timestamp
 
-    def __call__(self, logger: Any, method_name: str, event_dict: Dict[str, Any]) -> str:
+    def __call__(self, logger: Any, method_name: str, event_dict: dict[str, Any]) -> str:
         """渲染日志事件为JSON字符串"""
         # 移除structlog内部字段
-        filtered = {
-            k: v
-            for k, v in event_dict.items()
-            if not k.startswith("_") and v is not None
-        }
+        filtered = {k: v for k, v in event_dict.items() if not k.startswith("_") and v is not None}
 
         # 格式化时间戳
         if "timestamp" in filtered and isinstance(filtered["timestamp"], float):
@@ -82,7 +80,7 @@ class ConsoleRenderer:
         self.colors = colors and sys.stdout.isatty()
         self.compact = compact
 
-    def __call__(self, logger: Any, method_name: str, event_dict: Dict[str, Any]) -> str:
+    def __call__(self, logger: Any, method_name: str, event_dict: dict[str, Any]) -> str:
         """渲染日志事件为控制台格式"""
         # 获取颜色
         color = self.COLORS.get(method_name, self.COLORS["reset"])
@@ -103,9 +101,7 @@ class ConsoleRenderer:
             if isinstance(timestamp, float):
                 import datetime
 
-                timestamp = datetime.datetime.fromtimestamp(timestamp).strftime(
-                    "%H:%M:%S"
-                )
+                timestamp = datetime.datetime.fromtimestamp(timestamp).strftime("%H:%M:%S")
             parts.append(f"[{timestamp}]")
 
         # 级别
@@ -133,8 +129,8 @@ class ConsoleRenderer:
 def setup_logging(
     log_level: str = "INFO",
     log_format: str = "console",
-    log_file: Optional[Union[str, Path]] = None,
-    component: Optional[str] = None,
+    log_file: str | Path | None = None,
+    component: str | None = None,
     include_process_info: bool = False,
     include_thread_info: bool = False,
 ) -> None:
@@ -154,18 +150,29 @@ def setup_logging(
         structlog.stdlib.add_log_level,
         # structlog.stdlib.add_logger_name,  # 不与PrintLogger兼容
         structlog.processors.TimeStamper(fmt="iso", utc=True),
-        structlog.processors.StackInfoRenderer() if include_process_info else _drop_key("stack_info"),
-        structlog.processors.ThreadLocalVarsRenderer() if include_thread_info else _drop_key("thread"),
+        (
+            structlog.processors.StackInfoRenderer()
+            if include_process_info
+            else _drop_key("stack_info")
+        ),
         structlog.processors.UnicodeDecoder(),
     ]
 
-    # 添加组件名
+    # 添加组件名到上下文
     if component:
-        processors.append(structlog.contextvars.BoundContextVars(qf_component=component))
+        structlog.contextvars.bind_contextvars(qf_component=component)
 
     # 添加调用位置信息（仅在DEBUG模式）
     if log_level == "DEBUG":
-        processors.append(structlog.processors.CallsiteParameterRenderer([structlog.processors.CallsiteParameter.FILENAME, structlog.processors.CallsiteParameter.FUNC_NAME, structlog.processors.CallsiteParameter.LINENO]))
+        processors.append(
+            structlog.processors.CallsiteParameterAdder(
+                {
+                    structlog.processors.CallsiteParameter.FILENAME,
+                    structlog.processors.CallsiteParameter.FUNC_NAME,
+                    structlog.processors.CallsiteParameter.LINENO,
+                }
+            )
+        )
 
     # 异常处理
     processors.append(structlog.processors.ExceptionRenderer())
@@ -204,7 +211,7 @@ def setup_logging(
         logging.getLogger(logger_name).setLevel(logging.WARNING)
 
 
-def get_logger(name: Optional[str] = None, **kwargs: Any) -> BoundLogger:
+def get_logger(name: str | None = None, **kwargs: Any) -> BoundLogger:
     """获取logger实例
 
     Args:

@@ -12,12 +12,12 @@
 - torch fallback: CUDA有/CUDA无/import失败
 - 清理: __del__/nvmlShutdown
 """
+
 import asyncio
 import time
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from quantumflow.inference.gpu_monitor import GPUMonitor, GPUSnapshot
-
 
 PASS = 0
 FAIL = 0
@@ -51,13 +51,18 @@ def report():
 # 1. GPUSnapshot — 数据结构
 # ═══════════════════════════════════════════════════════════
 
+
 def test_snapshot_creation():
     """GPUSnapshot 构造与默认值"""
     print("\n── Snapshot: 构造 ──")
     s = GPUSnapshot(
-        index=0, name="GPU-0", total_vram_gb=16.0,
-        used_vram_gb=4.5, free_vram_gb=11.5,
-        utilization_pct=75.0, temperature_c=65.0,
+        index=0,
+        name="GPU-0",
+        total_vram_gb=16.0,
+        used_vram_gb=4.5,
+        free_vram_gb=11.5,
+        utilization_pct=75.0,
+        temperature_c=65.0,
         memory_util_pct=50.0,
     )
     check("index", s.index == 0)
@@ -74,9 +79,13 @@ def test_snapshot_timestamp_custom():
     """自定义时间戳"""
     print("\n── Snapshot: 自定义时间戳 ──")
     s = GPUSnapshot(
-        index=0, name="G", total_vram_gb=1.0,
-        used_vram_gb=0.5, free_vram_gb=0.5,
-        utilization_pct=0.0, temperature_c=0.0,
+        index=0,
+        name="G",
+        total_vram_gb=1.0,
+        used_vram_gb=0.5,
+        free_vram_gb=0.5,
+        utilization_pct=0.0,
+        temperature_c=0.0,
         memory_util_pct=0.0,
         timestamp=1234567890.0,
     )
@@ -87,9 +96,13 @@ def test_snapshot_to_dict():
     """to_dict 序列化 + 四舍五入"""
     print("\n── Snapshot: to_dict ──")
     s = GPUSnapshot(
-        index=0, name="Test GPU", total_vram_gb=16.0,
-        used_vram_gb=4.56, free_vram_gb=11.46,
-        utilization_pct=75.51, temperature_c=65.44,
+        index=0,
+        name="Test GPU",
+        total_vram_gb=16.0,
+        used_vram_gb=4.56,
+        free_vram_gb=11.46,
+        utilization_pct=75.51,
+        temperature_c=65.44,
         memory_util_pct=50.0,
         timestamp=1234567890.0,
     )
@@ -98,12 +111,9 @@ def test_snapshot_to_dict():
     check("index", d["index"] == 0)
     check("name", d["name"] == "Test GPU")
     check("total四舍五入到1位", d["total_vram_gb"] == 16.0)
-    check("used四舍五入4.56→4.6", d["used_vram_gb"] == 4.6,
-          f"got={d['used_vram_gb']}")
-    check("free四舍五入11.46→11.5", d["free_vram_gb"] == 11.5,
-          f"got={d['free_vram_gb']}")
-    check("util四舍五入75.51→75.5", d["utilization_pct"] == 75.5,
-          f"got={d['utilization_pct']}")
+    check("used四舍五入4.56→4.6", d["used_vram_gb"] == 4.6, f"got={d['used_vram_gb']}")
+    check("free四舍五入11.46→11.5", d["free_vram_gb"] == 11.5, f"got={d['free_vram_gb']}")
+    check("util四舍五入75.51→75.5", d["utilization_pct"] == 75.5, f"got={d['utilization_pct']}")
     check("temp四舍五入65.44→65.4", d["temperature_c"] == 65.4)
     check("timestamp", d["timestamp"] == 1234567890.0)
 
@@ -112,9 +122,13 @@ def test_snapshot_to_dict_zero_values():
     """零值序列化"""
     print("\n── Snapshot: 零值 ──")
     s = GPUSnapshot(
-        index=0, name="", total_vram_gb=0.0,
-        used_vram_gb=0.0, free_vram_gb=0.0,
-        utilization_pct=0.0, temperature_c=0.0,
+        index=0,
+        name="",
+        total_vram_gb=0.0,
+        used_vram_gb=0.0,
+        free_vram_gb=0.0,
+        utilization_pct=0.0,
+        temperature_c=0.0,
         memory_util_pct=0.0,
     )
     d = s.to_dict()
@@ -127,9 +141,13 @@ def test_snapshot_to_dict_rounding_edge():
     """四舍五入边界值"""
     print("\n── Snapshot: 舍入边界 ──")
     s = GPUSnapshot(
-        index=0, name="X", total_vram_gb=1.05,
-        used_vram_gb=1.04, free_vram_gb=0.95,
-        utilization_pct=0.95, temperature_c=0.0,
+        index=0,
+        name="X",
+        total_vram_gb=1.05,
+        used_vram_gb=1.04,
+        free_vram_gb=0.95,
+        utilization_pct=0.95,
+        temperature_c=0.0,
         memory_util_pct=0.0,
     )
     d = s.to_dict()
@@ -143,6 +161,7 @@ def test_snapshot_to_dict_rounding_edge():
 # 2. 同步采集
 # ═══════════════════════════════════════════════════════════
 
+
 def test_collect_snapshot__real_gpu():
     """同步采集 — 真实GPU或空"""
     print("\n── 同步: 真实GPU ──")
@@ -152,6 +171,7 @@ def test_collect_snapshot__real_gpu():
     check("返回list", isinstance(snapshots, list))
 
     import torch
+
     if torch.cuda.is_available():
         check("至少1个GPU", len(snapshots) >= 1)
         s = snapshots[0]
@@ -159,8 +179,11 @@ def test_collect_snapshot__real_gpu():
         check("total>0", s.total_vram_gb > 0)
         check("used>=0", s.used_vram_gb >= 0)
         check("free>=0", s.free_vram_gb >= 0)
-        check("total≈used+free", abs(s.total_vram_gb - s.used_vram_gb - s.free_vram_gb) < 1.0,
-              f"total={s.total_vram_gb}, used={s.used_vram_gb}, free={s.free_vram_gb}")
+        check(
+            "total≈used+free",
+            abs(s.total_vram_gb - s.used_vram_gb - s.free_vram_gb) < 1.0,
+            f"total={s.total_vram_gb}, used={s.used_vram_gb}, free={s.free_vram_gb}",
+        )
         check("类型正确", isinstance(s, GPUSnapshot))
     else:
         check("无CUDA返回空", len(snapshots) == 0)
@@ -179,6 +202,7 @@ def test_collect_snapshot__no_gpu_environment():
 # 3. pynvml mock 测试
 # ═══════════════════════════════════════════════════════════
 
+
 def test_read_via_pynvml__single_gpu():
     """Mock pynvml: 单GPU正常采集"""
     print("\n── pynvml: 单GPU ──")
@@ -196,7 +220,7 @@ def test_read_via_pynvml__single_gpu():
     mock_pynvml.nvmlDeviceGetTemperature.return_value = 72
     mock_pynvml.NVML_TEMPERATURE_GPU = 0
 
-    with patch.dict('sys.modules', {'pynvml': mock_pynvml}):
+    with patch.dict("sys.modules", {"pynvml": mock_pynvml}):
         monitor = GPUMonitor(interval_seconds=5.0)
         # Force pynvml available
         monitor._pynvml_available = True
@@ -226,9 +250,12 @@ def test_read_via_pynvml__multi_gpu():
         idx = mock_pynvml.nvmlDeviceGetHandleByIndex.call_args_list
         # Simple: return different names
         return {0: "GPU-0", 1: "GPU-1", 2: "GPU-2", 3: "GPU-3"}.get(
-            len(mock_pynvml.nvmlDeviceGetName.call_args_list) - 1, "GPU-X")
+            len(mock_pynvml.nvmlDeviceGetName.call_args_list) - 1, "GPU-X"
+        )
 
-    mock_pynvml.nvmlDeviceGetName.side_effect = lambda h: f"GPU-{mock_pynvml.nvmlDeviceGetName.call_count - 1}"
+    mock_pynvml.nvmlDeviceGetName.side_effect = (
+        lambda h: f"GPU-{mock_pynvml.nvmlDeviceGetName.call_count - 1}"
+    )
 
     mock_mem = MagicMock()
     mock_mem.total = 16 * (1024**3)
@@ -241,7 +268,7 @@ def test_read_via_pynvml__multi_gpu():
     mock_pynvml.nvmlDeviceGetUtilizationRates.return_value = mock_util
     mock_pynvml.nvmlDeviceGetTemperature.return_value = 60
 
-    with patch.dict('sys.modules', {'pynvml': mock_pynvml}):
+    with patch.dict("sys.modules", {"pynvml": mock_pynvml}):
         monitor = GPUMonitor(interval_seconds=5.0)
         monitor._pynvml_available = True
         monitor._gpu_count = 4
@@ -272,14 +299,13 @@ def test_read_via_pynvml__name_as_bytes():
     mock_pynvml.nvmlDeviceGetUtilizationRates.return_value = mock_util
     mock_pynvml.nvmlDeviceGetTemperature.return_value = 45
 
-    with patch.dict('sys.modules', {'pynvml': mock_pynvml}):
+    with patch.dict("sys.modules", {"pynvml": mock_pynvml}):
         monitor = GPUMonitor(interval_seconds=5.0)
         monitor._pynvml_available = True
         monitor._gpu_count = 1
         snapshots = monitor._read_via_pynvml()
 
-    check("name解码为str", snapshots[0].name == "Tesla T4",
-          f"got={snapshots[0].name!r}")
+    check("name解码为str", snapshots[0].name == "Tesla T4", f"got={snapshots[0].name!r}")
 
 
 def test_read_via_pynvml__temperature_failure():
@@ -301,15 +327,16 @@ def test_read_via_pynvml__temperature_failure():
     mock_util.gpu = 90
     mock_pynvml.nvmlDeviceGetUtilizationRates.return_value = mock_util
 
-    with patch.dict('sys.modules', {'pynvml': mock_pynvml}):
+    with patch.dict("sys.modules", {"pynvml": mock_pynvml}):
         monitor = GPUMonitor(interval_seconds=5.0)
         monitor._pynvml_available = True
         monitor._gpu_count = 1
         snapshots = monitor._read_via_pynvml()
 
     check("不崩溃返回快照", len(snapshots) == 1)
-    check("temp=0(失败fallback)", snapshots[0].temperature_c == 0,
-          f"got={snapshots[0].temperature_c}")
+    check(
+        "temp=0(失败fallback)", snapshots[0].temperature_c == 0, f"got={snapshots[0].temperature_c}"
+    )
 
 
 def test_read_via_pynvml__per_device_failure():
@@ -338,19 +365,19 @@ def test_read_via_pynvml__per_device_failure():
     mock_pynvml.nvmlDeviceGetUtilizationRates.return_value = mock_util
     mock_pynvml.nvmlDeviceGetTemperature.return_value = 50
 
-    with patch.dict('sys.modules', {'pynvml': mock_pynvml}):
+    with patch.dict("sys.modules", {"pynvml": mock_pynvml}):
         monitor = GPUMonitor(interval_seconds=5.0)
         monitor._pynvml_available = True
         monitor._gpu_count = 3
         snapshots = monitor._read_via_pynvml()
 
-    check("2个成功(1个失败跳过)", len(snapshots) == 2,
-          f"got={len(snapshots)}")
+    check("2个成功(1个失败跳过)", len(snapshots) == 2, f"got={len(snapshots)}")
 
 
 # ═══════════════════════════════════════════════════════════
 # 4. torch fallback 测试
 # ═══════════════════════════════════════════════════════════
+
 
 def test_read_via_torch__cuda_available():
     """torch CUDA 可用"""
@@ -362,6 +389,7 @@ def test_read_via_torch__cuda_available():
     snapshots = monitor._read_via_torch()
 
     import torch
+
     if torch.cuda.is_available():
         check("有快照", len(snapshots) >= 1)
         check("类型正确", isinstance(snapshots[0], GPUSnapshot))
@@ -378,7 +406,7 @@ def test_read_via_torch__cuda_unavailable():
     mock_torch = MagicMock()
     mock_torch.cuda.is_available.return_value = False
 
-    with patch.dict('sys.modules', {'torch': mock_torch}):
+    with patch.dict("sys.modules", {"torch": mock_torch}):
         monitor = GPUMonitor(interval_seconds=5.0)
         monitor._pynvml_available = False
         snapshots = monitor._read_via_torch()
@@ -390,7 +418,7 @@ def test_read_via_torch__import_failure():
     """torch import 失败 → 返回空"""
     print("\n── torch: import失败 ──")
 
-    with patch.dict('sys.modules', {'torch': None}):
+    with patch.dict("sys.modules", {"torch": None}):
         # simulate import error by making torch unavailable
         pass
 
@@ -398,14 +426,15 @@ def test_read_via_torch__import_failure():
     monitor._pynvml_available = False
     # _read_via_torch catches all exceptions
     import builtins
+
     original_import = builtins.__import__
 
     def mock_import(name, *args, **kwargs):
-        if name == 'torch':
+        if name == "torch":
             raise ImportError("No torch")
         return original_import(name, *args, **kwargs)
 
-    with patch('builtins.__import__', side_effect=mock_import):
+    with patch("builtins.__import__", side_effect=mock_import):
         snapshots = monitor._read_via_torch()
 
     check("import失败返回[]", snapshots == [])
@@ -430,6 +459,7 @@ def test_read_gpu_state__pynvml_falls_back_to_torch():
 # ═══════════════════════════════════════════════════════════
 # 5. 后台异步监控
 # ═══════════════════════════════════════════════════════════
+
 
 def test_async_monitor_collects():
     """后台监控周期性采集"""
@@ -466,6 +496,7 @@ def test_async_monitor_increments_sample_count():
 # ═══════════════════════════════════════════════════════════
 # 6. start/stop 生命周期
 # ═══════════════════════════════════════════════════════════
+
 
 def test_start_idempotent():
     """重复 start 不报错，不创建多个 task"""
@@ -537,6 +568,7 @@ def test_start_stop_cycle():
 # 7. latest 属性
 # ═══════════════════════════════════════════════════════════
 
+
 def test_latest_before_start():
     """启动前 latest 为空"""
     print("\n── latest: 启动前 ──")
@@ -559,6 +591,7 @@ def test_latest_after_collection():
     latest = asyncio.run(run())
     check("latest是list", isinstance(latest, list))
     import torch
+
     if torch.cuda.is_available():
         check("有GPU快照", len(latest) >= 1)
         check("类型正确", isinstance(latest[0], GPUSnapshot))
@@ -585,6 +618,7 @@ def test_latest_update_frequency():
 # ═══════════════════════════════════════════════════════════
 # 8. 订阅者回调
 # ═══════════════════════════════════════════════════════════
+
 
 def test_subscriber_called():
     """每次采样后触发订阅回调"""
@@ -618,6 +652,7 @@ def test_multiple_subscribers():
     def make_cb(idx):
         def cb(snapshots):
             counts[idx] += 1
+
         return cb
 
     async def run():
@@ -660,8 +695,7 @@ def test_subscriber_exception_does_not_crash_monitor():
 
     good, bad = asyncio.run(run())
     check("bad被调用", bad >= 2, f"bad={bad}")
-    check("good仍被调用(监控继续)", good >= 2,
-          f"good={good}")
+    check("good仍被调用(监控继续)", good >= 2, f"good={good}")
 
 
 def test_async_subscriber():
@@ -722,13 +756,13 @@ def test_subscribe_after_start():
 
     before, after = asyncio.run(run())
     check("later订阅者收到", after >= 1, f"after={after}")
-    check("original订阅者收到更多", before >= after,
-          f"before={before}, after={after}")
+    check("original订阅者收到更多", before >= after, f"before={before}, after={after}")
 
 
 # ═══════════════════════════════════════════════════════════
 # 9. 边界 + 清理
 # ═══════════════════════════════════════════════════════════
+
 
 def test_interval_zero():
     """interval=0 不崩溃（虽然不推荐）"""
@@ -737,7 +771,6 @@ def test_interval_zero():
     async def run():
         monitor = GPUMonitor(interval_seconds=0.0)
         # 临时禁用日志输出避免刷屏
-        import structlog
         orig_logger = monitor._monitor_loop
         await monitor.start()
         await asyncio.sleep(0.02)  # 极短时间
@@ -762,7 +795,7 @@ def test_pynvml_init_failure():
     mock_pynvml = MagicMock()
     mock_pynvml.nvmlInit.side_effect = Exception("NVML not found")
 
-    with patch.dict('sys.modules', {'pynvml': mock_pynvml}):
+    with patch.dict("sys.modules", {"pynvml": mock_pynvml}):
         monitor = GPUMonitor(interval_seconds=5.0)
         # pynvml init 失败 → _pynvml_available = False
         check("pynvml不可用", not monitor._pynvml_available)
@@ -777,7 +810,7 @@ def test_del_shutdown():
     mock_pynvml.nvmlInit.return_value = None
     mock_pynvml.nvmlDeviceGetCount.return_value = 0
 
-    with patch.dict('sys.modules', {'pynvml': mock_pynvml}):
+    with patch.dict("sys.modules", {"pynvml": mock_pynvml}):
         monitor = GPUMonitor(interval_seconds=5.0)
         # __del__ should call nvmlShutdown
         monitor.__del__()

@@ -9,16 +9,15 @@
 6. 状态转换准确性（in_use, idle, loaded, unloaded）
 """
 
-import pytest
-import time
-from unittest.mock import Mock, patch, MagicMock
-from dataclasses import dataclass
-from typing import Dict, List, Optional
-
 import sys
-sys.path.insert(0, '/home/dingziming/PycharmProjects/QuantumFlow')
+import time
+from unittest.mock import patch
 
-from quantumflow.inference.vram_manager import BlockPool, VRAMManager, Block
+import pytest
+
+sys.path.insert(0, "/home/dingziming/PycharmProjects/QuantumFlow")
+
+from quantumflow.inference.vram_manager import BlockPool, VRAMManager
 
 
 class TestBlockPoolAllocation:
@@ -275,14 +274,14 @@ class TestVRAMManagerModelTracking:
     def test_can_load_checks_safety_margin(self, vram_manager):
         """can_load 必须在 VRAM 不足时返回 False"""
         # 模拟 10GB 可用 VRAM，safety_factor=0.7
-        with patch.object(vram_manager, '_read_free_vram_gb', return_value=10.0):
+        with patch.object(vram_manager, "_read_free_vram_gb", return_value=10.0):
             # 尝试加载需要 8GB 的模型（8/10 = 0.8 > 0.7）
             can, reason, evict = vram_manager.can_load("model_1", 8.0)
             assert can is False, f"VRAM 不足应该拒绝: {reason}"
 
     def test_can_load_respects_loaded_models(self, vram_manager):
         """can_load 必须考虑已加载模型的 VRAM 占用"""
-        with patch.object(vram_manager, '_read_free_vram_gb', return_value=10.0):
+        with patch.object(vram_manager, "_read_free_vram_gb", return_value=10.0):
             # 已加载 6GB 模型
             vram_manager.record_loaded("model_1", 6.0)
 
@@ -360,7 +359,9 @@ class TestBlockPoolStatistics:
         pool.allocate(80, "req_1")
 
         status = pool.get_status()
-        assert status["utilization_pct"] == 50.0, f"利用率应为 50%，实际: {status['utilization_pct']}"
+        assert (
+            status["utilization_pct"] == 50.0
+        ), f"利用率应为 50%，实际: {status['utilization_pct']}"
 
     def test_free_blocks_count_consistency(self):
         """空闲 block 计数必须一致"""
