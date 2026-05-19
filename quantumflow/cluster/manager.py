@@ -381,10 +381,15 @@ class ClusterManager:
                 if not node:
                     break
 
+                # 节点已经不健康，停止监控
+                if node.status != NodeStatus.HEALTHY:
+                    break
+
                 # 检查是否超时
                 elapsed = (datetime.now() - node.last_heartbeat).total_seconds()
                 if elapsed > self.heartbeat_timeout:
                     await self._handle_node_timeout(node_id)
+                    # 超时处理后，节点状态变为 OFFLINE，下次循环会退出
 
             except asyncio.CancelledError:
                 break
@@ -423,5 +428,5 @@ class ClusterManager:
                     handler(*args, **kwargs)
             except Exception as e:
                 logger.error(
-                    "event_handler_error", event=event, error=str(e)
+                    "event_handler_error", event_name=event, error=str(e)
                 )
