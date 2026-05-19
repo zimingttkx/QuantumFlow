@@ -1,7 +1,7 @@
 """推理路由"""
 
 from typing import AsyncIterator
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Query
 from fastapi.responses import StreamingResponse
 import asyncio
 import time
@@ -21,6 +21,12 @@ from quantumflow.core.exceptions import (
     SchedulerError,
 )
 from quantumflow.inference import get_engine_manager, SamplingParams
+from quantumflow.storage import (
+    RedisQueue,
+    QueuedRequest,
+    QueuePriority,
+    get_redis_manager,
+)
 
 logger = structlog.get_logger().bind(component="api_inference")
 
@@ -389,3 +395,311 @@ async def chat(request: ChatRequest) -> InferenceResponse:
             priority=request.priority,
         )
     )
+
+
+# ==================== 分布式队列接口 ====================
+
+
+@router.post(
+    "/submit",
+    summary="提交推理请求到分布式队列",
+    description="将推理请求提交到Redis队列，由Worker异步执行。实现Controller和Worker的解耦。",
+)
+async def submit_to_queue(
+    request: InferenceRequest,
+    wait_for_result: bool = Query(False, description="是否等待结果"),
+    timeout_ms: int = Query(30000, description="等待结果超时时间(毫秒)"),
+) -> dict:
+    """
+    提交推理请求到分布式队列
+
+    适用于分布式部署场景：
+    - Controller (API Server) 将请求放入Redis队列
+    - Worker 从队列拉取任务执行
+    - 可以选择等待结果或异步执行
+    """
+    # 生成请求ID
+    request_id = request.request_id or _generate_request_id()
+
+    logger.info(
+        "submit_to_queue",
+        request_id=request_id,
+        model=request.model,
+        wait_for_result=wait_for_result,
+    )
+
+    try:
+        # 获取Redis队列
+        redis_mgr = await get_redis_manager()
+        if not redis_mgr.is_connected:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"error": {"code": "REDIS_UNAVAILABLE", "message": "Redis is not available"}},
+            )
+
+        redis_queue = RedisQueue()
+        await redis_queue.connect()
+
+        try:
+            # 转换采样参数
+            sampling_params = _convert_sampling_params(request)
+
+            # 创建队列请求
+            queued_request = QueuedRequest(
+                request_id=request_id,
+                model_name=request.model,
+                prompt=request.prompt,
+                priority=request.priority or QueuePriority.NORMAL.value,
+                created_at=datetime_now(),
+                metadata={
+                    "temperature": sampling_params.temperature,
+                    "top_p": sampling_params.top_p,
+                    "top_k": sampling_params.top_k,
+                    "max_tokens": sampling_params.max_tokens,
+                    "repetition_penalty": sampling_params.repetition_penalty,
+                },
+            )
+
+            # 入队
+            success = await redis_queue.enqueue(queued_request)
+            if not success:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail={"error": {"code": "ENQUEUE_FAILED", "message": "Failed to enqueue request"}},
+                )
+
+            # 如果等待结果，轮询结果
+            if wait_for_result:
+                start_time = time.time()
+                timeout_s = timeout_ms / 1000.0
+
+                while time.time() - start_time < timeout_s:
+                    result = await redis_queue.get_result(request_id)
+                    if result:
+                        return {
+                            "request_id": request_id,
+                            "status": result.get("status", "completed"),
+                            "result": result,
+                        }
+                    await asyncio.sleep(0.1)
+
+                # 超时
+                return {
+                    "request_id": request_id,
+                    "status": "timeout",
+                    "message": f"Timeout after {timeout_ms}ms",
+                }
+
+            # 异步模式：立即返回
+            return {
+                "request_id": request_id,
+                "status": "queued",
+                "message": "Request queued for processing",
+            }
+
+        finally:
+            await redis_queue.disconnect()
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("submit_to_queue_error", request_id=request_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": "SUBMIT_ERROR", "message": str(e)}},
+        )
+
+
+@router.post(
+    "/submit/batch",
+    summary="批量提交推理请求到分布式队列",
+    description="批量将多个推理请求提交到Redis队列，由Worker异步执行。",
+)
+async def batch_submit_to_queue(
+    request: BatchInferenceRequest,
+) -> dict:
+    """
+    批量提交推理请求到分布式队列
+    """
+    batch_id = f"batch_{int(time.time() * 1000)}"
+
+    logger.info(
+        "batch_submit_to_queue",
+        batch_id=batch_id,
+        model=request.model,
+        prompt_count=len(request.prompts),
+    )
+
+    try:
+        # 获取Redis队列
+        redis_mgr = await get_redis_manager()
+        if not redis_mgr.is_connected:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"error": {"code": "REDIS_UNAVAILABLE", "message": "Redis is not available"}},
+            )
+
+        redis_queue = RedisQueue()
+        await redis_queue.connect()
+
+        try:
+            # 转换采样参数
+            req_sampling = request.sampling_params
+            sampling_params = SamplingParams(
+                temperature=req_sampling.temperature if req_sampling else 0.7,
+                top_p=req_sampling.top_p if req_sampling else 0.9,
+                top_k=req_sampling.top_k if req_sampling else 50,
+                max_tokens=req_sampling.max_tokens if req_sampling else 500,
+                repetition_penalty=req_sampling.repetition_penalty if req_sampling else 1.0,
+                stop=req_sampling.stop if req_sampling else None,
+            )
+
+            # 批量入队
+            request_ids = []
+            success_count = 0
+
+            for i, prompt in enumerate(request.prompts):
+                request_id = f"{batch_id}_{i}"
+                request_ids.append(request_id)
+
+                queued_request = QueuedRequest(
+                    request_id=request_id,
+                    model_name=request.model,
+                    prompt=prompt,
+                    priority=request.sampling_params.priority if request.sampling_params else QueuePriority.NORMAL.value,
+                    created_at=datetime_now(),
+                    metadata={
+                        "temperature": sampling_params.temperature,
+                        "top_p": sampling_params.top_p,
+                        "top_k": sampling_params.top_k,
+                        "max_tokens": sampling_params.max_tokens,
+                        "repetition_penalty": sampling_params.repetition_penalty,
+                    },
+                )
+
+                if await redis_queue.enqueue(queued_request):
+                    success_count += 1
+
+            return {
+                "batch_id": batch_id,
+                "total": len(request.prompts),
+                "queued": success_count,
+                "request_ids": request_ids,
+                "status": "queued",
+            }
+
+        finally:
+            await redis_queue.disconnect()
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("batch_submit_to_queue_error", batch_id=batch_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": "BATCH_SUBMIT_ERROR", "message": str(e)}},
+        )
+
+
+@router.get(
+    "/result/{request_id}",
+    summary="获取分布式队列请求结果",
+    description="获取已提交到队列的推理请求的结果",
+)
+async def get_queue_result(request_id: str) -> dict:
+    """
+    获取请求结果
+    """
+    try:
+        redis_mgr = await get_redis_manager()
+        if not redis_mgr.is_connected:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"error": {"code": "REDIS_UNAVAILABLE", "message": "Redis is not available"}},
+            )
+
+        redis_queue = RedisQueue()
+        await redis_queue.connect()
+
+        try:
+            result = await redis_queue.get_result(request_id)
+            if result is None:
+                # 检查请求是否还在队列中
+                request = await redis_queue.get_request(request_id)
+                if request:
+                    return {
+                        "request_id": request_id,
+                        "status": "pending",
+                        "message": "Request is still being processed",
+                    }
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail={"error": {"code": "RESULT_NOT_FOUND", "message": f"Result not found for {request_id}"}},
+                    )
+
+            return {
+                "request_id": request_id,
+                "status": result.get("status", "completed"),
+                "result": result,
+            }
+
+        finally:
+            await redis_queue.disconnect()
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("get_queue_result_error", request_id=request_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": "GET_RESULT_ERROR", "message": str(e)}},
+        )
+
+
+@router.get(
+    "/queue/stats",
+    summary="获取队列统计信息",
+    description="获取Redis队列的统计信息",
+)
+async def get_queue_stats() -> dict:
+    """
+    获取队列统计
+    """
+    try:
+        redis_mgr = await get_redis_manager()
+        if not redis_mgr.is_connected:
+            return {
+                "connected": False,
+                "queue_size": 0,
+                "message": "Redis is not available",
+            }
+
+        redis_queue = RedisQueue()
+        await redis_queue.connect()
+
+        try:
+            stats = await redis_queue.get_queue_stats()
+            metrics = await redis_queue.get_metrics()
+
+            return {
+                "connected": True,
+                "queue_stats": stats,
+                "metrics": metrics,
+            }
+
+        finally:
+            await redis_queue.disconnect()
+
+    except Exception as e:
+        logger.error("get_queue_stats_error", error=str(e))
+        return {
+            "connected": False,
+            "error": str(e),
+        }
+
+
+def datetime_now():
+    """获取当前时间"""
+    from datetime import datetime
+    return datetime.now()

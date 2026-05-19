@@ -208,7 +208,8 @@ async def test_error_handling():
     print("\n[1] 未加载模型 generate...")
     sp = SamplingParams(max_tokens=10)
     results = await engine.generate("nonexistent", ["Hello"], sp)
-    check("未加载模型返回空列表", results == [])
+    # 模型未加载时应返回包含错误信息的 InferenceResult 列表，不是空列表
+    check("未加载模型返回错误结果", len(results) == 1 and "模型未加载" in results[0].outputs[0])
 
     # 未加载模型时 generate_stream
     print("\n[2] 未加载模型 generate_stream...")

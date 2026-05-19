@@ -11,8 +11,6 @@ from typing import Dict, List, Optional, Any, AsyncIterator
 import redis.asyncio as redis
 import structlog
 
-from quantumflow.scheduler.strategy.base import SchedulingRequest, SchedulingResult
-
 logger = structlog.get_logger().bind(component="redis_queue")
 
 

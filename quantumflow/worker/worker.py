@@ -3,20 +3,58 @@
 import asyncio
 import platform
 import socket
-import psutil
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional, Any
-import uuid
 
+import psutil
 import structlog
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
 from quantumflow.core.constants import NodeStatus
 from quantumflow.inference.engine import InferenceEngine, ModelConfig, SamplingParams
 from quantumflow.monitoring import metrics
 
 logger = structlog.get_logger().bind(component="worker")
+
+
+# ==================== API Models ====================
+
+
+class LoadModelRequest(BaseModel):
+    """加载模型请求"""
+    model_name: str
+    model_path: Optional[str] = None
+    backend: str = "huggingface"
+    tensor_parallel: int = 1
+    gpu_memory_utilization: float = 0.8
+    enable_chunked_prefill: bool = False
+    prefill_chunk_size: int = 512
+
+
+class UnloadModelRequest(BaseModel):
+    """卸载模型请求"""
+    model_name: str
+
+
+class InferenceRequest(BaseModel):
+    """推理请求"""
+    request_id: str
+    model_name: str
+    prompts: List[str]
+    sampling_params: Optional[Dict[str, Any]] = None
+
+
+class InferenceResponse(BaseModel):
+    """推理响应"""
+    request_id: str
+    status: str
+    results: Optional[List[Dict[str, Any]]] = None
+    error: Optional[str] = None
+    latency_ms: float
 
 
 @dataclass
@@ -66,9 +104,16 @@ class WorkerNode:
         # 运行状态
         self._running = False
         self._heartbeat_task: Optional[asyncio.Task] = None
+        self._api_server_task: Optional[asyncio.Task] = None
 
         # 控制器地址
         self.controller_url: Optional[str] = None
+
+        # FastAPI app
+        self._app: Optional[FastAPI] = None
+
+        # 关闭事件，用于优雅停止 API 服务器
+        self._shutdown_event: Optional[asyncio.Event] = None
 
         logger.info(
             "worker_created",
@@ -133,6 +178,147 @@ class WorkerNode:
 
         self._running = False
         self.status = NodeStatus.OFFLINE
+
+        # 停止心跳
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
+
+        # 关闭引擎
+        if self.engine:
+            for model_name in self.engine.loaded_model_names:
+                await self.engine.unload_model(model_name)
+
+        logger.info("worker_stopped", node_id=self.config.node_id)
+
+    def create_app(self) -> FastAPI:
+        """创建 FastAPI 应用，用于接收 Controller 的指令"""
+        # 如果已存在 app，直接返回（缓存）
+        if self._app is not None:
+            return self._app
+
+        from quantumflow.worker.api_routes import create_worker_router
+
+        app = FastAPI(
+            title=f"QuantumFlow Worker - {self.config.node_id}",
+            version="1.0.0",
+        )
+
+        # 注册路由
+        router = create_worker_router(self)
+        app.include_router(router, prefix="/api/v1/worker", tags=["worker"])
+
+        # 健康检查端点
+        @app.get("/health")
+        async def health_check():
+            return {"status": "healthy", "node_id": self.config.node_id}
+
+        self._app = app
+        return app
+
+    async def start_api_server(self):
+        """启动 API 服务器"""
+        import uvicorn
+
+        if self._app is None:
+            self.create_app()
+
+        config = uvicorn.Config(
+            self._app,
+            host=self.config.host,
+            port=self.config.port,
+            log_level="info",
+        )
+        server = uvicorn.Server(config)
+
+        # 创建关闭事件
+        self._shutdown_event = asyncio.Event()
+
+        # 在线程中运行服务器（因为 uvicorn.run() 是同步的）
+        loop = asyncio.get_event_loop()
+        server_task = loop.run_in_executor(None, server.run)
+
+        # 等待关闭事件或服务器任务完成
+        try:
+            await self._shutdown_event.wait()
+        except asyncio.CancelledError:
+            pass
+
+        # 通知服务器关闭
+        server.should_exit = True
+
+        # 等待服务器真正停止（带超时）
+        try:
+            await asyncio.wait_for(server_task, timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning("api_server_shutdown_timeout", node_id=self.config.node_id)
+        except asyncio.CancelledError:
+            server.should_exit = True
+            await asyncio.wait_for(server_task, timeout=5.0)
+        except Exception as e:
+            logger.warning("api_server_shutdown_error", error=str(e))
+
+        self._shutdown_event = None
+
+    async def start(self, controller_url: Optional[str] = None):
+        """启动Worker"""
+        if self._running:
+            return
+
+        self.controller_url = controller_url
+        self._running = True
+
+        # 初始化引擎
+        if self.engine and not self.engine.is_ready:
+            await self.engine.initialize()
+
+        # 收集GPU信息
+        self._gpu_info = await self._collect_gpu_info()
+
+        # 更新状态
+        self.status = NodeStatus.HEALTHY
+
+        # 创建 API 服务器
+        self.create_app()
+
+        # 启动 API 服务器和心跳（并行）
+        self._api_server_task = asyncio.create_task(self.start_api_server())
+
+        # 启动心跳
+        if controller_url:
+            self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+
+        logger.info("worker_started", node_id=self.config.node_id)
+
+    async def stop(self):
+        """停止Worker"""
+        if not self._running:
+            return
+
+        self._running = False
+        self.status = NodeStatus.OFFLINE
+
+        # 停止 API 服务器
+        if self._api_server_task and self._shutdown_event:
+            self._shutdown_event.set()
+            try:
+                await asyncio.wait_for(self._api_server_task, timeout=10.0)
+            except asyncio.TimeoutError:
+                logger.warning("api_server_stop_timeout", node_id=self.config.node_id)
+                self._api_server_task.cancel()
+                try:
+                    await self._api_server_task
+                except asyncio.CancelledError:
+                    pass
+            except asyncio.CancelledError:
+                self._api_server_task.cancel()
+                try:
+                    await self._api_server_task
+                except asyncio.CancelledError:
+                    pass
 
         # 停止心跳
         if self._heartbeat_task:

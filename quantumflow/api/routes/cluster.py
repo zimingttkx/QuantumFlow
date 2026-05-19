@@ -15,6 +15,8 @@ from quantumflow.api.models import (
     ClusterStatus,
     GPUInfo,
 )
+from quantumflow.cluster import get_cluster_manager
+from quantumflow.core.constants import NodeStatus as NodeStatusEnum
 
 logger = structlog.get_logger().bind(component="api_cluster")
 
@@ -106,6 +108,41 @@ def _build_local_node() -> NodeInfo:
     )
 
 
+def _node_to_node_info(node) -> NodeInfo:
+    """将 ClusterManager Node 转换为 API NodeInfo"""
+    return NodeInfo(
+        node_id=node.node_id,
+        hostname=node.hostname,
+        ip=node.ip,
+        port=node.port,
+        status=node.status.value,
+        gpu_count=node.gpu_count,
+        gpu_info=[
+            GPUInfo(
+                gpu_id=gpu.gpu_id,
+                name=gpu.name,
+                memory_total=gpu.memory_total,
+                memory_used=gpu.memory_used,
+                memory_free=gpu.memory_total - gpu.memory_used,
+                utilization=gpu.utilization,
+                temperature=gpu.temperature,
+            )
+            for gpu in node.gpu_info
+        ] if node.gpu_info else [],
+        cpu_count=node.cpu_count,
+        memory_total=node.memory_total,
+        memory_available=node.memory_available,
+        disk_total=node.disk_total,
+        disk_available=node.disk_available,
+        current_load=node.current_load,
+        labels=node.labels,
+        version=node.version,
+        uptime_seconds=int((datetime.now() - datetime.fromtimestamp(0)).total_seconds()),
+        last_heartbeat=node.last_heartbeat,
+        loaded_models=node.loaded_models,
+    )
+
+
 @router.get(
     "/status",
     response_model=ClusterStatus,
@@ -114,31 +151,31 @@ def _build_local_node() -> NodeInfo:
 )
 async def get_cluster_status() -> ClusterStatus:
     """获取集群状态"""
-    node = _build_local_node()
-    nodes = [node]
+    cluster_mgr = get_cluster_manager()
+    nodes = await cluster_mgr.get_nodes()
 
-    total_gpus = node.gpu_count
-    available_gpus = node.gpu_count
+    total_gpus = sum(n.gpu_count for n in nodes)
+    available_gpus = sum(len(n.available_gpus) for n in nodes)
 
-    healthy = 1 if node.status == "healthy" else 0
-    unhealthy = 1 if node.status == "unhealthy" else 0
+    healthy = sum(1 for n in nodes if n.status == NodeStatusEnum.HEALTHY)
+    unhealthy = sum(1 for n in nodes if n.status == NodeStatusEnum.UNHEALTHY)
 
     return ClusterStatus(
-        total_nodes=1,
+        total_nodes=len(nodes),
         healthy_nodes=healthy,
         unhealthy_nodes=unhealthy,
         draining_nodes=0,
         total_gpus=total_gpus,
         available_gpus=available_gpus,
-        active_models=len(node.loaded_models),
+        active_models=len(set(m for n in nodes for m in n.loaded_models)),
         pending_jobs=0,
         running_jobs=0,
         system_metrics={
-            "cpu_usage": node.current_load,
-            "memory_usage": 1.0 - (node.memory_available / node.memory_total) if node.memory_total else 0,
-            "gpu_usage": sum(g.utilization for g in (node.gpu_info or [])) / len(node.gpu_info) if node.gpu_info else 0,
+            "cpu_usage": psutil.cpu_percent(interval=0.1) / 100.0,
+            "memory_usage": 1.0 - (psutil.virtual_memory().available / psutil.virtual_memory().total) if psutil.virtual_memory().total else 0,
+            "gpu_usage": 0.0,
         },
-        uptime_seconds=node.uptime_seconds,
+        uptime_seconds=int(time.time() - psutil.boot_time()),
     )
 
 
@@ -153,16 +190,20 @@ async def list_nodes(
     zone: Optional[str] = Query(None, description="可用区过滤"),
 ) -> List[NodeInfo]:
     """列出所有节点"""
-    node = _build_local_node()
-    nodes = [node]
+    cluster_mgr = get_cluster_manager()
 
+    # 获取节点
     if status_filter:
-        nodes = [n for n in nodes if n.status == status_filter]
+        status_enum = NodeStatusEnum(status_filter)
+        nodes = await cluster_mgr.get_nodes(status=status_enum)
+    else:
+        nodes = await cluster_mgr.get_nodes()
 
+    # 标签过滤
     if zone:
         nodes = [n for n in nodes if n.labels.get("zone") == zone]
 
-    return nodes
+    return [_node_to_node_info(n) for n in nodes]
 
 
 @router.get(
@@ -173,22 +214,66 @@ async def list_nodes(
 )
 async def get_node(node_id: str) -> NodeInfo:
     """获取节点信息"""
-    node = _build_local_node()
-    if node_id == node.node_id:
-        return node
+    cluster_mgr = get_cluster_manager()
+    node = await cluster_mgr.get_node(node_id)
 
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail={
-            "error": {
-                "code": "NODE_NOT_FOUND",
-                "message": f"Node not found: {node_id}",
-            }
-        },
-    )
+    if not node:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": {
+                    "code": "NODE_NOT_FOUND",
+                    "message": f"Node not found: {node_id}",
+                }
+            },
+        )
+
+    return _node_to_node_info(node)
 
 
-_local_node_status = "healthy"
+@router.post(
+    "/heartbeat",
+    summary="接收Worker心跳",
+    description="Worker节点定期发送心跳以表明其存活状态",
+)
+async def receive_heartbeat(node_info: dict) -> dict:
+    """
+    接收Worker心跳并更新节点状态
+
+    Worker在启动时会发送注册请求，之后定期发送心跳更新状态
+    """
+    cluster_mgr = get_cluster_manager()
+
+    node_id = node_info.get("node_id")
+    if not node_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": "INVALID_REQUEST", "message": "node_id is required"}},
+        )
+
+    # 检查节点是否已注册
+    existing_node = await cluster_mgr.get_node(node_id)
+
+    if existing_node:
+        # 更新节点信息
+        await cluster_mgr.update_node_info(
+            node_id=node_id,
+            gpu_info=node_info.get("gpu_info", []),
+            load=node_info.get("current_load"),
+        )
+        # 更新已加载模型
+        loaded_models = node_info.get("loaded_models", [])
+        for model in loaded_models:
+            if model not in existing_node.loaded_models:
+                await cluster_mgr.add_loaded_model(node_id, model)
+
+        logger.debug("heartbeat_received", node_id=node_id)
+    else:
+        # 注册新节点
+        await cluster_mgr.register_node(node_info)
+        logger.info("node_registered_via_heartbeat", node_id=node_id)
+
+    return {"status": "ok", "node_id": node_id}
 
 
 @router.post(
@@ -198,9 +283,10 @@ _local_node_status = "healthy"
 )
 async def node_action(node_id: str, action: str) -> dict:
     """节点操作"""
-    global _local_node_status
-    node = _build_local_node()
-    if node_id != node.node_id:
+    cluster_mgr = get_cluster_manager()
+    node = await cluster_mgr.get_node(node_id)
+
+    if not node:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
@@ -214,9 +300,9 @@ async def node_action(node_id: str, action: str) -> dict:
     logger.info("node_action", node_id=node_id, action=action)
 
     if action == "drain":
-        _local_node_status = "draining"
+        await cluster_mgr.update_node_status(node_id, NodeStatusEnum.DRAINING)
     elif action == "uncordon":
-        _local_node_status = "healthy"
+        await cluster_mgr.update_node_status(node_id, NodeStatusEnum.HEALTHY)
     elif action == "restart":
         pass
     else:
@@ -234,4 +320,34 @@ async def node_action(node_id: str, action: str) -> dict:
         "node_id": node_id,
         "action": action,
         "status": "completed",
+    }
+
+
+@router.delete(
+    "/nodes/{node_id}",
+    summary="注销节点",
+    description="从集群中移除节点",
+)
+async def unregister_node(node_id: str) -> dict:
+    """注销节点"""
+    cluster_mgr = get_cluster_manager()
+    node = await cluster_mgr.get_node(node_id)
+
+    if not node:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": {
+                    "code": "NODE_NOT_FOUND",
+                    "message": f"Node not found: {node_id}",
+                }
+            },
+        )
+
+    await cluster_mgr.unregister_node(node_id)
+    logger.info("node_unregistered_via_api", node_id=node_id)
+
+    return {
+        "node_id": node_id,
+        "status": "unregistered",
     }

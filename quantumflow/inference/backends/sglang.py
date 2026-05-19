@@ -276,7 +276,7 @@ class SGLangEngine(InferenceEngine):
 
                 async for line in response.aiter_lines():
                     if line.startswith("data: "):
-                        data = line[6:]
+                        data = line[6:].strip()
                         if data == "[DONE]":
                             break
 

@@ -345,45 +345,407 @@ def models(url):
     asyncio.run(do_list())
 
 
-@cli.command()
+@cli.group()
+def queue():
+    """分布式队列管理命令"""
+    pass
+
+
+@queue.command("stats")
 @click.option("--url", default="http://localhost:8000", help="API服务器地址")
-def nodes(url):
-    """列出计算节点"""
-    async def do_list():
-        async with httpx.AsyncClient() as client:
+def queue_stats(url):
+    """查看分布式队列统计信息"""
+    async def do_stats():
+        async with httpx.AsyncClient(timeout=10.0) as client:
             try:
-                response = await client.get(f"{url}/api/v1/cluster/nodes")
+                response = await client.get(f"{url}/api/v1/inference/queue/stats")
                 if response.status_code == 200:
                     data = response.json()
 
+                    console.print(f"[bold blue]分布式队列状态[/bold blue]")
+                    console.print()
+
+                    connected = data.get("connected", False)
+                    if not connected:
+                        console.print("[red]✗ 未连接到 Redis[/red]")
+                        console.print(f"  错误: {data.get('error', 'Unknown')}")
+                        return
+
+                    queue_stats = data.get("queue_stats", {})
+                    metrics = data.get("metrics", {})
+
+                    table = Table(show_header=True, header_style="bold magenta")
+                    table.add_column("指标", style="cyan")
+                    table.add_column("值", style="green")
+
+                    table.add_row("队列大小", str(queue_stats.get("size", 0)))
+                    table.add_row("等待请求数", str(queue_stats.get("pending", 0)))
+                    table.add_row("处理中请求数", str(queue_stats.get("processing", 0)))
+                    table.add_row("已完成请求数", str(queue_stats.get("completed", 0)))
+                    table.add_row("失败请求数", str(queue_stats.get("failed", 0)))
+
+                    console.print(table)
+                    console.print()
+
+                    # 显示性能指标
+                    perf_table = Table(show_header=True, header_style="bold magenta")
+                    perf_table.add_column("指标", style="cyan")
+                    perf_table.add_column("值", style="yellow")
+
+                    perf_table.add_row("入队速率", f"{metrics.get('enqueue_rate', 0):.2f}/s")
+                    perf_table.add_row("出队速率", f"{metrics.get('dequeue_rate', 0):.2f}/s")
+                    perf_table.add_row("平均等待时间", f"{metrics.get('avg_wait_time_ms', 0):.0f}ms")
+                    perf_table.add_row("成功率", f"{metrics.get('success_rate', 0):.1%}")
+
+                    console.print(perf_table)
+                else:
+                    console.print(f"[red]✗ 获取队列状态失败: {response.text}[/red]")
+            except Exception as e:
+                console.print(f"[red]✗ 连接失败: {e}[/red]")
+
+    asyncio.run(do_stats())
+
+
+@queue.command("submit")
+@click.argument("model")
+@click.option("--prompt", "-p", required=True, help="输入提示")
+@click.option("--max-tokens", "-t", default=100, help="最大生成token数")
+@click.option("--temperature", default=0.7, help="温度参数")
+@click.option("--priority", default=5, type=int, help="优先级 (1-10, 越高越优先)")
+@click.option("--url", default="http://localhost:8000", help="API服务器地址")
+@click.option("--wait", "-w", is_flag=True, help="等待结果")
+@click.option("--timeout", default=30000, help="等待超时(毫秒)")
+def queue_submit(model, prompt, max_tokens, temperature, priority, url, wait, timeout):
+    """提交推理请求到分布式队列"""
+    async def do_submit():
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            try:
+                console.print(f"[cyan]正在提交请求到队列...[/cyan]")
+                console.print(f"  模型: {model}")
+                console.print(f"  提示: {prompt[:50]}...")
+
+                response = await client.post(
+                    f"{url}/api/v1/inference/submit",
+                    json={
+                        "model": model,
+                        "prompt": prompt,
+                        "sampling_params": {
+                            "max_tokens": max_tokens,
+                            "temperature": temperature,
+                        },
+                        "priority": priority,
+                    },
+                    params={"wait_for_result": wait, "timeout_ms": timeout},
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    if wait:
+                        result = data.get("result", {})
+                        console.print()
+                        console.print("[bold green]生成结果:[/bold green]")
+                        console.print(result.get("result", {}).get("generated_text", ""))
+                        console.print()
+                        console.print(f"[dim]状态: {data.get('status')}[/dim]")
+                    else:
+                        console.print()
+                        console.print(f"[green]✓ 请求已提交: {data.get('request_id')}[/green]")
+                        console.print(f"[dim]状态: {data.get('status')}[/dim]")
+                        console.print(f"[dim]使用 'qf queue result {data.get('request_id')}' 查询结果[/dim]")
+                else:
+                    console.print(f"[red]✗ 提交失败: {response.text}[/red]")
+            except Exception as e:
+                console.print(f"[red]✗ 连接失败: {e}[/red]")
+
+    asyncio.run(do_submit())
+
+
+@queue.command("result")
+@click.argument("request_id")
+@click.option("--url", default="http://localhost:8000", help="API服务器地址")
+def queue_result(request_id, url):
+    """查询分布式队列请求结果"""
+    async def do_result():
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            try:
+                response = await client.get(f"{url}/api/v1/inference/result/{request_id}")
+                if response.status_code == 200:
+                    data = response.json()
+                    status = data.get("status")
+
+                    console.print(f"[bold]请求ID:[/bold] {request_id}")
+                    console.print(f"[bold]状态:[/bold] {status}")
+
+                    if status == "success":
+                        result = data.get("result", {})
+                        console.print()
+                        console.print("[bold green]结果:[/bold green]")
+                        console.print(result.get("result", {}).get("generated_text", ""))
+                    elif status == "pending":
+                        console.print("[yellow]请求正在处理中...[/yellow]")
+                    elif status == "error":
+                        console.print(f"[red]错误: {data.get('result', {}).get('reason', 'Unknown')}[/red]")
+                    elif status == "timeout":
+                        console.print("[yellow]等待结果超时[/yellow]")
+                elif response.status_code == 404:
+                    console.print(f"[red]✗ 请求不存在: {request_id}[/red]")
+                else:
+                    console.print(f"[red]✗ 查询失败: {response.text}[/red]")
+            except Exception as e:
+                console.print(f"[red]✗ 连接失败: {e}[/red]")
+
+    asyncio.run(do_result())
+
+
+@cli.group()
+def worker():
+    """Worker节点管理命令"""
+    pass
+
+
+@worker.command("register")
+@click.argument("node_id")
+@click.option("--host", default="localhost", help="Worker主机地址")
+@click.option("--port", default=8080, type=int, help="Worker端口")
+@click.option("--url", default="http://localhost:8000", help="Controller URL")
+def worker_register(node_id, host, port, url):
+    """注册Worker节点到Controller"""
+    async def do_register():
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            try:
+                console.print(f"[cyan]正在注册 Worker {node_id}...[/cyan]")
+                console.print(f"  地址: {host}:{port}")
+
+                response = await client.post(
+                    f"{url}/api/v1/cluster/heartbeat",
+                    json={
+                        "node_id": node_id,
+                        "hostname": host,
+                        "ip": host,
+                        "port": port,
+                        "status": "healthy",
+                    },
+                )
+
+                if response.status_code == 200:
+                    console.print(f"[green]✓ Worker {node_id} 注册成功[/green]")
+                else:
+                    console.print(f"[red]✗ 注册失败: {response.text}[/red]")
+            except Exception as e:
+                console.print(f"[red]✗ 连接失败: {e}[/red]")
+
+    asyncio.run(do_register())
+
+
+@worker.command("unregister")
+@click.argument("node_id")
+@click.option("--url", default="http://localhost:8000", help="Controller URL")
+def worker_unregister(node_id, url):
+    """从Controller注销Worker节点"""
+    async def do_unregister():
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            try:
+                console.print(f"[cyan]正在注销 Worker {node_id}...[/cyan]")
+
+                response = await client.delete(f"{url}/api/v1/cluster/nodes/{node_id}")
+
+                if response.status_code == 200:
+                    console.print(f"[green]✓ Worker {node_id} 注销成功[/green]")
+                elif response.status_code == 404:
+                    console.print(f"[yellow]Worker {node_id} 不存在[/yellow]")
+                else:
+                    console.print(f"[red]✗ 注销失败: {response.text}[/red]")
+            except Exception as e:
+                console.print(f"[red]✗ 连接失败: {e}[/red]")
+
+    asyncio.run(do_unregister())
+
+
+@worker.command("start")
+@click.option("--node-id", default="local-worker", help="节点ID")
+@click.option("--host", default="0.0.0.0", help="监听地址")
+@click.option("--port", default=8080, type=int, help="监听端口")
+@click.option("--backend", default="huggingface", type=click.Choice(["huggingface", "vllm"]), help="推理后端")
+@click.option("--controller-url", default="http://localhost:8000", help="Controller URL")
+def worker_start(node_id, host, port, backend, controller_url):
+    """启动Worker节点（连接到Controller接收任务）"""
+    from quantumflow.worker import WorkerNode, WorkerConfig
+    from quantumflow.inference.backends import HuggingFaceEngine, VLLMEngine
+
+    console.print(f"[bold green]启动QuantumFlow Worker节点[/bold green]")
+    console.print(f"  节点ID: {node_id}")
+    console.print(f"  地址: {host}:{port}")
+    console.print(f"  后端: {backend}")
+    console.print(f"  Controller: {controller_url}")
+
+    # 创建推理引擎
+    if backend == "vllm":
+        engine = VLLMEngine()
+    else:
+        engine = HuggingFaceEngine()
+
+    # 创建Worker配置
+    config = WorkerConfig(
+        node_id=node_id,
+        host=host,
+        port=port,
+    )
+
+    # 创建Worker
+    worker = WorkerNode(config=config, engine=engine)
+
+    async def run():
+        await worker.start(controller_url=controller_url)
+        console.print(f"[green]Worker已启动，按Ctrl+C停止[/green]")
+
+        try:
+            while True:
+                await asyncio.sleep(1)
+        except KeyboardInterrupt:
+            console.print("[yellow]正在停止Worker...[/yellow]")
+            await worker.stop()
+
+    asyncio.run(run())
+
+
+@cli.command()
+@click.option("--url", default="http://localhost:8000", help="API服务器地址")
+def workers(url):
+    """列出已注册的Worker节点"""
+    async def do_list():
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            try:
+                response = await client.get(f"{url}/api/v1/cluster/nodes")
+                if response.status_code == 200:
+                    nodes = response.json()
+
+                    if not nodes:
+                        console.print("[yellow]没有已注册的节点[/yellow]")
+                        return
+
                     table = Table(show_header=True, header_style="bold magenta")
                     table.add_column("节点ID", style="cyan")
-                    table.add_column("主机名", style="yellow")
+                    table.add_column("主机", style="yellow")
+                    table.add_column("端口", style="magenta")
                     table.add_column("状态", style="green")
-                    table.add_column("GPU数", style="magenta")
+                    table.add_column("GPU数", style="blue")
+                    table.add_column("已加载模型", style="dim")
 
-                    for node in data:
+                    for node in nodes:
                         status_color = {
                             "healthy": "[green]healthy[/green]",
                             "unhealthy": "[red]unhealthy[/red]",
                             "offline": "[dim]offline[/dim]",
+                            "draining": "[yellow]draining[/yellow]",
                         }.get(node.get("status", ""), "[yellow]unknown[/yellow]")
+
+                        models = ", ".join(node.get("loaded_models", [])) or "无"
+                        if len(models) > 30:
+                            models = models[:30] + "..."
 
                         table.add_row(
                             node.get("node_id", ""),
                             node.get("hostname", ""),
+                            str(node.get("port", "")),
                             status_color,
                             str(node.get("gpu_count", 0)),
+                            models,
                         )
 
                     console.print(table)
                 else:
                     console.print(f"[red]✗ 获取节点列表失败[/red]")
-
             except Exception as e:
                 console.print(f"[red]✗ 连接失败: {e}[/red]")
 
     asyncio.run(do_list())
+
+
+@cli.command()
+@click.option("--url", default="http://localhost:8000", help="API服务器地址")
+@click.option("--watch", "-w", is_flag=True, help="持续监控")
+@click.option("--interval", default=5, help="刷新间隔（秒）")
+def monitor(url, watch, interval):
+    """监控集群和GPU状态"""
+    async def do_monitor():
+        while True:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                try:
+                    # 获取集群状态
+                    cluster_resp = await client.get(f"{url}/api/v1/cluster/status")
+                    scheduler_resp = await client.get(f"{url}/api/v1/scheduler/status")
+
+                    if cluster_resp.status_code == 200:
+                        cluster = cluster_resp.json()
+                        scheduler = scheduler_resp.json() if scheduler_resp.status_code == 200 else {}
+
+                        console.clear()
+                        console.print(f"[bold blue]QuantumFlow 集群监控[/bold blue]")
+                        console.print(f"  时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+                        console.print()
+
+                        # 集群概览
+                        cluster_table = Table(show_header=True, header_style="bold magenta")
+                        cluster_table.add_column("指标", style="cyan")
+                        cluster_table.add_column("值", style="green")
+
+                        cluster_table.add_row("总节点数", str(cluster.get("total_nodes", 0)))
+                        cluster_table.add_row("健康节点", str(cluster.get("healthy_nodes", 0)))
+                        cluster_table.add_row("总GPU数", str(cluster.get("total_gpus", 0)))
+                        cluster_table.add_row("可用GPU", str(cluster.get("available_gpus", 0)))
+                        cluster_table.add_row("已加载模型", str(cluster.get("active_models", 0)))
+
+                        console.print(cluster_table)
+                        console.print()
+
+                        # GPU状态
+                        gpu_table = Table(show_header=True, header_style="bold cyan")
+                        gpu_table.add_column("GPU", style="cyan")
+                        gpu_table.add_column("利用率", style="green")
+                        gpu_table.add_column("显存使用", style="yellow")
+                        gpu_table.add_column("温度", style="magenta")
+
+                        gpu_status = scheduler.get("gpu", {})
+                        if gpu_status:
+                            for gpu in gpu_status if isinstance(gpu_status, list) else []:
+                                util = gpu.get("utilization", 0)
+                                mem_used = gpu.get("memory_used_gb", 0)
+                                mem_total = gpu.get("memory_total_gb", 0)
+                                temp = gpu.get("temperature", 0)
+
+                                util_str = f"{util*100:.0f}%" if util else "N/A"
+                                mem_str = f"{mem_used:.1f}/{mem_total:.1f} GB" if mem_total else "N/A"
+                                temp_str = f"{temp:.0f}°C" if temp else "N/A"
+
+                                gpu_table.add_row(
+                                    gpu.get("name", f"GPU {gpu.get('gpu_id', 0)}"),
+                                    util_str,
+                                    mem_str,
+                                    temp_str,
+                                )
+
+                        if gpu_status:
+                            console.print(gpu_table)
+                            console.print()
+
+                        # VRAM状态
+                        vram = scheduler.get("vram", {})
+                        if vram:
+                            console.print(f"[bold]VRAM 可用:[/bold] {vram.get('available_vram_gb', 0):.1f} GB")
+                            console.print(f"[bold]已加载模型:[/bold] {vram.get('loaded_count', 0)}")
+
+                        if not watch:
+                            break
+
+                        await asyncio.sleep(interval)
+
+                except Exception as e:
+                    console.print(f"[red]✗ 连接失败: {e}[/red]")
+                    if not watch:
+                        break
+                    await asyncio.sleep(interval)
+
+    asyncio.run(do_monitor())
 
 
 @cli.command()
