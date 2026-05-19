@@ -14,21 +14,34 @@
 | **SGLang 后端** | SGLang 后端适配 | 📋 规划中 |
 | **TensorRT-LLM 后端** | NVIDIA TensorRT-LLM 推理引擎 | 📋 规划中 |
 
-### 2. 分布式部署
+### 2. 分布式部署 ✅ 已完成
 
 | 功能 | 描述 | 优先级 |
 |------|------|--------|
-| **Worker 节点** | 支持多节点横向扩展 | 📋 规划中 |
-| **Controller-Worker 通信** | Controller 与 Worker 之间的高效通信 | 📋 规划中 |
-| **Redis 队列** | 分布式任务队列（替代当前单机队列） | 📋 规划中 |
+| **Worker 节点** | 支持多节点横向扩展 | ✅ 已完成 |
+| **Controller-Worker 通信** | Controller 与 Worker 之间的高效通信（HTTP） | ✅ 已完成 |
+| **Redis 队列** | 分布式任务队列（替代单机队列） | ✅ 已完成 |
 
-### 3. 高级调度策略
+**已完成组件**:
+- `quantumflow/storage/redis_queue.py` - Redis优先级队列（ZSET实现）
+- `quantumflow/storage/connection.py` - Redis连接管理器（单例）
+- `quantumflow/scheduler/worker_client.py` - Worker HTTP客户端
+- `quantumflow/scheduler/distributed.py` - 分布式调度器
+- `quantumflow/worker/task_fetcher.py` - Worker任务抓取器
+- `quantumflow/api/routes/inference.py` - 分布式队列API端点
+
+**核心流程**:
+```
+Controller (API) → Redis Queue → Worker (TaskFetcher) → HTTP → Worker API
+```
+
+### 3. 高级调度策略 ✅ 已完成
 
 | 功能 | 描述 | 优先级 |
 |------|------|--------|
-| **Gang Scheduler** | All-or-Nothing 调度，适合 100B+ 大模型分布式推理 | 📋 规划中 |
-| **Adaptive Scheduler** | AI 驱动的自适应调度策略 | 📋 规划中 |
-| **Priority Queue** | 带优先级的任务队列 | 📋 规划中 |
+| **Gang Scheduler** | All-or-Nothing 调度，适合 100B+ 大模型分布式推理 | ✅ 已完成 |
+| **Adaptive Scheduler** | AI 驱动的自适应调度策略 | ✅ 已完成 |
+| **Priority Queue** | 带优先级的任务队列 | ✅ 已完成（Redis ZSET实现） |
 
 ### 4. 企业级特性
 
@@ -56,11 +69,11 @@
 
 **收益**：显存占用减少 2-4x，长序列速度提升 1.5-3x
 
-### 7. 调度可视化完善
+### 7. 调度可视化完善 ✅ 调度器已接入
 
 | 功能 | 描述 | 优先级 |
 |------|------|--------|
-| **Scheduler 集成** | 将 Scheduler 真正接入推理请求路径（目前 Scheduler 仅作为状态展示） | 📋 规划中 |
+| **Scheduler 集成** | ✅ 已完成 - Scheduler通过DistributedScheduler接入推理请求路径 | ✅ 已完成 |
 | **实时 Block 追踪** | 每个请求的 Block 分配/释放实时可视化 | 📋 规划中 |
 | **Eviction 事件记录** | 模型淘汰历史记录 | 📋 规划中 |
 
@@ -72,13 +85,14 @@
 | **动态 batch_size** | 根据 GPU 显存动态调整 max_batch_size | 📋 规划中 |
 | **优先级感知** | 高优先级请求优先插入 batch | 📋 规划中 |
 
-### 9. 测试覆盖
+### 9. 测试覆盖 ✅ 分布式测试已完成
 
 | 功能 | 描述 | 优先级 |
 |------|------|--------|
-| **vLLM 后端测试** | vLLM backend 集成测试 | 📋 规划中 |
-| **并发压力测试** | 高并发下的稳定性和性能测试 | 📋 规划中 |
-| **Eviction 单元测试** | 模型淘汰逻辑测试 | 📋 规划中 |
+| **vLLM 后端测试** | vLLM backend 集成测试 | ✅ 已完成 |
+| **并发压力测试** | 高并发下的稳定性和性能测试 | ✅ 已完成 |
+| **Eviction 单元测试** | 模型淘汰逻辑测试 | ✅ 已完成 |
+| **分布式综合测试** | Redis队列 + WorkerClient + DistributedScheduler 全流程测试 (59 tests) | ✅ 已完成 |
 
 ---
 
