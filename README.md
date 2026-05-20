@@ -26,7 +26,7 @@
 |:---:|:---:|:---:|:---:|
 | **智能调度** | Gang/Pack/自适应多策略 | 自动选择最优执行路径 | ✅ 代码完成 |
 | **分布式部署** | Redis队列 + Worker节点 | Controller与Worker完全解耦 | ✅ 代码完成 |
-| **多后端支持** | vLLM / HF / TGI / SGLang | 统一接口，灵活切换 | ✅ vLLM + HF 可用 |
+| **多后端支持** | vLLM / HF / TGI / SGLang | 统一接口，灵活切换 | ✅ vLLM + HF + TGI + SGLang 可用 |
 | **GPU 优化** | BatchAccumulator / Chunked Prefill / Block VRAM | 单卡利用率 99%，显存精细管理 | ✅ 代码完成 |
 | **国产硬件** | 昇腾NPU深度适配 | 打破 NVIDIA 垄断 | 📋 规划中 |
 | **企业级** | 多租户 / 限流 / 容灾 | 开箱即用的生产特性 | 📋 规划中 |
@@ -295,9 +295,9 @@ QuantumFlow 通过 NVIDIA NVML API 采集两个独立的 GPU 指标：
 
 - ✅ **HuggingFace Transformers** — 已验证可用（含动态批处理、torch.compile）
 - ✅ **vLLM** — v0.21.0 已适配，PagedAttention + Continuous Batching 可用
-- ⚠️ **Chunked Prefill** — 已禁用（实现有 bug，需重新参考 vLLM 分块逻辑修复后启用）
-- 📋 **TGI** — 规划中
-- 📋 **SGLang** — 规划中
+- ✅ **TGI** — Text Generation Inference，FlashAttention + Continuous Batching
+- ✅ **SGLang** — RadixAttention + Chunked Prefill + 结构化输出
+- ⚠️ **Chunked Prefill** — HuggingFace 后端已实现，其他后端规划中
 - 📋 **TensorRT-LLM** — 规划中
 
 ---
@@ -390,6 +390,99 @@ cluster:
   heartbeat_interval_seconds: 5
   heartbeat_timeout_seconds: 60
 ```
+
+---
+
+## 🔧 多后端配置
+
+### TGI (Text Generation Inference)
+
+TGI 是 HuggingFace 官方的高性能推理服务器，支持 FlashAttention、连续批处理和 PagedAttention。
+
+```yaml
+# configs/tgi.yaml
+inference:
+  default_backend: "tgi"
+  backends:
+    tgi:
+      backend_type: "text-generation-inference"
+      base_url: "http://localhost:8080"
+      timeout: 300
+```
+
+```bash
+# 启动 TGI 服务器
+docker run -d --gpus all -p 8080:80 \
+  -v /data/models:/data/models \
+  ghcr.io/huggingface/text-generation-inference:latest \
+  --model-id Qwen/Qwen2.5-7B-Instruct \
+  --trust-remote-code
+
+# 在 QuantumFlow 中加载 TGI 模型
+curl -X POST http://localhost:8000/api/v1/models/load \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "Qwen2.5-7B",
+    "backend": "tgi",
+    "tgi_base_url": "http://localhost:8080"
+  }'
+```
+
+### SGLang
+
+SGLang 是基于 RadixAttention 的高性能推理框架，支持 KV Cache 跨请求复用、结构化输出和思维链。
+
+```yaml
+# configs/sglang.yaml
+inference:
+  default_backend: "sglang"
+  backends:
+    sglang:
+      backend_type: "sglang"
+      base_url: "http://localhost:30000"
+      timeout: 300
+      # SGLang 特有参数
+      max_running_blocks: 128
+      mem_fraction_usable: 0.88
+```
+
+```bash
+# 安装并启动 SGLang
+pip install sglang
+
+python -m sglang.launch_server \
+  --model-path Qwen/Qwen2.5-7B-Instruct \
+  --port 30000
+
+# 在 QuantumFlow 中加载 SGLang 模型
+curl -X POST http://localhost:8000/api/v1/models/load \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "Qwen2.5-7B",
+    "backend": "sglang",
+    "sglang_base_url": "http://localhost:30000",
+    "sglang_timeout": 300
+  }'
+```
+
+### 后端对比
+
+| 特性 | vLLM | HuggingFace | TGI | SGLang |
+|------|------|-------------|-----|--------|
+| PagedAttention | ✅ | - | ✅ | ✅ |
+| Continuous Batching | ✅ | - | ✅ | ✅ |
+| RadixAttention | - | - | - | ✅ |
+| Chunked Prefill | ✅ | ✅ | ✅ | ✅ |
+| torch.compile | - | ✅ | - | - |
+| 结构化输出 | - | - | ✅ | ✅ |
+| KV Cache 复用 | - | - | - | ✅ |
+
+### 选择建议
+
+- **小模型 / 快速实验**: HuggingFace + torch.compile
+- **生产级推理 / 高吞吐**: vLLM
+- **HuggingFace 生态 / 快速部署**: TGI
+- **长序列 / 结构化输出 / 复杂推理**: SGLang
 
 ---
 

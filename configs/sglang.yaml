@@ -1,0 +1,96 @@
+# SGLang 配置文件
+
+## SGLang 后端配置
+
+```yaml
+# 推理配置
+inference:
+  default_backend: "sglang"
+  backends:
+    sglang:
+      backend_type: "sglang"
+      base_url: "http://localhost:30000"
+      timeout: 300
+      # SGLang 特定参数
+      max_running_blocks: 128
+      max_total_tokens: 8192
+      mem_fraction_usable: 0.88
+  defaults:
+    temperature: 0.7
+    top_p: 0.9
+    top_k: 50
+    max_tokens: 2048
+    repetition_penalty: 1.0
+    presence_penalty: 0.0
+    frequency_penalty: 0.0
+```
+
+## SGLang 服务器启动示例
+
+```bash
+# 使用 pip 安装 SGLang
+pip install sglang
+
+# 启动 SGLang 服务器
+python -m sglang.launch_server \
+  --model-path Qwen/Qwen2.5-7B-Instruct \
+  --port 30000 \
+  --max-running-blocks 128 \
+  --max-total-tokens 8192 \
+  --mem-fraction-usable 0.88
+
+# 或使用 Docker
+docker run -d \
+  --gpus all \
+  -p 30000:30000 \
+  -v /data/models:/data/models \
+  ghcr.io/sglang-project/sglang:latest \
+  --model-path Qwen/Qwen2.5-7B-Instruct \
+  --port 30000
+```
+
+## SGLang 特性
+
+- RadixAttention (跨请求的 KV Cache 复用)
+- Chunked Prefill (长序列优化)
+- FlashInfer 算子加速
+- 支持困笼 (Caged) 注意力
+- 结构化输出 (JSON Mode)
+- 思维链 (Chain-of-Thought) 支持
+
+## API 端点
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/health` | GET | 健康检查 |
+| `/v1/models` | GET | 模型列表 |
+| `/v1/completions` | POST | 文本补全 |
+| `/v1/chat/completions` | POST | Chat 对话 |
+
+## SGLang 特有参数
+
+| 参数 | 描述 | 默认值 |
+|------|------|--------|
+| `presence_penalty` | 存在惩罚 | 0.0 |
+| `frequency_penalty` | 频率惩罚 | 0.0 |
+| `length_penalty` | 长度惩罚 | 1.0 |
+| `early_stopping` | 早停 | false |
+
+## 与 TGI 对比
+
+| 特性 | SGLang | TGI |
+|------|--------|-----|
+| KV Cache 复用 | RadixAttention | Continuous Batching |
+| 长序列优化 | Chunked Prefill | 动态注意力 |
+| 量化支持 | AWQ, GPTQ | AWQ, GPTQ, BitsAndBytes |
+| 结构化输出 | 原生支持 | 需额外配置 |
+| 社区活跃度 | 快速增长 | 稳定 |
+
+## 环境变量
+
+| 变量名 | 描述 | 默认值 |
+|--------|------|--------|
+| `SGLANG_PORT` | 服务端口 | 30000 |
+| `SGLANG_MAX_RUNNING_BLOCKS` | 最大运行 blocks | 128 |
+| `SGLANG_MAX_TOTAL_TOKENS` | 最大总 tokens | 8192 |
+| `SGLANG_MEM_FRACTION_USABLE` | 可用显存比例 | 0.88 |

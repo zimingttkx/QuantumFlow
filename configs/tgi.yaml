@@ -1,0 +1,69 @@
+# TGI (Text Generation Inference) 配置文件
+
+## TGI 后端配置
+
+```yaml
+# 推理配置
+inference:
+  default_backend: "tgi"
+  backends:
+    tgi:
+      backend_type: "text-generation-inference"
+      base_url: "http://localhost:8080"
+      timeout: 300
+      # TGI 特定参数
+      max_batch_prefill_tokens: 8192
+      max_input_length: 4096
+      max_total_tokens: 8192
+      enable_telemetry: true
+  defaults:
+    temperature: 0.7
+    top_p: 0.9
+    top_k: 50
+    max_tokens: 2048
+    repetition_penalty: 1.0
+```
+
+## TGI 服务器启动示例
+
+```bash
+# 使用 Docker 启动 TGI 服务器
+docker run -d \
+  --gpus all \
+  -p 8080:80 \
+  -v /data/models:/data/models \
+  ghcr.io/huggingface/text-generation-inference:latest \
+  --model-id Qwen/Qwen2.5-7B-Instruct \
+  --max-input-length 4096 \
+  --max-total-tokens 8192 \
+  --trust-remote-code
+
+# 或使用 HuggingFace Launcher
+huggingface-cli serve Qwen/Qwen2.5-7B-Instruct --port 8080
+```
+
+## TGI 特性
+
+- FlashAttention 自动启用
+- 连续批处理 (Continuous Batching)
+- PagedAttention
+- 支持 FlashChat 和 RoPE 缩放
+- 支持 AWQ/GPTQ 量化
+
+## API 端点
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/health` | GET | 健康检查 |
+| `/info` | GET | 服务器信息 |
+| `/generate` | POST | 单请求生成 |
+| `/generate_batch` | POST | 批量生成 |
+| `/generate_stream` | POST | 流式生成 |
+
+## 环境变量
+
+| 变量名 | 描述 | 默认值 |
+|--------|------|--------|
+| `TGI_MAX_BATCH_PREFILL_TOKENS` | 最大批预填充 tokens | 8192 |
+| `TGI_MAX_INPUT_LENGTH` | 最大输入长度 | 4096 |
+| `TGI_MAX_TOTAL_TOKENS` | 最大总 tokens | 8192 |
