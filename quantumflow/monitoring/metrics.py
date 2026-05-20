@@ -76,9 +76,11 @@ SYSTEM_INFO = Info(
 )
 
 # 初始化系统信息
+from quantumflow.version import __version__
+
 SYSTEM_INFO.info(
     {
-        "version": "1.0.0",
+        "version": __version__,
         "name": "QuantumFlow",
     }
 )

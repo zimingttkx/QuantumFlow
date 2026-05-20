@@ -22,9 +22,9 @@ class GPUSnapshot:
     total_vram_gb: float
     used_vram_gb: float
     free_vram_gb: float
-    utilization_pct: float  # GPU计算利用率（执行单元活跃度）
-    memory_util_pct: float  # GPU显存带宽利用率（memory控制器活跃度）
-    temperature_c: float
+    utilization_pct: float | None  # GPU计算利用率（执行单元活跃度），None 表示不可用
+    memory_util_pct: float | None  # GPU显存带宽利用率（memory控制器活跃度），None 表示不可用
+    temperature_c: float | None  # GPU温度，None 表示不可用
     timestamp: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict:
@@ -34,9 +34,9 @@ class GPUSnapshot:
             "total_vram_gb": round(self.total_vram_gb, 1),
             "used_vram_gb": round(self.used_vram_gb, 1),
             "free_vram_gb": round(self.free_vram_gb, 1),
-            "utilization_pct": round(self.utilization_pct, 1),
-            "memory_util_pct": round(self.memory_util_pct, 1),
-            "temperature_c": round(self.temperature_c, 1),
+            "utilization_pct": round(self.utilization_pct, 1) if self.utilization_pct is not None else None,
+            "memory_util_pct": round(self.memory_util_pct, 1) if self.memory_util_pct is not None else None,
+            "temperature_c": round(self.temperature_c, 1) if self.temperature_c is not None else None,
             "timestamp": self.timestamp,
         }
 
@@ -203,9 +203,11 @@ class GPUMonitor:
                         total_vram_gb=total,
                         used_vram_gb=allocated,
                         free_vram_gb=total - allocated,
-                        utilization_pct=0.0,  # torch不提供单独的计算/memory利用率分离指标
-                        memory_util_pct=0.0,
-                        temperature_c=0.0,
+                        # torch 不提供单独的计算/memory 利用率指标，返回 None 表示不可用
+                        utilization_pct=None,
+                        memory_util_pct=None,
+                        # torch 不提供 GPU 温度，返回 None 表示不可用
+                        temperature_c=None,
                     )
                 )
             return snapshots

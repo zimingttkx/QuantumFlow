@@ -14,50 +14,46 @@ from quantumflow.api.models import (
     UndeployRequest,
     UndeployResponse,
 )
+from quantumflow.inference import get_engine_manager
+from quantumflow.models.registry import ModelRegistry, ModelStatus as RegistryModelStatus
+from quantumflow.core.constants import InferenceBackendType
 
 logger = structlog.get_logger().bind(component="api_models")
 
 router = APIRouter(prefix="/models", tags=["Models"])
 
-# 模拟模型注册表
-_mock_models = {}
+# 后端字符串到枚举的映射
+BACKEND_STRING_TO_ENUM: dict[str, InferenceBackendType] = {
+    "vllm": InferenceBackendType.VLLM,
+    "huggingface": InferenceBackendType.HUGGINGFACE,
+    "text-generation-inference": InferenceBackendType.TGI,
+    "tgi": InferenceBackendType.TGI,
+    "sglang": InferenceBackendType.SGLANG,
+}
+
+# 模型注册表
+_registry = ModelRegistry()
 
 
-def _init_mock_models():
-    """初始化模拟模型数据"""
-    global _mock_models
+def _model_info_from_registry(name: str, registry_info: "ModelInfo") -> ModelInfo:
+    """将 ModelRegistry 的 ModelInfo 转换为 API 的 ModelInfo"""
+    # 判断模型是否已加载
+    engine_manager = get_engine_manager()
+    is_loaded = engine_manager.is_model_loaded(name)
 
-    _mock_models = {
-        "Qwen2.5-7B-Instruct": ModelInfo(
-            model_id="qwen2.5-7b",
-            name="Qwen2.5-7B-Instruct",
-            architecture="Qwen2ForCausalLM",
-            parameter_count=7_000_000_000,
-            dtype="bfloat16",
-            status="ready",
-            replicas=2,
-            tensor_parallel=1,
-            max_model_length=8192,
-            backend="vllm",
-            loaded_on_nodes=["node-1", "node-2"],
-        ),
-        "Qwen2.5-72B-Instruct": ModelInfo(
-            model_id="qwen2.5-72b",
-            name="Qwen2.5-72B-Instruct",
-            architecture="Qwen2ForCausalLM",
-            parameter_count=72_000_000_000,
-            dtype="bfloat16",
-            status="ready",
-            replicas=1,
-            tensor_parallel=4,
-            max_model_length=8192,
-            backend="vllm",
-            loaded_on_nodes=["node-3"],
-        ),
-    }
-
-
-_init_mock_models()
+    return ModelInfo(
+        model_id=name.lower().replace("/", "-"),
+        name=name,
+        architecture=registry_info.metadata.get("architecture", "Unknown"),
+        parameter_count=registry_info.parameter_count,
+        dtype="bfloat16",
+        status="ready" if is_loaded else "available",
+        replicas=1,
+        tensor_parallel=registry_info.recommended_tensor_parallel,
+        max_model_length=8192,
+        backend=registry_info.backend,
+        loaded_on_nodes=[],
+    )
 
 
 @router.get(
@@ -71,13 +67,19 @@ async def list_models(
     backend: str | None = Query(None, description="后端过滤"),
 ) -> list[ModelInfo]:
     """列出所有可用模型"""
-    models = list(_mock_models.values())
+    # 从模型注册表获取所有可用模型
+    all_models = _registry.list_models()
 
-    if status_filter:
-        models = [m for m in models if m.status == status_filter]
+    models = []
+    for model_info in all_models:
+        api_model = _model_info_from_registry(model_info.name, model_info)
 
-    if backend:
-        models = [m for m in models if m.backend == backend]
+        if backend and api_model.backend != backend:
+            continue
+        if status_filter and api_model.status != status_filter:
+            continue
+
+        models.append(api_model)
 
     return models
 
@@ -90,7 +92,9 @@ async def list_models(
 )
 async def get_model(model_name: str) -> ModelInfo:
     """获取模型信息"""
-    if model_name not in _mock_models:
+    registry_info = _registry.get_model(model_name)
+
+    if registry_info is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
@@ -101,7 +105,7 @@ async def get_model(model_name: str) -> ModelInfo:
             },
         )
 
-    return _mock_models[model_name]
+    return _model_info_from_registry(model_name, registry_info)
 
 
 @router.post(
@@ -123,27 +127,39 @@ async def deploy_model(request: DeployRequest) -> DeployResponse:
         replicas=request.replicas,
     )
 
-    # TODO: 调用模型管理器进行部署
-    # 模拟部署过程
-    _mock_models[request.model] = ModelInfo(
-        model_id=model_id,
-        name=request.model,
-        architecture="Unknown",
-        parameter_count=0,
-        dtype=request.dtype,
-        status="loading",
-        replicas=request.replicas,
-        tensor_parallel=request.tensor_parallel,
-        max_model_length=request.max_model_length or 8192,
-        backend=request.backend,
+    # 解析后端
+    backend = BACKEND_STRING_TO_ENUM.get(request.backend, InferenceBackendType.HUGGINGFACE)
+
+    # 调用 EngineManager 部署模型
+    engine_manager = get_engine_manager()
+    success, message = await engine_manager.load_model(
+        model_name=request.model,
+        model_path=request.model,
+        backend=backend,
+        tensor_parallel=request.tensor_parallel or 1,
+        gpu_memory_utilization=0.8,
+        max_model_len=request.max_model_length or 8192,
+        dtype=request.dtype or "auto",
+        quantization=None,
     )
 
-    return DeployResponse(
-        model_id=model_id,
-        status="loading",
-        replicas=request.replicas,
-        message=f"Model {request.model} deployment started",
-    )
+    if success:
+        return DeployResponse(
+            model_id=model_id,
+            status="loading",
+            replicas=request.replicas,
+            message=f"Model {request.model} deployment started: {message}",
+        )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error": {
+                    "code": "DEPLOY_FAILED",
+                    "message": f"Model {request.model} deployment failed: {message}",
+                }
+            },
+        )
 
 
 @router.post(
@@ -154,7 +170,19 @@ async def deploy_model(request: DeployRequest) -> DeployResponse:
 )
 async def undeploy_model(request: UndeployRequest) -> UndeployResponse:
     """卸载模型"""
-    if request.model not in _mock_models:
+    logger.info("undeploy_model_request", model=request.model, force=request.force)
+
+    # 调用 EngineManager 卸载模型
+    engine_manager = get_engine_manager()
+    success = await engine_manager.unload_model(request.model)
+
+    if success:
+        return UndeployResponse(
+            model_id=request.model,
+            status="unloaded",
+            message=f"Model {request.model} unloaded successfully",
+        )
+    else:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
@@ -164,17 +192,6 @@ async def undeploy_model(request: UndeployRequest) -> UndeployResponse:
                 }
             },
         )
-
-    logger.info("undeploy_model_request", model=request.model, force=request.force)
-
-    # TODO: 调用模型管理器进行卸载
-    del _mock_models[request.model]
-
-    return UndeployResponse(
-        model_id=request.model,
-        status="unloaded",
-        message=f"Model {request.model} unloaded successfully",
-    )
 
 
 @router.post(
@@ -195,7 +212,24 @@ async def run_benchmark(request: BenchmarkRequest) -> BenchmarkResponse:
         test_set=request.test_set,
     )
 
-    # TODO: 启动实际的基准测试
+    # 验证模型是否已加载
+    engine_manager = get_engine_manager()
+    loaded_models = engine_manager.get_loaded_models()
+    if request.model not in loaded_models:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": {
+                    "code": "MODEL_NOT_LOADED",
+                    "message": f"Model {request.model} is not loaded. Please load it first.",
+                }
+            },
+        )
+
+    # 启动基准测试后台任务
+    import asyncio
+    asyncio.create_task(_run_benchmark_task(benchmark_id, request.model, request.test_set, request.num_samples))
+
     return BenchmarkResponse(
         benchmark_id=benchmark_id,
         model=request.model,
@@ -204,3 +238,77 @@ async def run_benchmark(request: BenchmarkRequest) -> BenchmarkResponse:
         total_samples=request.num_samples,
         completed_samples=0,
     )
+
+
+async def _run_benchmark_task(benchmark_id: str, model: str, test_set: str, num_samples: int):
+    """后台执行基准测试任务"""
+    import time
+
+    from quantumflow.inference.engine import InferenceResult, SamplingParams
+
+    engine_manager = get_engine_manager()
+
+    # 根据 test_set 选择默认提示词
+    default_prompts = [
+        "The quick brown fox jumps over the lazy dog.",
+        "Machine learning is a subset of artificial intelligence that enables systems to learn from data.",
+        "In a distant galaxy, the stars twinkled brightly against the dark canvas of space.",
+        "The art of programming lies in the ability to express complex ideas in simple terms.",
+        "Climate change poses significant challenges to global ecosystems and human societies.",
+    ]
+
+    # 生成测试提示词（循环使用直到达到 num_samples）
+    prompts = (default_prompts * ((num_samples // len(default_prompts)) + 1))[:num_samples]
+
+    # 默认采样参数
+    sampling_params = SamplingParams(
+        temperature=0.7,
+        top_p=0.9,
+        top_k=50,
+        max_tokens=256,
+        repetition_penalty=1.0,
+    )
+
+    # 执行基准测试
+    total_tokens = 0
+    total_latency_ms = 0.0
+    successful_samples = 0
+    start_time = time.time()
+
+    try:
+        results: list[InferenceResult] = await engine_manager.generate(
+            model_name=model,
+            prompts=prompts,
+            sampling_params=sampling_params,
+        )
+
+        # 计算统计信息
+        for result in results:
+            total_latency_ms += result.latency_ms
+            total_tokens += result.prompt_tokens + result.completion_tokens
+            successful_samples += 1
+
+        elapsed_time = time.time() - start_time
+
+        # 计算指标
+        avg_latency_ms = total_latency_ms / successful_samples if successful_samples > 0 else 0
+        tokens_per_second = (total_tokens / elapsed_time) if elapsed_time > 0 else 0
+
+        logger.info(
+            "benchmark_completed",
+            benchmark_id=benchmark_id,
+            model=model,
+            samples=successful_samples,
+            total_samples=num_samples,
+            avg_latency_ms=round(avg_latency_ms, 2),
+            tokens_per_second=round(tokens_per_second, 2),
+            elapsed_seconds=round(elapsed_time, 2),
+        )
+
+    except Exception as e:
+        logger.error(
+            "benchmark_failed",
+            benchmark_id=benchmark_id,
+            model=model,
+            error=str(e),
+        )

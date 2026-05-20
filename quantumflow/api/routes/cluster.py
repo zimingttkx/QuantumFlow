@@ -148,7 +148,7 @@ def _node_to_node_info(node) -> NodeInfo:
         current_load=node.current_load,
         labels=node.labels,
         version=node.version,
-        uptime_seconds=int((datetime.now() - datetime.fromtimestamp(0)).total_seconds()),
+        uptime_seconds=int((datetime.now() - node.start_time).total_seconds()),
         last_heartbeat=node.last_heartbeat,
         loaded_models=node.loaded_models,
     )

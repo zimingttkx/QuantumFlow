@@ -226,7 +226,19 @@ class WorkerNode:
         # 健康检查端点
         @app.get("/health")
         async def health_check():
-            return {"status": "healthy", "node_id": self.config.node_id}
+            # 检查引擎状态
+            engine_status = "unknown"
+            if self.engine is not None:
+                if hasattr(self.engine, "is_ready"):
+                    engine_status = "ready" if self.engine.is_ready else "not_ready"
+                else:
+                    engine_status = "loaded"
+
+            return {
+                "status": "healthy" if engine_status in ("ready", "loaded", "unknown") else "unhealthy",
+                "node_id": self.config.node_id,
+                "engine_status": engine_status,
+            }
 
         self._app = app
         return app

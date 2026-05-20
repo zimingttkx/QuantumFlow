@@ -50,6 +50,7 @@ class Node:
     labels: dict[str, str] = field(default_factory=dict)
     version: str = "1.0.0"
     last_heartbeat: datetime = field(default_factory=datetime.now)
+    start_time: datetime = field(default_factory=datetime.now)  # 节点启动时间
 
     # 额外属性
     cpu_count: int = 0

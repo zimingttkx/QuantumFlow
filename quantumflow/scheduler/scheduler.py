@@ -17,6 +17,7 @@ from quantumflow.scheduler.strategy.base import (
 )
 from quantumflow.scheduler.strategy.gang import GangSchedulingStrategy
 from quantumflow.scheduler.strategy.pack import PackSchedulingStrategy
+from quantumflow.scheduler.worker_client import WorkerClient, WorkerEndpoint, get_worker_registry
 from quantumflow.utils.config import get_config
 
 logger = structlog.get_logger().bind(component="scheduler")
@@ -251,21 +252,8 @@ class Scheduler:
             strategy=result.strategy_used,
         )
 
-        # TODO: 实际发送到Worker
-        # 这里暂时模拟
-        # 注意：fire-and-forget 模式下，任务失败会被静默忽略
-        # 后续应接入真正的 Worker 通信并跟踪任务状态
-        task = asyncio.create_task(self._simulate_execution(request_id))
-        # 临时方案：添加任务完成回调以便观察状态
-        task.add_done_callback(
-            lambda t: (
-                logger.debug("simulated_execution_done", request_id=request_id)
-                if not t.exception()
-                else logger.error(
-                    "simulated_execution_failed", request_id=request_id, error=str(t.exception())
-                )
-            )
-        )
+        # 发送到 Worker 执行
+        asyncio.create_task(self._send_to_worker(request, result))
 
     async def _handle_scheduling_failure(
         self, request: SchedulingRequest, result: SchedulingResult
@@ -298,13 +286,80 @@ class Scheduler:
             self.stats["failed_requests"] += 1
             self.stats["pending_requests"] -= 1
 
-    async def _simulate_execution(self, request_id: str):
-        """模拟请求执行"""
-        await asyncio.sleep(0.5)  # 模拟延迟
+    async def _send_to_worker(self, request: SchedulingRequest, result: SchedulingResult):
+        """发送请求到 Worker 执行"""
+        request_id = request.request_id
 
-        if request_id in self.running_requests:
-            del self.running_requests[request_id]
-            logger.info("request_completed", request_id=request_id)
+        try:
+            # 从 model_config 获取采样参数
+            sampling_params = request.model_config.get("sampling_params", {
+                "temperature": 0.7,
+                "top_p": 0.9,
+                "max_tokens": request.max_tokens,
+            })
+
+            # 从 Worker 注册表获取节点端点
+            registry = get_worker_registry()
+
+            for node_id in result.assigned_nodes:
+                endpoint = await registry.get_worker(node_id)
+                if endpoint is None:
+                    # 节点未注册，尝试从 available_nodes 构建
+                    node = self.available_nodes.get(node_id)
+                    if node:
+                        endpoint = WorkerEndpoint(
+                            node_id=node_id,
+                            host=node.ip,
+                            port=8000,  # 默认端口
+                        )
+
+                if endpoint is None:
+                    logger.error("worker_endpoint_not_found", node_id=node_id, request_id=request_id)
+                    continue
+
+                # 创建 WorkerClient 并发送请求
+                client = WorkerClient(timeout=30.0)
+                try:
+                    worker_result = await client.inference(
+                        endpoint=endpoint,
+                        request_id=request_id,
+                        model_name=request.model,
+                        prompt=request.prompt,
+                        sampling_params=sampling_params,
+                    )
+
+                    if worker_result.get("status") == "success":
+                        logger.info(
+                            "worker_execution_success",
+                            request_id=request_id,
+                            node_id=node_id,
+                        )
+                    else:
+                        logger.warning(
+                            "worker_execution_failed",
+                            request_id=request_id,
+                            node_id=node_id,
+                            error=worker_result.get("error"),
+                        )
+                finally:
+                    await client.close()
+                break  # 只发送给一个节点
+
+            # 清理运行中的请求
+            if request_id in self.running_requests:
+                del self.running_requests[request_id]
+                self.stats["successful_requests"] += 1
+                logger.info("request_completed", request_id=request_id)
+
+        except Exception as e:
+            logger.error(
+                "worker_dispatch_error",
+                request_id=request_id,
+                error=str(e),
+            )
+            self.stats["failed_requests"] += 1
+            if request_id in self.running_requests:
+                del self.running_requests[request_id]
 
     # ==================== 节点管理 ====================
 

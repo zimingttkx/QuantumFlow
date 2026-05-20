@@ -260,6 +260,20 @@ class VLLMEngine(InferenceEngine):
             if torch.cuda.is_available():
                 stats["gpu_memory_allocated"] = torch.cuda.memory_allocated() / (1024**3)
                 stats["gpu_memory_reserved"] = torch.cuda.memory_reserved() / (1024**3)
+
+                # 尝试获取 GPU 利用率
+                try:
+                    import pynvml
+
+                    pynvml.nvmlInit()
+                    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                    util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                    stats["gpu_utilization"] = util.gpu / 100.0
+                    stats["gpu_memory_utilization"] = util.memory / 100.0
+                    pynvml.nvmlShutdown()
+                except Exception:
+                    pass
+
             return stats
         except Exception:
             return {}
