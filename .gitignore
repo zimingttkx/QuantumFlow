@@ -1,5 +1,5 @@
 .claude/
-
+./claude
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -181,4 +181,3 @@ tempCodeRunnerFile.py
 # OS files
 .DS_Store
 Thumbs.db
-!/.claude/
