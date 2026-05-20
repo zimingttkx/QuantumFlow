@@ -1,6 +1,9 @@
 """HuggingFace推理后端"""
 
 import asyncio
+import concurrent.futures
+import queue
+import threading
 import time
 from collections.abc import AsyncIterator
 from typing import Any
@@ -704,9 +707,6 @@ class HuggingFaceEngine(InferenceEngine):
         inputs,
     ) -> AsyncIterator[str]:
         """标准流式生成（使用 TextIteratorStreamer）"""
-        import queue
-        from threading import Thread
-
         from transformers import TextIteratorStreamer
 
         inputs = tokenizer(prompt, return_tensors="pt")
@@ -732,7 +732,7 @@ class HuggingFaceEngine(InferenceEngine):
             "use_cache": False,
         }
 
-        thread = Thread(target=model.generate, kwargs=generation_kwargs)
+        thread = threading.Thread(target=model.generate, kwargs=generation_kwargs)
         thread.start()
 
         q: queue.Queue = queue.Queue()
@@ -744,8 +744,6 @@ class HuggingFaceEngine(InferenceEngine):
                 q.put(("done", None))
             except Exception as exc:
                 q.put(("error", exc))
-
-        import concurrent.futures
 
         loop = asyncio.get_running_loop()
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)

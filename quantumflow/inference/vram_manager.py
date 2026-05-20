@@ -149,11 +149,20 @@ class BlockPool:
 
     def _evict_idle_blocks(self, needed: int):
         """驱逐当前未使用的请求的 blocks"""
+        # 找出有活跃请求的 block（同一 request 还有其他 in-use blocks）
+        # 只有完全空闲的 block 才能被驱逐
+        active_requests: set = set()
+        for block in self._blocks.values():
+            if not block.is_free and block.owner_request_id:
+                active_requests.add(block.owner_request_id)
+
         evicted = 0
         for block_id, block in self._blocks.items():
             if block.is_free:
                 continue
-            # 检查该 request 是否还有活跃 blocks（简单做法：全部驱逐）
+            # 跳过活跃请求的 blocks（同一 request 还有其他 blocks 在用）
+            if block.owner_request_id and block.owner_request_id in active_requests:
+                continue
             if evicted >= needed:
                 break
             block.is_free = True
@@ -177,6 +186,8 @@ class BlockPool:
     def get_allocatable_blocks(self, num_tokens: int) -> int:
         """给定 token 数，返回还能分配多少个请求"""
         needed = (num_tokens + self.block_size - 1) // self.block_size
+        if needed == 0:
+            return 0
         return max(0, len(self._free_blocks) // needed)
 
 

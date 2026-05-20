@@ -140,10 +140,13 @@ class GPUMonitor:
                         mem_util_pct=round(s.memory_util_pct, 1),
                         temp_c=round(s.temperature_c, 1),
                     )
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                logger.error("gpu_monitor_error", exc_info=True)
+            except (asyncio.CancelledError, Exception) as e:
+                if isinstance(e, asyncio.CancelledError):
+                    break
+                try:
+                    logger.error("gpu_monitor_error", exc_info=True)
+                except asyncio.CancelledError:
+                    raise
 
             await asyncio.sleep(self.interval_seconds)
 

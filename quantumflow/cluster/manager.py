@@ -145,9 +145,13 @@ class ClusterManager:
         """停止集群管理器"""
         self._running = False
 
-        # 停止所有心跳任务
+        # 停止所有心跳任务并等待它们完成
         for task in self._heartbeat_tasks.values():
             task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
         logger.info("cluster_manager_stopped")
 
@@ -386,14 +390,8 @@ class ClusterManager:
         """处理节点超时"""
         logger.warning("node_timeout", node_id=node_id)
         await self.update_node_status(node_id, NodeStatus.OFFLINE)
-
-        # 触发事件
-        await self._emit_event(
-            "node_health_changed",
-            self.nodes.get(node_id),
-            NodeStatus.HEALTHY,
-            NodeStatus.OFFLINE,
-        )
+        # 注意: update_node_status 已经触发了 node_health_changed 事件，
+        # 这里不需要再次触发
 
     # ==================== 事件系统 ====================
 

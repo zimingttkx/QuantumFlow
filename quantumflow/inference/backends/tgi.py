@@ -234,12 +234,22 @@ class TGIEngine(InferenceEngine):
                         )
                     )
             else:
+                text = result.get("generated_text", "")
+                # Only use the fallback when the key is not present in the response
+                if "generated_tokens" in result:
+                    generated_tokens_val = result["generated_tokens"]
+                    if isinstance(generated_tokens_val, (int, float)):
+                        ct = int(generated_tokens_val)
+                    else:
+                        ct = len(text.split())
+                else:
+                    ct = len(text.split())
                 results.append(
                     InferenceResult(
                         request_id=f"{model_name}_0",
-                        outputs=[result.get("generated_text", "")],
+                        outputs=[text],
                         prompt_tokens=result.get("prompt_tokens", 0),
-                        completion_tokens=result.get("generated_tokens", 0),
+                        completion_tokens=ct,
                         latency_ms=latency_ms,
                         finish_reason="stop",
                         metrics={},

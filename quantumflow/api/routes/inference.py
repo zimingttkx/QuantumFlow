@@ -3,6 +3,7 @@
 import asyncio
 import time
 from collections.abc import AsyncIterator
+from datetime import datetime
 
 import structlog
 from fastapi import APIRouter, HTTPException, Query, status
@@ -22,12 +23,15 @@ from quantumflow.core.exceptions import (
     SchedulerError,
 )
 from quantumflow.inference import SamplingParams, get_engine_manager
+from quantumflow.scheduler.distributed import DistributedScheduler, get_scheduler
+from quantumflow.scheduler.strategy.base import SchedulingRequest
 from quantumflow.storage import (
     QueuedRequest,
     QueuePriority,
     RedisQueue,
     get_redis_manager,
 )
+from quantumflow.storage.redis_queue import RedisQueue
 
 logger = structlog.get_logger().bind(component="api_inference")
 
@@ -35,6 +39,149 @@ router = APIRouter(prefix="/inference", tags=["Inference"])
 
 # 模拟请求ID生成
 _request_counter = 0
+
+# 分布式调度器单例
+_scheduler: DistributedScheduler | None = None
+
+
+def _get_scheduler() -> DistributedScheduler:
+    """获取分布式调度器单例"""
+    global _scheduler
+    if _scheduler is None:
+        _scheduler = get_scheduler()
+    return _scheduler
+
+
+def _is_distributed_mode() -> bool:
+    """检测是否应该使用分布式模式
+
+    Returns:
+        True: 有可用的 Worker 节点，使用分布式调度
+        False: 没有 Worker 节点，使用本地直接推理
+    """
+    try:
+        scheduler = _get_scheduler()
+        # 检查是否有注册的工作节点
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # 如果事件循环正在运行，创建任务
+            future = asyncio.ensure_future(scheduler.get_worker_count())
+            # 阻塞等待结果（这不是理想的做法，但在同步函数中必要）
+            worker_count = future.result(timeout=5.0)
+        else:
+            worker_count = loop.run_until_complete(scheduler.get_worker_count())
+        return worker_count > 0
+    except Exception:
+        # 如果获取调度器失败，使用本地模式
+        return False
+
+
+async def _local_generate(
+    request_id: str,
+    model_name: str,
+    prompt: str,
+    sampling_params: SamplingParams,
+) -> InferenceResponse:
+    """本地直接推理（单GPU模式）"""
+    engine_manager = get_engine_manager()
+    accumulator = engine_manager.get_batch_accumulator(
+        model_name,
+        sampling_params,
+        max_delay_ms=50.0,
+        max_batch_size=8,
+    )
+    results = await accumulator.submit(prompt)
+    if not isinstance(results, list):
+        results = [results]
+
+    if results and len(results) > 0:
+        result = results[0]
+        return InferenceResponse(
+            request_id=request_id,
+            model=model_name,
+            prompt=prompt,
+            generated_text=result.outputs[0] if result.outputs else "",
+            finish_reason=result.finish_reason,
+            latency_ms=result.latency_ms,
+            usage={
+                "prompt_tokens": result.prompt_tokens,
+                "completion_tokens": result.completion_tokens,
+                "total_tokens": result.prompt_tokens + result.completion_tokens,
+            },
+        )
+    raise InferenceError("Generation produced no results")
+
+
+async def _distributed_generate(
+    request_id: str,
+    model_name: str,
+    prompt: str,
+    sampling_params: SamplingParams,
+    priority: int = 5,
+    timeout_ms: int = 60000,
+) -> InferenceResponse:
+    """分布式推理（多Worker模式）
+
+    将请求提交到调度器，等待结果返回。
+    """
+    scheduler = _get_scheduler()
+
+    # 创建调度请求
+    scheduling_request = SchedulingRequest(
+        request_id=request_id,
+        model=model_name,
+        prompt=prompt,
+        priority=priority,
+        max_tokens=sampling_params.max_tokens,
+        prompt_length=len(prompt),
+        model_config={
+            "temperature": sampling_params.temperature,
+            "top_p": sampling_params.top_p,
+            "top_k": sampling_params.top_k,
+            "max_tokens": sampling_params.max_tokens,
+            "repetition_penalty": sampling_params.repetition_penalty,
+        },
+    )
+
+    # 提交到调度器
+    await scheduler.submit(scheduling_request)
+
+    # 等待结果（从Redis队列获取）
+    redis_mgr = await get_redis_manager()
+    redis_queue = RedisQueue()
+    await redis_queue.connect()
+
+    try:
+        start_time = time.time()
+        timeout_s = timeout_ms / 1000.0
+
+        while time.time() - start_time < timeout_s:
+            result = await redis_queue.get_result(request_id)
+            if result:
+                if result.get("status") == "success":
+                    r = result.get("result", {})
+                    return InferenceResponse(
+                        request_id=request_id,
+                        model=model_name,
+                        prompt=prompt,
+                        generated_text=r.get("generated_text", ""),
+                        finish_reason=r.get("finish_reason", "stop"),
+                        latency_ms=result.get("latency_ms", 0),
+                        usage={
+                            "prompt_tokens": r.get("prompt_tokens", 0),
+                            "completion_tokens": r.get("completion_tokens", 0),
+                            "total_tokens": r.get("total_tokens", 0),
+                        },
+                    )
+                else:
+                    raise InferenceError(result.get("reason", "Unknown error"))
+            await asyncio.sleep(0.1)
+
+        # 超时
+        raise InferenceError(f"Request timeout after {timeout_ms}ms")
+
+    finally:
+        await redis_queue.disconnect()
 
 
 async def _ensure_model_loaded(model_name: str, start_time: float) -> tuple[bool, str]:
@@ -74,7 +221,12 @@ def _convert_sampling_params(request: InferenceRequest) -> SamplingParams:
     description="使用指定模型生成文本",
 )
 async def generate(request: InferenceRequest) -> InferenceResponse:
-    """文本生成接口"""
+    """文本生成接口
+
+    自动适配单机/分布式模式：
+    - 有Worker注册时使用分布式调度
+    - 无Worker时使用本地直接推理
+    """
     start_time = time.time()
 
     # 生成请求ID
@@ -109,39 +261,26 @@ async def generate(request: InferenceRequest) -> InferenceResponse:
                     },
                 )
 
-        # 执行推理 — 通过 BatchAccumulator 收集并发请求，凑满/超时后批量处理
         sampling_params = _convert_sampling_params(request)
-        accumulator = engine_manager.get_batch_accumulator(
-            request.model,
-            sampling_params,
-            max_delay_ms=50.0,
-            max_batch_size=8,
-        )
-        results = await accumulator.submit(request.prompt)
-        if not isinstance(results, list):
-            results = [results]
 
-        latency_ms = (time.time() - start_time) * 1000
-        logger.debug("generate_latency", request_id=request_id, latency_ms=latency_ms)
-
-        if results and len(results) > 0:
-            result = results[0]
-            return InferenceResponse(
+        # 自动选择推理模式：分布式 vs 本地
+        if _is_distributed_mode():
+            logger.info("using_distributed_mode", request_id=request_id)
+            return await _distributed_generate(
                 request_id=request_id,
-                model=request.model,
+                model_name=request.model,
                 prompt=request.prompt,
-                generated_text=result.outputs[0] if result.outputs else "",
-                finish_reason=result.finish_reason,
-                latency_ms=result.latency_ms,
-                usage={
-                    "prompt_tokens": result.prompt_tokens,
-                    "completion_tokens": result.completion_tokens,
-                    "total_tokens": result.prompt_tokens + result.completion_tokens,
-                },
+                sampling_params=sampling_params,
+                priority=request.priority or 5,
             )
-
-        # 如果没有结果，返回错误
-        raise InferenceError("Generation produced no results")
+        else:
+            logger.info("using_local_mode", request_id=request_id)
+            return await _local_generate(
+                request_id=request_id,
+                model_name=request.model,
+                prompt=request.prompt,
+                sampling_params=sampling_params,
+            )
 
     except ModelNotFoundError as e:
         logger.error("model_not_found", request_id=request_id, model=request.model)

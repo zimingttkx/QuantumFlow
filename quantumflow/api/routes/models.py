@@ -18,6 +18,22 @@ from quantumflow.inference import get_engine_manager
 from quantumflow.models.registry import ModelRegistry, ModelStatus as RegistryModelStatus
 from quantumflow.core.constants import InferenceBackendType
 
+# 模型路径映射 - HuggingFace可以直接使用Hub ID
+MODEL_PATH_MAPPING: dict[str, str] = {
+    "Qwen2.5-0.5B": "Qwen/Qwen2.5-0.5B-Instruct",
+    "Qwen2.5-1.5B": "Qwen/Qwen2.5-1.5B-Instruct",
+    "Qwen2.5-3B": "Qwen/Qwen2.5-3B-Instruct",
+    "Qwen2.5-7B": "Qwen/Qwen2.5-7B-Instruct",
+    "Phi-3-mini-4k": "microsoft/Phi-3-mini-4k-instruct",
+}
+
+
+def _resolve_model_path(model_name: str) -> str:
+    """解析模型路径"""
+    if model_name in MODEL_PATH_MAPPING:
+        return MODEL_PATH_MAPPING[model_name]
+    return model_name
+
 logger = structlog.get_logger().bind(component="api_models")
 
 router = APIRouter(prefix="/models", tags=["Models"])
@@ -94,7 +110,24 @@ async def get_model(model_name: str) -> ModelInfo:
     """获取模型信息"""
     registry_info = _registry.get_model(model_name)
 
+    # 如果 registry 中没有，检查 engine_manager 是否已加载
     if registry_info is None:
+        engine_manager = get_engine_manager()
+        if engine_manager.is_model_loaded(model_name):
+            # 模型已加载但未注册，返回基本信息
+            return ModelInfo(
+                model_id=model_name.lower().replace("/", "-"),
+                name=model_name,
+                architecture="Unknown",
+                parameter_count=0,
+                dtype="bfloat16",
+                status="ready",
+                replicas=1,
+                tensor_parallel=1,
+                max_model_length=8192,
+                backend="vllm",
+                loaded_on_nodes=[],
+            )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
@@ -132,9 +165,10 @@ async def deploy_model(request: DeployRequest) -> DeployResponse:
 
     # 调用 EngineManager 部署模型
     engine_manager = get_engine_manager()
+    model_path = _resolve_model_path(request.model)
     success, message = await engine_manager.load_model(
         model_name=request.model,
-        model_path=request.model,
+        model_path=model_path,
         backend=backend,
         tensor_parallel=request.tensor_parallel or 1,
         gpu_memory_utilization=0.8,
