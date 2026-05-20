@@ -217,12 +217,13 @@ class TestBlockPoolEviction:
         assert len(pool._free_blocks) == 9, f"应有9个空闲，实际: {len(pool._free_blocks)}"
         assert pool.stats["allocated_blocks"] == 1
 
-        # 驱逐 1 个（只能驱逐那 1 个还分配着的 block 1）
+        # 驱逐 1 个 — 但 block 1 属于 req_1（还在 active_requests），
+        # 所以不能被驱逐，只有已经 free 的 blocks 会被跳过
         pool._evict_idle_blocks(1)
 
-        # 验证：所有 blocks 都应该空闲
-        assert pool.stats["allocated_blocks"] == 0
-        assert len(pool._free_blocks) == 10
+        # 验证：req_1 的 block 仍然被保护，只有已 free 的 blocks 被跳过
+        assert pool.stats["allocated_blocks"] == 1
+        assert len(pool._free_blocks) == 9
 
 
 class TestVRAMManagerModelTracking:

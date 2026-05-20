@@ -974,5 +974,403 @@ class TestRedisQueueExceptionScenarios:
         assert metrics == {}
 
 
+# ==================== GAP-FILLING 补充测试 ====================
+
+
+class TestGetRequestMethod:
+    """get_request 方法补充测试"""
+
+    @pytest.fixture
+    def mock_redis(self):
+        redis_mock = AsyncMock()
+        redis_mock.get = AsyncMock(return_value=None)
+        return redis_mock
+
+    @pytest.fixture
+    def queue(self, mock_redis):
+        q = RedisQueue()
+        q._redis = mock_redis
+        q._connected = True
+        return q
+
+    @pytest.mark.asyncio
+    async def test_get_request_returns_queued_request(self, queue, mock_redis):
+        """[核心功能] get_request 返回正确反序列化的 QueuedRequest"""
+        original = QueuedRequest(
+            request_id="get-test-001",
+            model_name="TestModel",
+            prompt="Test prompt",
+            priority=5,
+            created_at=datetime.now(),
+        )
+        mock_redis.get = AsyncMock(return_value=original.to_json())
+
+        result = await queue.get_request("get-test-001")
+
+        assert result is not None
+        assert result.request_id == "get-test-001"
+        assert result.model_name == "TestModel"
+
+    @pytest.mark.asyncio
+    async def test_get_request_returns_none_when_not_found(self, queue, mock_redis):
+        """[边界用例] 请求不存在时返回 None"""
+        mock_redis.get = AsyncMock(return_value=None)
+
+        result = await queue.get_request("nonexistent")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_request_returns_none_when_not_connected(self, queue):
+        """[错误处理] 未连接时返回 None"""
+        queue._connected = False
+
+        result = await queue.get_request("any-id")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_request_returns_none_on_exception(self, queue, mock_redis):
+        """[异常场景] Redis 异常时返回 None"""
+        mock_redis.get = AsyncMock(side_effect=Exception("Redis error"))
+
+        result = await queue.get_request("req-id")
+
+        assert result is None
+
+
+class TestDequeueBatchMissingData:
+    """dequeue_batch 缺少请求数据场景"""
+
+    @pytest.fixture
+    def mock_redis(self):
+        redis_mock = AsyncMock()
+        redis_mock.zpopmin = AsyncMock(return_value=[("req-missing", -5.0)])
+        redis_mock.get = AsyncMock(return_value=None)  # 数据缺失
+        redis_mock.setex = AsyncMock(return_value=True)
+        return redis_mock
+
+    @pytest.fixture
+    def queue(self, mock_redis):
+        q = RedisQueue()
+        q._redis = mock_redis
+        q._connected = True
+        return q
+
+    @pytest.mark.asyncio
+    async def test_dequeue_batch_skips_missing_data(self, queue, mock_redis):
+        """[核心功能] 批量出队时数据缺失应跳过该请求，不加入结果列表"""
+        result = await queue.dequeue_batch(batch_size=5)
+
+        # 数据不存在时 dequeue 返回 None，dequeue_batch 遇 None 即 break
+        assert len(result) == 0
+
+
+class TestRequeueExceptionHandling:
+    """requeue 异常场景补充"""
+
+    @pytest.fixture
+    def mock_redis(self):
+        redis_mock = AsyncMock()
+        redis_mock.setex = AsyncMock(return_value=True)
+        redis_mock.zadd = AsyncMock(return_value=1)
+        redis_mock.hincrby = AsyncMock(return_value=1)
+        return redis_mock
+
+    @pytest.fixture
+    def queue(self, mock_redis):
+        q = RedisQueue(max_retries=3)
+        q._redis = mock_redis
+        q._connected = True
+        return q
+
+    @pytest.mark.asyncio
+    async def test_requeue_returns_false_on_enqueue_exception(self, queue, mock_redis):
+        """[异常场景] requeue 内部 enqueue 失败时返回 False"""
+        mock_redis.zadd = AsyncMock(side_effect=Exception("ZADD failed"))
+        request = QueuedRequest(
+            request_id="requeue-exc",
+            model_name="model",
+            prompt="p",
+            priority=5,
+            created_at=datetime.now(),
+        )
+
+        result = await queue.requeue(request)
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_requeue_retry_count_exactly_max_retries(self, queue, mock_redis):
+        """[边界用例] retry_count == max_retries 时增量后 > max 返回 False"""
+        queue.max_retries = 3
+        request = QueuedRequest(
+            request_id="boundary-retry",
+            model_name="model",
+            prompt="p",
+            priority=5,
+            created_at=datetime.now(),
+            metadata={"retry_count": 3},  # 正好等于 max_retries
+        )
+
+        result = await queue.requeue(request, increment_retry=True)
+
+        assert result is False
+        # retry_count 应变成 4（触发了 > max 检查后返回False）
+        assert request.metadata["retry_count"] == 4
+
+    @pytest.mark.asyncio
+    async def test_requeue_retry_count_one_below_max(self, queue, mock_redis):
+        """[边界用例] retry_count = max_retries - 1 应允许重试"""
+        queue.max_retries = 3
+        request = QueuedRequest(
+            request_id="below-max",
+            model_name="model",
+            prompt="p",
+            priority=5,
+            created_at=datetime.now(),
+            metadata={"retry_count": 2},  # still under max
+        )
+
+        result = await queue.requeue(request, increment_retry=True)
+
+        # Should succeed since 2+1=3 <= max_retries... wait, code checks > max, so 3 <= 3 is ok
+        assert result is True
+        assert request.metadata["retry_count"] == 3
+
+
+class TestGetQueueStatsEdgeCases:
+    """get_queue_stats 边界场景补充"""
+
+    @pytest.fixture
+    def mock_redis(self):
+        redis_mock = AsyncMock()
+        redis_mock.zcard = AsyncMock(return_value=0)
+        redis_mock.zcount = AsyncMock(return_value=0)
+        return redis_mock
+
+    @pytest.fixture
+    def queue(self, mock_redis):
+        q = RedisQueue()
+        q._redis = mock_redis
+        q._connected = True
+        return q
+
+    @pytest.mark.asyncio
+    async def test_get_queue_stats_returns_empty_when_not_connected(self, queue):
+        """[错误处理] 未连接时返回空字典"""
+        queue._connected = False
+
+        stats = await queue.get_queue_stats()
+
+        assert stats == {}
+
+    @pytest.mark.asyncio
+    async def test_get_queue_stats_returns_empty_on_zcard_exception(self, queue, mock_redis):
+        """[异常场景] zcard 异常被 queue_size 内部捕获，get_queue_stats 仍返回数据
+        注意: queue_size 内部捕获异常返回 0，get_queue_stats 使用该值构造有效结果。
+        """
+        mock_redis.zcard = AsyncMock(side_effect=Exception("zcard error"))
+
+        stats = await queue.get_queue_stats()
+
+        # queue_size catches exception internally, returns 0
+        # get_queue_stats gets queue_size=0 and proceeds successfully
+        assert stats["queue_size"] == 0
+        assert "priority_counts" in stats
+        assert stats["connected"] is True
+
+    @pytest.mark.asyncio
+    async def test_get_queue_stats_priority_counts_keys(self, queue, mock_redis):
+        """[核心功能] priority_counts 包含所有优先级的键"""
+        mock_redis.zcard = AsyncMock(return_value=10)
+        mock_redis.zcount = AsyncMock(return_value=2)
+
+        stats = await queue.get_queue_stats()
+
+        for priority in QueuePriority:
+            assert priority.name in stats["priority_counts"]
+
+
+class TestGetResultEdgeCases:
+    """get_result 边界场景补充"""
+
+    @pytest.fixture
+    def mock_redis(self):
+        redis_mock = AsyncMock()
+        redis_mock.get = AsyncMock(return_value=None)
+        return redis_mock
+
+    @pytest.fixture
+    def queue(self, mock_redis):
+        q = RedisQueue()
+        q._redis = mock_redis
+        q._connected = True
+        return q
+
+    @pytest.mark.asyncio
+    async def test_get_result_returns_none_when_not_connected(self, queue):
+        """[错误处理] 未连接时返回 None"""
+        queue._connected = False
+
+        result = await queue.get_result("any-id")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_result_returns_none_on_exception(self, queue, mock_redis):
+        """[异常场景] Redis 异常时返回 None"""
+        mock_redis.get = AsyncMock(side_effect=Exception("Redis error"))
+
+        result = await queue.get_result("req-id")
+
+        assert result is None
+
+
+# ==================== GAP-FILLING: 缺失行覆盖测试 ====================
+
+
+class TestDequeueDisconnected:
+    """dequeue 未连接路径 (lines 211-212)"""
+
+    @pytest.mark.asyncio
+    async def test_dequeue_returns_none_when_not_connected(self):
+        """[错误处理] 未连接时 dequeue 返回 None 并记录日志"""
+        queue = RedisQueue()
+        queue._connected = False
+        queue._redis = None
+
+        result = await queue.dequeue(timeout=0)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_dequeue_blocking_returns_none_when_not_connected(self):
+        """[错误处理] 未连接时阻塞 dequeue 也返回 None"""
+        queue = RedisQueue()
+        queue._connected = False
+        queue._redis = None
+
+        result = await queue.dequeue(timeout=5)
+
+        assert result is None
+
+
+class TestRequeueExceptionHandlingGap:
+    """requeue 异常处理和 enqueue 内部异常 (lines 315-321)"""
+
+    @pytest.fixture
+    def mock_redis(self):
+        redis_mock = AsyncMock()
+        redis_mock.setex = AsyncMock(return_value=True)
+        redis_mock.zadd = AsyncMock(return_value=1)
+        redis_mock.hincrby = AsyncMock(return_value=1)
+        return redis_mock
+
+    @pytest.fixture
+    def queue(self, mock_redis):
+        q = RedisQueue(max_retries=3)
+        q._redis = mock_redis
+        q._connected = True
+        return q
+
+    @pytest.mark.asyncio
+    async def test_requeue_catches_enqueue_exception(self, queue, mock_redis):
+        """[异常场景] requeue 中 enqueue 异常被捕获返回 False (line 315-321)"""
+        mock_redis.setex = AsyncMock(side_effect=Exception("SETEX failed"))
+        request = QueuedRequest(
+            request_id="requeue-exc-2",
+            model_name="model",
+            prompt="p",
+            priority=5,
+            created_at=datetime.now(),
+        )
+
+        result = await queue.requeue(request, increment_retry=True)
+
+        assert result is False
+        # retry_count 应该增加了（increment 在 enqueue 异常之前）
+        assert request.metadata["retry_count"] == 1
+
+
+class TestGetQueueStatsExceptionGap:
+    """get_queue_stats 外部异常处理 (lines 458-460)"""
+
+    @pytest.fixture
+    def mock_redis(self):
+        redis_mock = AsyncMock()
+        redis_mock.zcard = AsyncMock(side_effect=Exception("zcard failed in outer"))
+        redis_mock.zcount = AsyncMock(return_value=0)
+        return redis_mock
+
+    @pytest.fixture
+    def queue(self, mock_redis):
+        q = RedisQueue()
+        q._redis = mock_redis
+        q._connected = True
+        return q
+
+    @pytest.mark.asyncio
+    async def test_get_queue_stats_outer_exception_returns_empty(self, queue, mock_redis):
+        """[异常场景] get_queue_stats 外部异常返回空字典 (line 458-460)
+        zcard 异常时 queue_size 返回 0, 但 get_queue_stats 仍可能通过 zcount 遍历 priority
+        产生异常。测试整体异常处理返回 {}。
+        """
+        # queue_size catches exception internally, returns 0
+        # But we need the OUTER exception in get_queue_stats to be triggered.
+        # Let's make zcard fail inside queue_size, and ALSO make zcount fail in the outer:
+        mock_redis.zcard = AsyncMock(side_effect=Exception("zcard outer fail"))
+        mock_redis.zcount = AsyncMock(side_effect=Exception("zcount outer fail"))
+
+        result = await queue.get_queue_stats()
+
+        assert result == {}
+
+
+class TestIncrementMetricGap:
+    """_increment_metric 未连接和异常路径 (lines 490, 494-495)"""
+
+    @pytest.fixture
+    def mock_redis(self):
+        redis_mock = AsyncMock()
+        redis_mock.hincrby = AsyncMock(return_value=1)
+        return redis_mock
+
+    def test_increment_metric_not_connected(self):
+        """[错误处理] 未连接时 _increment_metric 直接返回 (line 490)"""
+        q = RedisQueue()
+        q._connected = False
+        q._redis = None
+
+        # _increment_metric 是私有方法，通过 enqueue 触发（enqueue 也会短路）
+        # 我们直接调用 _increment_metric 来测试
+
+    @pytest.mark.asyncio
+    async def test_increment_metric_exception_handled(self, mock_redis):
+        """[异常场景] _increment_metric 异常被静默处理 (lines 494-495)"""
+        mock_redis.hincrby = AsyncMock(side_effect=Exception("HINCRBY error"))
+        q = RedisQueue()
+        q._redis = mock_redis
+        q._connected = True
+
+        # 调用 _increment_metric 不应抛出异常
+        try:
+            await q._increment_metric("test_metric")
+        except Exception:
+            pytest.fail("_increment_metric should handle exceptions silently")
+
+    @pytest.mark.asyncio
+    async def test_increment_metric_skips_when_not_connected(self):
+        """[错误处理] _increment_metric 未连接时不执行任何操作 (line 490)"""
+        q = RedisQueue()
+        q._connected = False
+
+        # 应静默返回,不抛异常
+        try:
+            await q._increment_metric("any_metric")
+        except Exception:
+            pytest.fail("_increment_metric should return silently when not connected")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

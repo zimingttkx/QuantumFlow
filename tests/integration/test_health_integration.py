@@ -182,35 +182,52 @@ class TestHealthCheckClusterIntegration:
 class TestHealthCheckVersion:
     """版本信息验证"""
 
-    def test_version_must_match_package_version(self):
+    @pytest.fixture(autouse=True)
+    def _mock_dependencies(self):
+        """所有版本测试都需要 mock Redis 和集群依赖"""
+        with patch(
+            "quantumflow.storage.get_redis_manager",
+            new_callable=AsyncMock,
+        ) as mock_redis:
+            mock_mgr = AsyncMock()
+            mock_mgr.health_check = AsyncMock(
+                return_value={"status": "healthy", "connected": True}
+            )
+            mock_redis.return_value = mock_mgr
+            with patch(
+                "quantumflow.cluster.manager.ClusterManager.get_cluster_stats",
+                new_callable=AsyncMock,
+                return_value={
+                    "total_nodes": 0,
+                    "healthy_nodes": 0,
+                    "unhealthy_nodes": 0,
+                },
+            ):
+                yield
+
+    @pytest.mark.asyncio
+    async def test_version_must_match_package_version(self):
         """[核心功能] 返回的版本必须与包版本一致"""
         from quantumflow import __version__
         from quantumflow.api.routes.health import health_check
-        import asyncio
 
-        async def run():
-            return await health_check()
-
-        response = asyncio.get_event_loop().run_until_complete(run())
+        response = await health_check()
 
         assert response.version == __version__, (
             f"版本不匹配: API 返回 {response.version}, 包版本 {__version__}"
         )
 
-    def test_version_is_not_hardcoded_string(self):
+    @pytest.mark.asyncio
+    async def test_version_is_not_hardcoded_string(self):
         """[反向校验] 版本不应该是硬编码的 '1.0.0'"""
+        from quantumflow import __version__
         from quantumflow.api.routes.health import health_check
-        import asyncio
 
-        async def run():
-            return await health_check()
+        response = await health_check()
 
-        response = asyncio.get_event_loop().run_until_complete(run())
-
-        # 如果版本是硬编码的 '1.0.0' 且包版本也是 '1.0.0'，这个测试无法区分
-        # 所以我们检查 version 字段是否来自 __version__ 变量
         assert response.version is not None
         assert len(response.version) > 0
+        assert response.version == __version__
 
 
 class TestReadinessCheck:
@@ -274,15 +291,12 @@ class TestReadinessCheck:
 class TestLivenessCheck:
     """存活检查验证"""
 
-    def test_liveness_always_returns_alive(self):
+    @pytest.mark.asyncio
+    async def test_liveness_always_returns_alive(self):
         """[核心功能] 存活检查应返回 alive=true，与依赖无关"""
         from quantumflow.api.routes.health import liveness_check
-        import asyncio
 
-        async def run():
-            return await liveness_check()
-
-        response = asyncio.get_event_loop().run_until_complete(run())
+        response = await liveness_check()
 
         assert response["alive"] is True
 

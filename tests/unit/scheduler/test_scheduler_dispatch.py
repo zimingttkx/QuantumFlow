@@ -71,8 +71,9 @@ class TestSchedulerDispatchToWorker:
             "quantumflow.scheduler.scheduler.get_worker_registry",
             return_value=mock_registry,
         ):
-            with patch.object(
-                WorkerClient, "__new__", return_value=mock_client
+            with patch(
+                "quantumflow.scheduler.scheduler.WorkerClient",
+                return_value=mock_client
             ):
                 await scheduler._dispatch(request, result)
 
@@ -117,7 +118,7 @@ class TestSchedulerDispatchToWorker:
             "quantumflow.scheduler.scheduler.get_worker_registry",
             return_value=mock_registry,
         ):
-            with patch.object(WorkerClient, "__new__", return_value=mock_client):
+            with patch("quantumflow.scheduler.scheduler.WorkerClient", return_value=mock_client):
                 await scheduler._dispatch(request, result)
                 await asyncio.sleep(0.1)
 
@@ -157,7 +158,7 @@ class TestSchedulerDispatchToWorker:
             "quantumflow.scheduler.scheduler.get_worker_registry",
             return_value=mock_registry,
         ):
-            with patch.object(WorkerClient, "__new__", return_value=mock_client):
+            with patch("quantumflow.scheduler.scheduler.WorkerClient", return_value=mock_client):
                 await scheduler._dispatch(request, result)
                 await asyncio.sleep(0.1)
 
@@ -196,7 +197,7 @@ class TestSchedulerDispatchToWorker:
             "quantumflow.scheduler.scheduler.get_worker_registry",
             return_value=mock_registry,
         ):
-            with patch.object(WorkerClient, "__new__", return_value=mock_client):
+            with patch("quantumflow.scheduler.scheduler.WorkerClient", return_value=mock_client):
                 await scheduler._dispatch(request, result)
                 await asyncio.sleep(0.1)
 
@@ -233,7 +234,7 @@ class TestSchedulerDispatchToWorker:
             "quantumflow.scheduler.scheduler.get_worker_registry",
             return_value=mock_registry,
         ):
-            with patch.object(WorkerClient, "__new__", return_value=mock_client):
+            with patch("quantumflow.scheduler.scheduler.WorkerClient", return_value=mock_client):
                 await scheduler._dispatch(request, result)
                 await asyncio.sleep(0.1)
 
@@ -308,7 +309,7 @@ class TestSchedulerDispatchToWorker:
             "quantumflow.scheduler.scheduler.get_worker_registry",
             return_value=mock_registry,
         ):
-            with patch.object(WorkerClient, "__new__", return_value=mock_client):
+            with patch("quantumflow.scheduler.scheduler.WorkerClient", return_value=mock_client):
                 await scheduler._dispatch(request, result)
                 await asyncio.sleep(0.1)
 

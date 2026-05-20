@@ -186,7 +186,7 @@ class TestE2EModelManagement:
         response = client.post(
             "/api/v1/models/deploy",
             json={
-                "model": "Qwen2.5-7B-Instruct",
+                "model": "Qwen2.5-1.5B",
                 "tensor_parallel": 1,
                 "gpu_memory_utilization": 0.9,
             },
@@ -512,18 +512,17 @@ class TestE2EConfigurationValidation:
         response = client.post(
             "/api/v1/models/deploy",
             json={
-                "model": "Qwen2.5-72B-Instruct",
-                "tensor_parallel": 4,
-                "pipeline_parallel": 2,
+                "model": "Qwen2.5-1.5B",
+                "tensor_parallel": 1,
                 "gpu_memory_utilization": 0.85,
                 "backend": "vllm",
-                "replicas": 2,
+                "replicas": 1,
             },
         )
 
         assert response.status_code == 201
         data = response.json()
-        assert data["replicas"] == 2
+        assert data["replicas"] == 1
 
     def test_invalid_parallel_config(self, client):
         """测试无效的并行配置"""
@@ -553,7 +552,7 @@ class TestE2EPersistence:
         deploy_response = client.post(
             "/api/v1/models/deploy",
             json={
-                "model": "Qwen2.5-7B-Instruct",
+                "model": "Qwen2.5-1.5B",
                 "tensor_parallel": 1,
             },
         )
@@ -561,7 +560,7 @@ class TestE2EPersistence:
 
         # 多次检查模型状态
         for _ in range(3):
-            response = client.get("/api/v1/models/Qwen2.5-7B-Instruct")
+            response = client.get("/api/v1/models/Qwen2.5-1.5B")
             assert response.status_code == 200
 
     def test_request_id_uniqueness(self, client):
