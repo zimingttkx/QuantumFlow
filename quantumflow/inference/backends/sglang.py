@@ -28,14 +28,15 @@ class SGLangEngine(InferenceEngine):
 
     def __init__(
         self,
-        config: dict[str, Any] = None,
+        config: dict[str, Any] | None = None,
         base_url: str = "http://localhost:30000",
+        timeout: int | None = None,
     ):
         super().__init__(InferenceBackendType.SGLANG)
         self.config = config or {}
         self.base_url = base_url.rstrip("/")
         self._client: Any | None = None
-        self._timeout = 300
+        self._timeout = timeout or self.config.get("timeout", 300)
 
     async def initialize(self) -> bool:
         """初始化SGLang客户端"""
@@ -140,15 +141,27 @@ class SGLangEngine(InferenceEngine):
             async def _single_generate(prompt: str, index: int) -> InferenceResult:
                 """发送单个推理请求"""
                 req_start = time.time()
-                payload = {
+                payload: dict[str, Any] = {
                     "model": model_name,
                     "prompt": prompt,
                     "max_tokens": sampling_params.max_tokens,
                     "temperature": sampling_params.temperature,
                     "top_p": sampling_params.top_p,
                 }
+                # top_k: SGLang 支持
+                if sampling_params.top_k > 0:
+                    payload["top_k"] = sampling_params.top_k
+                # repetition_penalty: SGLang 支持
+                if sampling_params.repetition_penalty != 1.0:
+                    payload["repetition_penalty"] = sampling_params.repetition_penalty
+                # stop 序列
                 if sampling_params.stop:
                     payload["stop"] = sampling_params.stop
+                # presence_penalty / frequency_penalty (如果采样参数中有)
+                if hasattr(sampling_params, "presence_penalty") and sampling_params.presence_penalty != 0.0:
+                    payload["presence_penalty"] = sampling_params.presence_penalty
+                if hasattr(sampling_params, "frequency_penalty") and sampling_params.frequency_penalty != 0.0:
+                    payload["frequency_penalty"] = sampling_params.frequency_penalty
 
                 try:
                     response = await self._client.post("/v1/completions", json=payload)
@@ -313,14 +326,27 @@ class SGLangEngine(InferenceEngine):
             return {}
 
         try:
+            # 获取模型列表以验证连接
             response = await self._client.get("/v1/models")
             if response.status_code == 200:
-                return {"healthy": 1.0}
+                data = response.json()
+                models = data.get("data", [])
+                # 统计可用模型数量
+                model_count = len(models)
+                return {
+                    "healthy": 1.0,
+                    "model_count": float(model_count),
+                    "connected": 1.0,
+                }
 
-            return {}
+            return {"healthy": 0.0, "connected": 0.0}
 
-        except Exception:
-            return {}
+        except asyncio.TimeoutError:
+            logger.warning("sglang_stats_timeout")
+            return {"healthy": 0.0, "connected": 0.0, "timeout": 1.0}
+        except Exception as e:
+            logger.warning("sglang_stats_error", error=str(e))
+            return {"healthy": 0.0, "connected": 0.0}
 
     # ==================== SGLang特有功能 ====================
 
@@ -356,7 +382,7 @@ class SGLangEngine(InferenceEngine):
         try:
             start_time = time.time()
 
-            payload = {
+            payload: dict[str, Any] = {
                 "model": model_name,
                 "messages": messages,
                 "max_tokens": sampling_params.max_tokens,
@@ -364,8 +390,16 @@ class SGLangEngine(InferenceEngine):
                 "top_p": sampling_params.top_p,
             }
 
+            if sampling_params.top_k > 0:
+                payload["top_k"] = sampling_params.top_k
+            if sampling_params.repetition_penalty != 1.0:
+                payload["repetition_penalty"] = sampling_params.repetition_penalty
             if sampling_params.stop:
                 payload["stop"] = sampling_params.stop
+            if hasattr(sampling_params, "presence_penalty") and sampling_params.presence_penalty != 0.0:
+                payload["presence_penalty"] = sampling_params.presence_penalty
+            if hasattr(sampling_params, "frequency_penalty") and sampling_params.frequency_penalty != 0.0:
+                payload["frequency_penalty"] = sampling_params.frequency_penalty
 
             response = await self._client.post("/v1/chat/completions", json=payload)
 
@@ -407,4 +441,88 @@ class SGLangEngine(InferenceEngine):
                 latency_ms=0,
                 finish_reason="error",
                 metrics={},
+            )
+
+    async def chat_stream(
+        self,
+        model_name: str,
+        messages: list[dict[str, str]],
+        sampling_params: SamplingParams,
+    ) -> AsyncIterator[str]:
+        """
+        SGLang Chat 流式接口
+
+        Args:
+            model_name: 模型名称
+            messages: 消息列表 [{"role": "user", "content": "..."}]
+            sampling_params: 采样参数
+
+        Yields:
+            流式输出的文本片段
+        """
+        if not self._client:
+            logger.error("sglang_client_not_initialized")
+            return
+
+        try:
+            payload: dict[str, Any] = {
+                "model": model_name,
+                "messages": messages,
+                "max_tokens": sampling_params.max_tokens,
+                "temperature": sampling_params.temperature,
+                "top_p": sampling_params.top_p,
+                "stream": True,
+            }
+
+            if sampling_params.top_k > 0:
+                payload["top_k"] = sampling_params.top_k
+            if sampling_params.repetition_penalty != 1.0:
+                payload["repetition_penalty"] = sampling_params.repetition_penalty
+            if sampling_params.stop:
+                payload["stop"] = sampling_params.stop
+            if hasattr(sampling_params, "presence_penalty") and sampling_params.presence_penalty != 0.0:
+                payload["presence_penalty"] = sampling_params.presence_penalty
+            if hasattr(sampling_params, "frequency_penalty") and sampling_params.frequency_penalty != 0.0:
+                payload["frequency_penalty"] = sampling_params.frequency_penalty
+
+            async with self._client.stream(
+                "POST",
+                "/v1/chat/completions",
+                json=payload,
+            ) as response:
+                if response.status_code != 200:
+                    logger.error(
+                        "sglang_chat_stream_failed",
+                        status_code=response.status_code,
+                    )
+                    return
+
+                async for line in response.aiter_lines():
+                    if line.startswith("data: "):
+                        data = line[6:].strip()
+                        if data == "[DONE]":
+                            break
+
+                        import json
+
+                        try:
+                            chunk = json.loads(data)
+                            choices = chunk.get("choices", [])
+                            if not choices:
+                                continue
+                            choice = choices[0]
+                            delta = choice.get("delta", {})
+                            content = delta.get("content", "")
+                            if content:
+                                yield content
+                        except json.JSONDecodeError:
+                            continue
+
+        except asyncio.TimeoutError:
+            logger.error("sglang_chat_stream_timeout", model=model_name)
+        except Exception as e:
+            logger.error(
+                "chat_stream_error",
+                model=model_name,
+                error=str(e),
             )

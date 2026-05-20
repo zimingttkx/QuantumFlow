@@ -58,6 +58,10 @@ class SamplingParams:
     max_tokens: int = 2048
     repetition_penalty: float = 1.0
     stop: list[str] | None = None
+    # SGLang/TGI 特有参数
+    presence_penalty: float = 0.0  # SGLang 支持
+    frequency_penalty: float = 0.0  # SGLang 支持
+    details: bool = False  # TGI 支持，返回 token 级详情
 
     def to_dict(self) -> dict[str, Any]:
         """转换为字典"""
@@ -68,6 +72,9 @@ class SamplingParams:
             "max_tokens": self.max_tokens,
             "repetition_penalty": self.repetition_penalty,
             "stop": self.stop,
+            "presence_penalty": self.presence_penalty,
+            "frequency_penalty": self.frequency_penalty,
+            "details": self.details,
         }
 
 

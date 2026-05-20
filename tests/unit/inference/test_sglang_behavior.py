@@ -5,15 +5,31 @@
 2. 强精准断言：每个功能点的预期返回值必须严格比对
 3. 全覆盖：正常用例、边界值、非法入参、异常场景
 4. 错误定位精准：区分运行报错、逻辑错误、流程偏差
+
+验证维度：
+- initialize() / close() 生命周期管理
+- load_model() / unload_model() 模型状态管理
+- generate() HTTP 请求构建、参数映射、批量逻辑、错误处理
+- generate_stream() SSE 解析、多种响应格式、错误恢复
+- chat() / chat_stream() Chat Completions 接口
+- get_stats() 健康状态与详细指标
+- 新增：top_k, presence_penalty, frequency_penalty 参数映射
+- 新增：chat_stream() 流式 chat 接口
+- 新增：timeout 配置、get_stats() 增强指标
 """
 
 import asyncio
 import sys
+from pathlib import Path
+
+# 跨平台路径处理
+_project_root = Path(__file__).parent.parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-sys.path.insert(0, "/home/dingziming/PycharmProjects/QuantumFlow")
 
 from quantumflow.inference.backends.sglang import SGLangEngine
 from quantumflow.inference.engine import ModelConfig, SamplingParams
@@ -652,14 +668,15 @@ class TestSGLangStats:
 
     @pytest.mark.asyncio
     async def test_get_stats_http_error_returns_empty_dict(self, engine):
-        """[错误用例] HTTP错误时返回空字典"""
+        """[错误用例] HTTP错误时返回 healthy=0.0, connected=0.0"""
         mock_response = MagicMock()
         mock_response.status_code = 500
         engine._client.get = AsyncMock(return_value=mock_response)
 
         stats = await engine.get_stats("test-model")
 
-        assert stats == {}
+        # HTTP 错误时返回 healthy=0.0, connected=0.0
+        assert stats == {"healthy": 0.0, "connected": 0.0}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -691,3 +708,364 @@ class TestSGLangErrorMessages:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 测试类：新功能验证
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestSGLangNewParameters:
+    """验证新添加的采样参数映射：top_k, presence_penalty, frequency_penalty"""
+
+    @pytest.mark.asyncio
+    async def test_generate_includes_top_k_when_positive(self, engine):
+        """[正常用例] top_k > 0 时包含在 generate 请求中"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(
+            return_value={
+                "choices": [{"text": "ok", "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            }
+        )
+        engine._client.post = AsyncMock(return_value=mock_response)
+
+        params = SamplingParams(top_k=100)
+        await engine.generate("test", ["prompt"], params)
+
+        call_args = engine._client.post.call_args
+        payload = call_args.kwargs["json"]
+        assert payload.get("top_k") == 100, f"top_k未包含在请求中: {payload}"
+
+    @pytest.mark.asyncio
+    async def test_generate_excludes_top_k_when_zero(self, engine):
+        """[边界用例] top_k = 0 时不包含在请求中"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(
+            return_value={
+                "choices": [{"text": "ok", "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            }
+        )
+        engine._client.post = AsyncMock(return_value=mock_response)
+
+        params = SamplingParams(top_k=0)
+        await engine.generate("test", ["prompt"], params)
+
+        call_args = engine._client.post.call_args
+        payload = call_args.kwargs["json"]
+        assert "top_k" not in payload, f"top_k=0 时不应包含在请求中: {payload}"
+
+    @pytest.mark.asyncio
+    async def test_generate_includes_presence_penalty(self, engine):
+        """[正常用例] presence_penalty != 0 时包含在请求中"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(
+            return_value={
+                "choices": [{"text": "ok", "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            }
+        )
+        engine._client.post = AsyncMock(return_value=mock_response)
+
+        params = SamplingParams(presence_penalty=0.5)
+        await engine.generate("test", ["prompt"], params)
+
+        call_args = engine._client.post.call_args
+        payload = call_args.kwargs["json"]
+        assert payload.get("presence_penalty") == 0.5, f"presence_penalty未包含: {payload}"
+
+    @pytest.mark.asyncio
+    async def test_generate_excludes_presence_penalty_when_zero(self, engine):
+        """[边界用例] presence_penalty = 0 时不包含在请求中"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(
+            return_value={
+                "choices": [{"text": "ok", "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            }
+        )
+        engine._client.post = AsyncMock(return_value=mock_response)
+
+        params = SamplingParams(presence_penalty=0.0)
+        await engine.generate("test", ["prompt"], params)
+
+        call_args = engine._client.post.call_args
+        payload = call_args.kwargs["json"]
+        assert "presence_penalty" not in payload, f"presence_penalty=0 时不应包含: {payload}"
+
+    @pytest.mark.asyncio
+    async def test_generate_includes_frequency_penalty(self, engine):
+        """[正常用例] frequency_penalty != 0 时包含在请求中"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(
+            return_value={
+                "choices": [{"text": "ok", "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            }
+        )
+        engine._client.post = AsyncMock(return_value=mock_response)
+
+        params = SamplingParams(frequency_penalty=0.3)
+        await engine.generate("test", ["prompt"], params)
+
+        call_args = engine._client.post.call_args
+        payload = call_args.kwargs["json"]
+        assert payload.get("frequency_penalty") == 0.3, f"frequency_penalty未包含: {payload}"
+
+    @pytest.mark.asyncio
+    async def test_generate_all_penalties_together(self, engine):
+        """[正常用例] presence_penalty 和 frequency_penalty 同时设置"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(
+            return_value={
+                "choices": [{"text": "ok", "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            }
+        )
+        engine._client.post = AsyncMock(return_value=mock_response)
+
+        params = SamplingParams(
+            top_k=50,
+            presence_penalty=0.5,
+            frequency_penalty=0.3,
+        )
+        await engine.generate("test", ["prompt"], params)
+
+        call_args = engine._client.post.call_args
+        payload = call_args.kwargs["json"]
+        assert payload["top_k"] == 50
+        assert payload["presence_penalty"] == 0.5
+        assert payload["frequency_penalty"] == 0.3
+
+    @pytest.mark.asyncio
+    async def test_chat_includes_top_k(self, engine):
+        """[正常用例] chat() 请求包含 top_k 参数"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(
+            return_value={
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            }
+        )
+        engine._client.post = AsyncMock(return_value=mock_response)
+
+        params = SamplingParams(top_k=100)
+        await engine.chat("test", [{"role": "user", "content": "hi"}], params)
+
+        call_args = engine._client.post.call_args
+        payload = call_args.kwargs["json"]
+        assert payload.get("top_k") == 100, f"chat() top_k 未包含: {payload}"
+
+    @pytest.mark.asyncio
+    async def test_chat_includes_repetition_penalty(self, engine):
+        """[正常用例] chat() 请求包含 repetition_penalty"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(
+            return_value={
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            }
+        )
+        engine._client.post = AsyncMock(return_value=mock_response)
+
+        params = SamplingParams(repetition_penalty=1.2)
+        await engine.chat("test", [{"role": "user", "content": "hi"}], params)
+
+        call_args = engine._client.post.call_args
+        payload = call_args.kwargs["json"]
+        assert payload.get("repetition_penalty") == 1.2
+
+
+class TestSGLangChatStream:
+    """验证 chat_stream() 流式 Chat 接口"""
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_parses_delta_content(self, engine):
+        """[正常用例] chat_stream 正确解析 delta.content"""
+        sse_chunks = [
+            'data: {"choices":[{"delta":{"content":"Hello","role":"assistant"},"index":0}]}\n\n',
+            'data: {"choices":[{"delta":{"content":" world"},"index":0}]}\n\n',
+            'data: {"choices":[{"delta":{"content":"!"},"index":0,"finish_reason":"stop"}]}\n\n',
+            "data: [DONE]\n\n",
+        ]
+        engine._client.stream = MagicMock(return_value=_mock_sse_response(sse_chunks))
+
+        chunks = []
+        async for text in engine.chat_stream(
+            "test", [{"role": "user", "content": "Hi"}], SamplingParams()
+        ):
+            chunks.append(text)
+
+        assert len(chunks) == 3, f"应返回3个chunk，实际: {chunks}"
+        assert chunks == ["Hello", " world", "!"]
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_request_has_stream_flag(self, engine):
+        """[正常用例] chat_stream 请求包含 stream=True"""
+        sse_chunks = [
+            'data: {"choices":[{"delta":{"content":"ok"},"index":0}]}\n\n',
+            "data: [DONE]\n\n",
+        ]
+        engine._client.stream = MagicMock(return_value=_mock_sse_response(sse_chunks))
+
+        # 消费 async generator
+        async for chunk in engine.chat_stream(
+            "test", [{"role": "user", "content": "hi"}], SamplingParams()
+        ):
+            pass
+
+        call_args = engine._client.stream.call_args
+        payload = call_args.kwargs["json"]
+        assert payload.get("stream") is True, "chat_stream 请求必须设置 stream=True"
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_endpoint_is_v1_chat_completions(self, engine):
+        """[正常用例] chat_stream 使用 /v1/chat/completions 端点"""
+        sse_chunks = [
+            'data: {"choices":[{"delta":{"content":"ok"},"index":0}]}\n\n',
+            "data: [DONE]\n\n",
+        ]
+        engine._client.stream = MagicMock(return_value=_mock_sse_response(sse_chunks))
+
+        # 消费 async generator
+        async for chunk in engine.chat_stream(
+            "test", [{"role": "user", "content": "hi"}], SamplingParams()
+        ):
+            pass
+
+        call_args = engine._client.stream.call_args
+        # 验证端点
+        assert "/v1/chat/completions" in str(call_args), "chat_stream 应使用 /v1/chat/completions"
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_client_not_initialized_returns_empty(self, engine):
+        """[错误用例] 客户端未初始化时返回空迭代器"""
+        engine._client = None
+
+        chunks = []
+        async for text in engine.chat_stream(
+            "test", [{"role": "user", "content": "hi"}], SamplingParams()
+        ):
+            chunks.append(text)
+
+        assert chunks == [], "客户端未初始化时应返回空流"
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_http_error_returns_empty(self, engine):
+        """[错误用例] HTTP 错误时返回空迭代器"""
+        engine._client.stream = MagicMock(return_value=_mock_sse_response([], status_code=500))
+
+        chunks = []
+        async for text in engine.chat_stream(
+            "test", [{"role": "user", "content": "hi"}], SamplingParams()
+        ):
+            chunks.append(text)
+
+        assert chunks == [], "HTTP 错误时应返回空流"
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_includes_top_k(self, engine):
+        """[正常用例] chat_stream 请求包含 top_k"""
+        sse_chunks = [
+            'data: {"choices":[{"delta":{"content":"ok"},"index":0}]}\n\n',
+            "data: [DONE]\n\n",
+        ]
+        engine._client.stream = MagicMock(return_value=_mock_sse_response(sse_chunks))
+
+        params = SamplingParams(top_k=100)
+        # 消费 async generator
+        async for chunk in engine.chat_stream("test", [{"role": "user", "content": "hi"}], params):
+            pass
+
+        call_args = engine._client.stream.call_args
+        payload = call_args.kwargs["json"]
+        assert payload.get("top_k") == 100, f"chat_stream top_k 未包含: {payload}"
+
+
+class TestSGLangTimeoutConfig:
+    """验证 timeout 配置"""
+
+    def test_engine_accepts_timeout_parameter(self):
+        """[正常用例] 构造函数接受 timeout 参数"""
+        engine = SGLangEngine(base_url="http://localhost:30000", timeout=60)
+        assert engine._timeout == 60
+
+    def test_engine_uses_config_timeout(self):
+        """[正常用例] timeout 可从 config 中读取"""
+        engine = SGLangEngine(config={"timeout": 120})
+        assert engine._timeout == 120
+
+    def test_engine_defaults_to_300(self):
+        """[边界用例] 未指定 timeout 时默认为 300"""
+        engine = SGLangEngine()
+        assert engine._timeout == 300
+
+
+class TestSGLangEnhancedStats:
+    """验证增强后的 get_stats() 返回详细指标"""
+
+    @pytest.mark.asyncio
+    async def test_get_stats_returns_model_count(self, engine):
+        """[正常用例] get_stats 返回 model_count 指标"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(
+            return_value={
+                "data": [
+                    {"id": "model-1"},
+                    {"id": "model-2"},
+                    {"id": "model-3"},
+                ]
+            }
+        )
+        engine._client.get = AsyncMock(return_value=mock_response)
+
+        stats = await engine.get_stats("test-model")
+
+        assert stats.get("healthy") == 1.0
+        assert stats.get("model_count") == 3.0, f"model_count 应为 3，实际: {stats}"
+        assert stats.get("connected") == 1.0
+
+    @pytest.mark.asyncio
+    async def test_get_stats_timeout_returns_timeout_flag(self, engine):
+        """[边界用例] 超时时返回 timeout: 1.0 标志"""
+        engine._client.get = AsyncMock(side_effect=asyncio.TimeoutError())
+
+        stats = await engine.get_stats("test-model")
+
+        assert stats.get("timeout") == 1.0, f"超时时应有 timeout 标志: {stats}"
+        assert stats.get("healthy") == 0.0
+
+    @pytest.mark.asyncio
+    async def test_get_stats_returns_healthy_when_models_exist(self, engine):
+        """[正常用例] 有模型时返回 healthy: 1.0"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"data": [{"id": "model-1"}]})
+        engine._client.get = AsyncMock(return_value=mock_response)
+
+        stats = await engine.get_stats("test-model")
+
+        assert stats.get("healthy") == 1.0
+        assert stats.get("connected") == 1.0
+
+    @pytest.mark.asyncio
+    async def test_get_stats_returns_zero_healthy_on_http_error(self, engine):
+        """[错误用例] HTTP 错误时返回 healthy: 0.0"""
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        engine._client.get = AsyncMock(return_value=mock_response)
+
+        stats = await engine.get_stats("test-model")
+
+        assert stats.get("healthy") == 0.0, f"HTTP 错误时 healthy 应为 0: {stats}"
+        assert stats.get("connected") == 0.0

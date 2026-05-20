@@ -9,6 +9,8 @@ import structlog
 from quantumflow.core.constants import InferenceBackendType
 from quantumflow.core.exceptions import InferenceError, ModelNotFoundError
 from quantumflow.inference.backends.huggingface import HuggingFaceEngine
+from quantumflow.inference.backends.sglang import SGLangEngine
+from quantumflow.inference.backends.tgi import TGIEngine
 from quantumflow.inference.backends.vllm import VLLMEngine
 from quantumflow.inference.batch_accumulator import BatchAccumulator
 from quantumflow.inference.engine import (
@@ -59,13 +61,20 @@ class EngineManager:
         self._eviction_task: asyncio.Task | None = None
 
     async def initialize(
-        self, backend: InferenceBackendType = InferenceBackendType.HUGGINGFACE
+        self,
+        backend: InferenceBackendType = InferenceBackendType.HUGGINGFACE,
+        **kwargs,
     ) -> bool:
         """
         初始化指定后端的推理引擎
 
         Args:
             backend: 推理后端类型
+            **kwargs: 后端特定配置
+                - VLLM: 无特殊配置
+                - HuggingFace: 无特殊配置
+                - TGI: base_url (默认 http://localhost:8080)
+                - SGLang: base_url (默认 http://localhost:30000), timeout (默认 300s)
 
         Returns:
             是否初始化成功
@@ -87,6 +96,34 @@ class EngineManager:
                     self._default_engine = engine
                     logger.info("engine_manager_initialized", backend=backend.value)
                     return True
+            elif backend == InferenceBackendType.TGI:
+                base_url = kwargs.get("base_url", "http://localhost:8080")
+                engine = TGIEngine(base_url=base_url)
+                success = await engine.initialize()
+                if success:
+                    self._engines[backend] = engine
+                    self._default_engine = engine
+                    logger.info("engine_manager_initialized", backend=backend.value, base_url=base_url)
+                    return True
+                else:
+                    logger.warning("tgi_init_failed", base_url=base_url)
+            elif backend == InferenceBackendType.SGLANG:
+                base_url = kwargs.get("base_url", "http://localhost:30000")
+                timeout = kwargs.get("timeout", 300)
+                engine = SGLangEngine(base_url=base_url, timeout=timeout)
+                success = await engine.initialize()
+                if success:
+                    self._engines[backend] = engine
+                    self._default_engine = engine
+                    logger.info(
+                        "engine_manager_initialized",
+                        backend=backend.value,
+                        base_url=base_url,
+                        timeout=timeout,
+                    )
+                    return True
+                else:
+                    logger.warning("sglang_init_failed", base_url=base_url)
             else:
                 logger.warning("unsupported_backend", backend=backend.value)
                 return False
@@ -130,7 +167,15 @@ class EngineManager:
         # 3. 获取或创建引擎
         engine = self._engines.get(backend)
         if not engine:
-            success = await self.initialize(backend)
+            # 传递后端特定配置
+            init_kwargs = {}
+            if backend == InferenceBackendType.TGI:
+                init_kwargs["base_url"] = kwargs.get("tgi_base_url", "http://localhost:8080")
+            elif backend == InferenceBackendType.SGLANG:
+                init_kwargs["base_url"] = kwargs.get("sglang_base_url", "http://localhost:30000")
+                init_kwargs["timeout"] = kwargs.get("sglang_timeout", 300)
+
+            success = await self.initialize(backend, **init_kwargs)
             if not success:
                 raise InferenceError(f"Failed to initialize {backend.value} engine")
             engine = self._engines[backend]

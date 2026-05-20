@@ -283,6 +283,17 @@ class LoadModelRequest(BaseModel):
     max_model_len: int | None = Field(2048, description="最大模型长度")  # 降低max_model_len适应显存
     dtype: str | None = Field("auto", description="数据类型: auto, float16, bfloat16, float32")
     quantization: str | None = Field(None, description="量化方式: awq, gptq, gguf")
+    # TGI 特有配置
+    tgi_base_url: str | None = Field(
+        None, description="TGI 服务器地址（仅 TGI 后端生效）"
+    )
+    # SGLang 特有配置
+    sglang_base_url: str | None = Field(
+        None, description="SGLang 服务器地址（仅 SGLang 后端生效）"
+    )
+    sglang_timeout: int | None = Field(
+        None, description="SGLang 请求超时（秒，仅 SGLang 后端生效）"
+    )
 
     model_config = {
         "json_schema_extra": {

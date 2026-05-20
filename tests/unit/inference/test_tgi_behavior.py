@@ -7,20 +7,27 @@
 4. 错误定位精准：区分运行报错、逻辑错误、流程偏差
 
 验证维度：
-- generate() 的请求构建逻辑（参数映射、端点选择）
-- generate_stream() 的 SSE 解析逻辑
-- 错误处理路径（网络错误、超时、HTTP错误码）
-- 模型加载/卸载状态管理
-- 批量请求的并行处理和错误隔离
+- initialize() / close() 生命周期管理
+- load_model() / unload_model() 模型状态管理
+- generate() HTTP 请求构建、参数映射（top_k/truncate 隔离）、批量逻辑、错误处理
+- generate_stream() SSE 解析、多种响应格式、错误恢复
+- get_stats() 健康状态（修复重复 return 问题）
+- 新增：details 参数支持
+- 新增：流式解析增强（空行、多种格式兼容）
 """
 
 import asyncio
 import sys
+from pathlib import Path
+
+# 跨平台路径处理
+_project_root = Path(__file__).parent.parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-sys.path.insert(0, "/home/dingziming/PycharmProjects/QuantumFlow")
 
 from quantumflow.inference.backends.tgi import TGIEngine
 from quantumflow.inference.engine import ModelConfig, SamplingParams
@@ -655,14 +662,15 @@ class TestTGIStats:
 
     @pytest.mark.asyncio
     async def test_get_stats_http_error_returns_empty_dict(self, engine):
-        """[错误用例] HTTP错误时返回空字典"""
+        """[错误用例] HTTP错误时返回 healthy=0.0"""
         mock_response = MagicMock()
         mock_response.status_code = 500
         engine._client.get = AsyncMock(return_value=mock_response)
 
         stats = await engine.get_stats("test-model")
 
-        assert stats == {}, "HTTP错误时应返回空字典"
+        # HTTP 错误时返回 healthy=0.0 表示服务不健康
+        assert stats == {"healthy": 0.0}, f"HTTP错误时应返回healthy=0.0，实际: {stats}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -700,3 +708,269 @@ class TestTGIErrorMessages:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 测试类：新功能验证
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestTGINewParameters:
+    """验证新添加的 details 参数"""
+
+    @pytest.mark.asyncio
+    async def test_generate_includes_details_when_enabled(self, engine):
+        """[正常用例] details=True 时请求包含 details 和 decoder_input_details"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(
+            return_value={
+                "generated_text": "ok",
+            }
+        )
+        engine._client.post = AsyncMock(return_value=mock_response)
+
+        params = SamplingParams(details=True)
+        await engine.generate("test", ["prompt"], params)
+
+        call_args = engine._client.post.call_args
+        payload = call_args.kwargs["json"]
+        params_block = payload.get("parameters", {})
+        assert params_block.get("details") is True, f"details 未包含在请求中: {params_block}"
+        assert params_block.get("decoder_input_details") is True, f"decoder_input_details 未包含: {params_block}"
+
+    @pytest.mark.asyncio
+    async def test_generate_excludes_details_when_disabled(self, engine):
+        """[边界用例] details=False 时请求不包含 details"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(
+            return_value={
+                "generated_text": "ok",
+            }
+        )
+        engine._client.post = AsyncMock(return_value=mock_response)
+
+        params = SamplingParams(details=False)
+        await engine.generate("test", ["prompt"], params)
+
+        call_args = engine._client.post.call_args
+        payload = call_args.kwargs["json"]
+        params_block = payload.get("parameters", {})
+        assert "details" not in params_block, f"details=False 时不应包含: {params_block}"
+
+    @pytest.mark.asyncio
+    async def test_stream_includes_details_when_enabled(self, engine):
+        """[正常用例] 流式请求也支持 details 参数"""
+        sse_chunks = [
+            'data: {"token":{"text":"ok"}}\n\n',
+            "data: [DONE]\n\n",
+        ]
+        engine._client.stream = MagicMock(return_value=_mock_sse_response(sse_chunks))
+
+        params = SamplingParams(details=True)
+        # consume the async generator
+        async for chunk in engine.generate_stream("test", "prompt", params):
+            pass
+
+        call_args = engine._client.stream.call_args
+        payload = call_args.kwargs["json"]
+        params_block = payload.get("parameters", {})
+        assert params_block.get("details") is True, f"流式请求 details 未包含: {params_block}"
+
+
+class TestTGITopKTruncateIsolation:
+    """验证 top_k 与 truncate 参数隔离（关键安全测试）"""
+
+    @pytest.mark.asyncio
+    async def test_top_k_does_not_imply_truncate(self, engine):
+        """[安全边界用例] top_k > 0 时，确保 truncate 未被错误设置
+
+        这是关键的业务逻辑测试：
+        top_k 控制采样阶段的 token 候选数量
+        truncate 控制输入序列的最大长度
+        两者是完全独立的参数，绝对不能混淆！
+        """
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(
+            return_value={
+                "generated_text": "ok",
+            }
+        )
+        engine._client.post = AsyncMock(return_value=mock_response)
+
+        params = SamplingParams(top_k=50)
+        await engine.generate("test", ["prompt"], params)
+
+        call_args = engine._client.post.call_args
+        payload = call_args.kwargs["json"]
+        params_block = payload.get("parameters", {})
+
+        # 核心断言：top_k 存在，但 truncate 必须不存在
+        assert "top_k" in params_block, "top_k 应存在"
+        assert "truncate" not in params_block, f"BUG: top_k 被错误映射为 truncate! params={params_block}"
+        assert params_block["top_k"] == 50
+
+    @pytest.mark.asyncio
+    async def test_top_k_zero_does_not_add_truncate(self, engine):
+        """[边界用例] top_k=0 时确保不添加任何截断相关参数"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(
+            return_value={
+                "generated_text": "ok",
+            }
+        )
+        engine._client.post = AsyncMock(return_value=mock_response)
+
+        params = SamplingParams(top_k=0)
+        await engine.generate("test", ["prompt"], params)
+
+        call_args = engine._client.post.call_args
+        payload = call_args.kwargs["json"]
+        params_block = payload.get("parameters", {})
+
+        assert "top_k" not in params_block
+        assert "truncate" not in params_block, "top_k=0 时不应添加任何截断参数"
+
+
+class TestTGIEnhancedStreamParsing:
+    """验证增强后的流式解析（空行处理、多种格式兼容）"""
+
+    @pytest.mark.asyncio
+    async def test_stream_skips_empty_lines(self, engine):
+        """[健壮性用例] SSE 流中的空行被正确跳过"""
+        sse_chunks = [
+            'data: {"token":{"text":"Hello"}}\n\n',
+            "",  # 空行
+            'data: {"token":{"text":" world"}}\n\n',
+            "",  # 空行
+            "data: [DONE]\n\n",
+        ]
+        engine._client.stream = MagicMock(return_value=_mock_sse_response(sse_chunks))
+
+        chunks = []
+        async for text in engine.generate_stream("test", "prompt", SamplingParams()):
+            chunks.append(text)
+
+        assert len(chunks) == 2, f"空行应被跳过，实际 chunks: {chunks}"
+        assert chunks == ["Hello", " world"]
+
+    @pytest.mark.asyncio
+    async def test_stream_handles_multiple_json_formats(self, engine):
+        """[健壮性用例] 流式解析兼容多种 JSON 格式（TGI 不同版本）"""
+        sse_chunks = [
+            'data: {"token":{"text":"Format1"}}\n\n',
+            'data: {"generated_text":"Format2"}\n\n',  # 备用格式
+            'data: {"choices":[{"text":"Format3"}]}\n\n',  # 另一种备用格式
+            "data: [DONE]\n\n",
+        ]
+        engine._client.stream = MagicMock(return_value=_mock_sse_response(sse_chunks))
+
+        chunks = []
+        async for text in engine.generate_stream("test", "prompt", SamplingParams()):
+            chunks.append(text)
+
+        # 实现会尝试多种格式并返回第一个非空结果
+        # 格式1: token.text -> "Format1"
+        # 格式2: generated_text -> "Format2"
+        # 格式3: choices[0].text -> "Format3"
+        assert len(chunks) == 3, f"解析了所有三种格式: {chunks}"
+        assert chunks == ["Format1", "Format2", "Format3"]
+
+    @pytest.mark.asyncio
+    async def test_stream_empty_data_field_skipped(self, engine):
+        """[健壮性用例] data: 后面为空时正确跳过"""
+        sse_chunks = [
+            'data: {"token":{"text":"Hello"}}\n\n',
+            'data: \n\n',  # 空数据
+            'data: {"token":{"text":" world"}}\n\n',
+            "data: [DONE]\n\n",
+        ]
+        engine._client.stream = MagicMock(return_value=_mock_sse_response(sse_chunks))
+
+        chunks = []
+        async for text in engine.generate_stream("test", "prompt", SamplingParams()):
+            chunks.append(text)
+
+        assert len(chunks) == 2, f"空 data 字段应被跳过: {chunks}"
+
+    @pytest.mark.asyncio
+    async def test_stream_unknown_exception_does_not_crash(self, engine):
+        """[健壮性用例] JSON 解析后的未知异常不中断流"""
+        sse_chunks = [
+            'data: {"token":{"text":"Hello"}}\n\n',
+            "data: {\"unknown_field\": function() {}}\n\n",  # 触发异常
+            'data: {"token":{"text":"World"}}\n\n',
+            "data: [DONE]\n\n",
+        ]
+        engine._client.stream = MagicMock(return_value=_mock_sse_response(sse_chunks))
+
+        chunks = []
+        async for text in engine.generate_stream("test", "prompt", SamplingParams()):
+            chunks.append(text)
+
+        # 第一个和第三个 chunk 应该被正确处理
+        assert "Hello" in chunks, "Hello 应在 chunks 中"
+        assert "World" in chunks, "World 应在 chunks 中"
+
+
+class TestTGIFixedStats:
+    """验证 get_stats() 修复后的行为（无重复 return）"""
+
+    @pytest.mark.asyncio
+    async def test_get_stats_returns_healthy_on_success(self, engine):
+        """[正常用例] 健康检查成功时返回 healthy: 1.0"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"model_ids": ["model-1"]})
+        engine._client.get = AsyncMock(return_value=mock_response)
+
+        stats = await engine.get_stats("test-model")
+
+        assert stats == {"healthy": 1.0}, f"应返回 healthy: 1.0，实际: {stats}"
+
+    @pytest.mark.asyncio
+    async def test_get_stats_returns_zero_healthy_on_failure(self, engine):
+        """[错误用例] 健康检查失败时返回 healthy: 0.0"""
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        engine._client.get = AsyncMock(return_value=mock_response)
+
+        stats = await engine.get_stats("test-model")
+
+        assert stats == {"healthy": 0.0}, f"应返回 healthy: 0.0，实际: {stats}"
+
+    @pytest.mark.asyncio
+    async def test_get_stats_timeout_returns_timeout_flag(self, engine):
+        """[边界用例] 超时时返回 timeout: 1.0 标志"""
+        engine._client.get = AsyncMock(side_effect=asyncio.TimeoutError())
+
+        stats = await engine.get_stats("test-model")
+
+        assert stats.get("healthy") == 0.0
+        assert stats.get("timeout") == 1.0, f"超时时应有 timeout 标志: {stats}"
+
+    @pytest.mark.asyncio
+    async def test_get_stats_no_duplicate_return(self, engine):
+        """[逻辑验证] get_stats() 不再有重复 return 语句
+
+        这是代码审查级别的测试：
+        确保修复后的 get_stats() 在所有分支都有明确的返回值，
+        不会因为重复 return 导致某些路径返回 None
+        """
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        engine._client.get = AsyncMock(return_value=mock_response)
+
+        # 调用多次确保行为一致
+        stats1 = await engine.get_stats("model-1")
+        stats2 = await engine.get_stats("model-2")
+
+        # 两个调用结果结构应一致
+        assert isinstance(stats1, dict)
+        assert isinstance(stats2, dict)
+        # 不应返回 None
+        assert stats1 is not None
+        assert stats2 is not None

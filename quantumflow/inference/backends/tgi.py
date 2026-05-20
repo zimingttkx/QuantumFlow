@@ -147,21 +147,34 @@ class TGIEngine(InferenceEngine):
             start_time = time.time()
 
             # 构建请求
-            payload = {
+            # 重要：top_k 和 truncate 是完全独立的参数！
+            # top_k 控制采样阶段的 token 候选数量
+            # truncate 控制输入序列的最大长度
+            # 两者不能混淆！
+            payload: dict[str, Any] = {
                 "inputs": prompts if len(prompts) > 1 else prompts[0],
                 "parameters": {
                     "temperature": sampling_params.temperature,
                     "top_p": sampling_params.top_p,
                     "max_new_tokens": sampling_params.max_tokens,
                     "repetition_penalty": sampling_params.repetition_penalty,
+                    # 明确不传递 truncate，即使 top_k > 0
+                    # truncate 由 ModelConfig 单独控制，不应与 top_k 混淆
                 },
             }
 
+            # top_k: 仅控制采样，不影响输入处理
             if sampling_params.top_k > 0:
                 payload["parameters"]["top_k"] = sampling_params.top_k
 
+            # stop 序列
             if sampling_params.stop:
                 payload["parameters"]["stop"] = sampling_params.stop
+
+            # details: 请求返回 token 级详情（用于调试和精确统计）
+            if hasattr(sampling_params, "details") and sampling_params.details:
+                payload["parameters"]["details"] = True
+                payload["parameters"]["decoder_input_details"] = True
 
             # 单请求 vs 批量请求
             if len(prompts) == 1:
@@ -280,7 +293,7 @@ class TGIEngine(InferenceEngine):
             return
 
         try:
-            payload = {
+            payload: dict[str, Any] = {
                 "inputs": prompt,
                 "parameters": {
                     "temperature": sampling_params.temperature,
@@ -294,6 +307,8 @@ class TGIEngine(InferenceEngine):
                 payload["parameters"]["top_k"] = sampling_params.top_k
             if sampling_params.stop:
                 payload["parameters"]["stop"] = sampling_params.stop
+            if hasattr(sampling_params, "details") and sampling_params.details:
+                payload["parameters"]["details"] = True
 
             async with self._client.stream(
                 "POST",
@@ -308,8 +323,15 @@ class TGIEngine(InferenceEngine):
                     return
 
                 async for line in response.aiter_lines():
+                    # 跳过空行
+                    if not line:
+                        continue
+
                     if line.startswith("data: "):
                         data = line[6:].strip()
+                        if not data:
+                            continue
+
                         if data == "[DONE]":
                             break
 
@@ -317,11 +339,27 @@ class TGIEngine(InferenceEngine):
 
                         try:
                             chunk = json.loads(data)
+                            # 尝试从 token.text 获取
                             token = chunk.get("token", {})
                             text = token.get("text", "")
+                            # 备用：从 generated_text 获取（TGI 某些版本格式）
+                            if not text:
+                                text = chunk.get("generated_text", "")
+                            # 备用：从 content 获取
+                            if not text:
+                                choices = chunk.get("choices", [])
+                                if choices:
+                                    text = choices[0].get("text", "")
+
                             if text:
                                 yield text
                         except json.JSONDecodeError:
+                            # 忽略无法解析的行，继续处理后续数据
+                            logger.debug("tgi_stream_json_decode_error", raw_data=data[:100])
+                            continue
+                        except Exception as e:
+                            # 记录其他解析错误但继续处理
+                            logger.debug("tgi_stream_parse_error", error=str(e), raw_data=data[:100])
                             continue
 
         except asyncio.TimeoutError:
@@ -343,9 +381,10 @@ class TGIEngine(InferenceEngine):
             if response.status_code == 200:
                 return {"healthy": 1.0}
 
-            return {}
+            return {"healthy": 0.0}
 
-            return {}
-
+        except asyncio.TimeoutError:
+            logger.warning("tgi_stats_timeout")
+            return {"healthy": 0.0, "timeout": 1.0}
         except Exception:
-            return {}
+            return {"healthy": 0.0}

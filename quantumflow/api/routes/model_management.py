@@ -26,6 +26,40 @@ MODEL_PATH_MAPPING: dict[str, str] = {
     "Phi-3-mini-4k": "microsoft/Phi-3-mini-4k-instruct",
 }
 
+# 后端字符串到枚举的映射（解决 API 字符串与枚举值不一致的问题）
+# API 使用短名称，枚举使用完整名称
+BACKEND_STRING_TO_ENUM: dict[str, InferenceBackendType] = {
+    "vllm": InferenceBackendType.VLLM,
+    "huggingface": InferenceBackendType.HUGGINGFACE,
+    "text-generation-inference": InferenceBackendType.TGI,
+    "tgi": InferenceBackendType.TGI,  # 兼容 API 文档中的 "tgi"
+    "sglang": InferenceBackendType.SGLANG,
+}
+
+
+def _resolve_backend(backend_str: str | None) -> InferenceBackendType:
+    """将后端字符串转换为 InferenceBackendType 枚举
+
+    Args:
+        backend_str: 后端字符串 ("vllm", "tgi", "sglang", "huggingface" 等)
+
+    Returns:
+        对应的 InferenceBackendType 枚举值
+
+    Raises:
+        ValueError: 如果后端字符串无效
+    """
+    if backend_str is None:
+        return InferenceBackendType.HUGGINGFACE
+
+    backend = BACKEND_STRING_TO_ENUM.get(backend_str)
+    if backend is None:
+        raise ValueError(
+            f"Invalid backend: '{backend_str}'. "
+            f"Supported backends: {list(BACKEND_STRING_TO_ENUM.keys())}"
+        )
+    return backend
+
 
 def _resolve_model_path(model_name: str, model_path: str = None) -> str:
     """解析模型路径"""
@@ -111,19 +145,22 @@ async def load_model(request: LoadModelRequest) -> LoadModelResponse:
     engine_manager = get_engine_manager()
 
     try:
+        backend = _resolve_backend(request.backend)
+
         success, message = await engine_manager.load_model(
             model_name=request.model,
             model_path=model_path,
-            backend=(
-                InferenceBackendType(request.backend)
-                if request.backend
-                else InferenceBackendType.HUGGINGFACE
-            ),
+            backend=backend,
             tensor_parallel=request.tensor_parallel or 1,
             gpu_memory_utilization=request.gpu_memory_utilization or 0.8,
             max_model_len=request.max_model_len or 2048,
             dtype=request.dtype or "auto",
             quantization=request.quantization,
+            # TGI 特有配置
+            tgi_base_url=request.tgi_base_url,
+            # SGLang 特有配置
+            sglang_base_url=request.sglang_base_url,
+            sglang_timeout=request.sglang_timeout,
         )
 
         if success:
