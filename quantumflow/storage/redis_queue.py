@@ -172,7 +172,8 @@ class RedisQueue:
 
             # 加入优先级队列 (使用有序集合，score为优先级)
             # 使用负数优先级，因为Redis ZSET默认升序
-            score = -(request.priority + request.created_at.timestamp())
+            # priority 占主导地位（乘以大数），timestamp 仅在优先级相同时作为 Tie-breaker
+            score = -(request.priority * 10**12 + request.created_at.timestamp())
             await self._redis.zadd(
                 self.QUEUE_KEY,
                 {request.request_id: score},

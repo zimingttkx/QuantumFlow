@@ -1,7 +1,14 @@
 {
   "permissions": {
     "allow": [
-      "Bash(wsl --status)"
+      "Bash(wsl --status)",
+      "Bash(.venv/bin/python -m pytest tests/ -v --tb=short)",
+      "Bash(.venv/bin/python -m pytest tests/ -v --tb=no)",
+      "Bash(.venv/bin/python -c \"from quantumflow.api.server import create_app; app = create_app\\(\\); print\\(app\\)\")",
+      "Bash(.venv/bin/python -m quantumflow.api.main --help)",
+      "Bash(.venv/bin/uvicorn quantumflow.api.server:create_app --factory --host 0.0.0.0 --port 8000)",
+      "Bash(echo \"Server PID: $!\")",
+      "Bash(.venv/bin/python -m pytest tests/integration/test_api_strict.py -v --tb=short)"
     ]
   }
 }

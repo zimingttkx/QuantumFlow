@@ -225,8 +225,8 @@ class TestRedisQueueEnqueueDequeueLogic:
         zadd_call = mock_redis.zadd.call_args
         zadd_args = zadd_call[0][1]
 
-        # score = -(priority + timestamp)
-        expected_score = -(7 + t0.timestamp())
+        # score = -(priority * 10**12 + timestamp)
+        expected_score = -(7 * 10**12 + t0.timestamp())
         actual_score = list(zadd_args.values())[0]
         assert abs(actual_score - expected_score) < 0.001
 

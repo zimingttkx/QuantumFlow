@@ -258,7 +258,7 @@ class TestRedisQueueCoreLogic:
         zadd_call_args = mock_redis.zadd.call_args
         zadd_args = zadd_call_args[0][1]  # {request_id: score}
 
-        expected_score = -(7 + t0.timestamp())
+        expected_score = -(7 * 10**12 + t0.timestamp())
         actual_request_id = list(zadd_args.keys())[0]
         actual_score = list(zadd_args.values())[0]
 
