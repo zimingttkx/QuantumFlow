@@ -1,0 +1,328 @@
+syntax = "proto3";
+
+package quantumflow.v1;
+
+option go_package = "quantumflow/v1;quantumflow";
+option java_multiple_files = true;
+option java_package = "com.quantumflow.grpc";
+
+// ============ 枚举类型 ============
+
+enum ModelBackend {
+  MODEL_BACKEND_UNSPECIFIED = 0;
+  MODEL_BACKEND_VLLM = 1;
+  MODEL_BACKEND_HUGGINGFACE = 2;
+  MODEL_BACKEND_TGI = 3;
+  MODEL_BACKEND_SGLANG = 4;
+}
+
+enum InferenceMode {
+  INFERENCE_MODE_UNSPECIFIED = 0;
+  INFERENCE_MODE_GENERATE = 1;
+  INFERENCE_MODE_STREAM = 2;
+  INFERENCE_MODE_BATCH = 3;
+}
+
+enum ResponseStatus {
+  STATUS_UNSPECIFIED = 0;
+  STATUS_SUCCESS = 1;
+  STATUS_PENDING = 2;
+  STATUS_PROCESSING = 3;
+  STATUS_ERROR = 4;
+  STATUS_CANCELLED = 5;
+}
+
+enum NodeStatus {
+  NODE_STATUS_UNSPECIFIED = 0;
+  NODE_STATUS_ACTIVE = 1;
+  NODE_STATUS_IDLE = 2;
+  NODE_STATUS_BUSY = 3;
+  NODE_STATUS_OFFLINE = 4;
+}
+
+// ============ 公共消息 ============
+
+message GPUMemory {
+  uint64 total_bytes = 1;
+  uint64 available_bytes = 2;
+  uint64 used_bytes = 3;
+  float utilization = 4;
+}
+
+message GPUInfo {
+  int32 index = 1;
+  string name = 2;
+  GPUMemory memory = 3;
+  float utilization = 4;
+  uint64 compute_capacity = 5;  // TFLOPS
+}
+
+message ModelInfo {
+  string name = 1;
+  string backend = 2;
+  int64 size_bytes = 3;
+  int32 tensor_parallel_size = 4;
+  GPUMemory memory_required = 5;
+  bool is_loaded = 6;
+}
+
+message NodeResources {
+  string node_id = 1;
+  string host = 2;
+  int32 port = 3;
+  repeated GPUInfo gpus = 4;
+  repeated ModelInfo loaded_models = 5;
+  NodeStatus status = 6;
+  int64 last_heartbeat_timestamp = 7;
+}
+
+// ============ 推理服务 ============
+
+message InferenceRequest {
+  string request_id = 1;
+  string model_name = 2;
+  ModelBackend backend = 3;
+  string prompt = 4;
+  bool stream = 5;
+  int32 max_tokens = 6;
+  float temperature = 7;
+  float top_p = 8;
+  int32 top_k = 9;
+  float repetition_penalty = 10;
+  map<string, string> extra_params = 11;
+}
+
+message InferenceResponse {
+  string request_id = 1;
+  ResponseStatus status = 2;
+  string text = 3;
+  int32 tokens_generated = 4;
+  float latency_ms = 5;
+  string error_message = 6;
+}
+
+message BatchInferenceRequest {
+  string batch_id = 1;
+  string model_name = 2;
+  ModelBackend backend = 3;
+  repeated string prompts = 4;
+  int32 max_tokens = 5;
+  float temperature = 6;
+  map<string, string> extra_params = 7;
+}
+
+message BatchInferenceResponse {
+  string batch_id = 1;
+  ResponseStatus status = 2;
+  repeated InferenceResponse results = 3;
+  float total_latency_ms = 4;
+}
+
+// 推理服务定义
+service InferenceService {
+  // 同步推理
+  rpc Inference(InferenceRequest) returns (InferenceResponse);
+
+  // 流式推理
+  rpc InferenceStream(InferenceRequest) returns (stream InferenceResponse);
+
+  // 批量推理
+  rpc BatchInference(BatchInferenceRequest) returns (BatchInferenceResponse);
+}
+
+// ============ 集群管理服务 ============
+
+message RegisterNodeRequest {
+  string node_id = 1;
+  string host = 2;
+  int32 port = 3;
+  repeated GPUInfo gpus = 4;
+  map<string, string> capabilities = 5;
+}
+
+message RegisterNodeResponse {
+  bool success = 1;
+  string message = 2;
+  string assigned_id = 3;
+}
+
+message HeartbeatRequest {
+  string node_id = 1;
+  NodeResources resources = 2;
+}
+
+message HeartbeatResponse {
+  bool success = 1;
+  int64 server_time = 2;
+  repeated string pending_tasks = 3;
+}
+
+message DeregisterNodeRequest {
+  string node_id = 1;
+  string reason = 2;
+}
+
+message DeregisterNodeResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message ListNodesRequest {
+  NodeStatus filter_status = 1;
+  string filter_model = 2;
+}
+
+message ListNodesResponse {
+  repeated NodeResources nodes = 1;
+}
+
+service ClusterService {
+  // 节点注册
+  rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
+
+  // 节点注销
+  rpc DeregisterNode(DeregisterNodeRequest) returns (DeregisterNodeResponse);
+
+  // 心跳
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // 列出节点
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+
+  // 节点资源更新（推送）
+  rpc UpdateNodeResources(stream NodeResources) returns (stream NodeResources);
+}
+
+// ============ 调度服务 ============
+
+message SchedulingRequest {
+  string request_id = 1;
+  string model_name = 2;
+  ModelBackend backend = 3;
+  int32 tensor_parallel_size = 4;
+  int32 gpu_memory_required_gb = 5;
+  int32 priority = 6;
+  InferenceMode mode = 7;
+}
+
+message SchedulingResponse {
+  string request_id = 1;
+  bool scheduled = 2;
+  string assigned_node_id = 3;
+  string assigned_host = 4;
+  int32 assigned_port = 5;
+  string error_message = 6;
+  ResponseStatus status = 7;
+}
+
+message CancelRequest {
+  string request_id = 1;
+}
+
+message CancelResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message GetSchedulingStatusRequest {
+  string request_id = 1;
+}
+
+message GetSchedulingStatusResponse {
+  string request_id = 1;
+  ResponseStatus status = 2;
+  InferenceResponse result = 3;
+  string error_message = 4;
+}
+
+service SchedulerService {
+  // 提交调度请求
+  rpc SubmitRequest(SchedulingRequest) returns (SchedulingResponse);
+
+  // 取消请求
+  rpc Cancel(CancelRequest) returns (CancelResponse);
+
+  // 获取调度状态
+  rpc GetStatus(GetSchedulingStatusRequest) returns (GetSchedulingStatusResponse);
+
+  // 取消调度请求（流式）
+  rpc CancelRequestStream(stream CancelRequest) returns (stream CancelResponse);
+}
+
+// ============ 健康检查服务 ============
+
+message HealthCheckRequest {
+  string service = 1;
+}
+
+message HealthCheckResponse {
+  bool healthy = 1;
+  string status = 2;
+  map<string, string> details = 3;
+}
+
+service HealthService {
+  rpc Check(HealthCheckRequest) returns (HealthCheckResponse);
+  rpc Watch(HealthCheckRequest) returns (stream HealthCheckResponse);
+}
+
+// ============ 模型管理服务 ============
+
+message LoadModelRequest {
+  string model_name = 1;
+  ModelBackend backend = 2;
+  int32 tensor_parallel_size = 3;
+  float gpu_memory_utilization = 4;
+  map<string, string> backend_config = 5;
+}
+
+message LoadModelResponse {
+  bool success = 1;
+  string model_name = 2;
+  string message = 3;
+  GPUMemory memory_allocated = 4;
+}
+
+message UnloadModelRequest {
+  string model_name = 1;
+}
+
+message UnloadModelResponse {
+  bool success = 1;
+  string message = 2;
+  uint64 memory_freed_bytes = 3;
+}
+
+message ListModelsRequest {}
+
+message ListModelsResponse {
+  repeated ModelInfo models = 1;
+}
+
+service ModelManagementService {
+  rpc LoadModel(LoadModelRequest) returns (LoadModelResponse);
+  rpc UnloadModel(UnloadModelRequest) returns (UnloadModelResponse);
+  rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
+}
+
+// ============ 指标服务 ============
+
+message MetricsRequest {
+  repeated string metric_names = 1;
+}
+
+message MetricSample {
+  string name = 1;
+  double value = 2;
+  int64 timestamp = 3;
+  map<string, string> labels = 4;
+}
+
+message MetricsResponse {
+  repeated MetricSample metrics = 1;
+}
+
+service MetricsService {
+  rpc GetMetrics(MetricsRequest) returns (MetricsResponse);
+  rpc StreamMetrics(MetricsRequest) returns (stream MetricsResponse);
+}

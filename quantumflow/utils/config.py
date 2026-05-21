@@ -135,6 +135,32 @@ class MonitoringConfig(BaseModel):
     health_check_detailed: bool = True
 
 
+class GrpcRateLimitConfig(BaseModel):
+    """gRPC 限流配置"""
+
+    enabled: bool = True
+    qps: int = 100
+    burst: int = 200
+
+
+class GrpcAuthConfig(BaseModel):
+    """gRPC 认证配置"""
+
+    enabled: bool = False
+    api_keys: dict[str, str] = {}
+
+
+class GrpcConfig(BaseModel):
+    """gRPC 配置"""
+
+    enabled: bool = False
+    port: int = 50051
+    max_workers: int = 10
+    reflection_enabled: bool = True
+    rate_limit: GrpcRateLimitConfig = Field(default_factory=GrpcRateLimitConfig)
+    auth: GrpcAuthConfig = Field(default_factory=GrpcAuthConfig)
+
+
 class ModelConfig(BaseModel):
     """模型配置"""
 
@@ -164,6 +190,7 @@ class QuantumFlowConfig(BaseModel):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
     models: ModelConfig = Field(default_factory=ModelConfig)
+    grpc: GrpcConfig = Field(default_factory=GrpcConfig)
 
     @classmethod
     def from_file(cls, path: str | Path) -> Self:

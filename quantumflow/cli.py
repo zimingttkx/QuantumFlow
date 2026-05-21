@@ -40,7 +40,9 @@ def version():
 @click.option("--port", default=8000, help="监听端口")
 @click.option("--workers", default=1, help="工作进程数")
 @click.option("--reload", is_flag=True, help="启用热重载")
-def serve(host, port, workers, reload):
+@click.option("--enable-grpc", is_flag=True, help="同时启动gRPC服务器")
+@click.option("--grpc-port", default=50051, help="gRPC服务器端口")
+def serve(host, port, workers, reload, enable_grpc, grpc_port):
     """启动API服务器"""
     import uvicorn
 
@@ -49,6 +51,10 @@ def serve(host, port, workers, reload):
     console.print("[bold green]启动QuantumFlow API服务器[/bold green]")
     console.print(f"  地址: {host}:{port}")
     console.print(f"  工作进程: {workers}")
+    if enable_grpc:
+        console.print(f"  gRPC: {host}:{grpc_port} (已启用)")
+    else:
+        console.print(f"  gRPC: {grpc_port} (默认禁用，使用 --enable-grpc 启用)")
 
     app = create_app()
 
@@ -586,6 +592,205 @@ def worker_unregister(node_id, url):
                 console.print(f"[red]✗ 连接失败: {e}[/red]")
 
     asyncio.run(do_unregister())
+
+
+@cli.group()
+def grpc():
+    """gRPC服务管理命令"""
+    pass
+
+
+@grpc.command("serve")
+@click.option("--port", default=50051, help="gRPC监听端口")
+@click.option("--max-workers", default=10, help="最大工作线程数")
+@click.option("--reflection/--no-reflection", default=True, help="启用gRPC Reflection")
+@click.option("--enable-auth", is_flag=True, help="启用认证")
+@click.option("--api-key", default="", help="API密钥(启用认证时必填)")
+def grpc_serve(port, max_workers, reflection, enable_auth, api_key):
+    """启动独立gRPC服务器(需配合API服务器使用)"""
+    from quantumflow.grpc.server import GrpcServer
+
+    console.print("[bold green]启动QuantumFlow gRPC服务器[/bold green]")
+    console.print(f"  端口: {port}")
+    console.print(f"  最大工作线程: {max_workers}")
+    console.print(f"  Reflection: {'启用' if reflection else '禁用'}")
+
+    # 创建gRPC服务器
+    server = GrpcServer(
+        port=port,
+        max_workers=max_workers,
+        reflection_enabled=reflection,
+    )
+
+    # 添加所有服务
+    server.add_inference_service()
+    server.add_cluster_service()
+    server.add_scheduler_service()
+    server.add_model_management_service()
+    server.add_health_service()
+    server.add_metrics_service()
+
+    # 添加拦截器
+    server.add_logging_interceptor()
+    server.add_metrics_interceptor()
+    server.add_rate_limit_interceptor()
+
+    if enable_auth:
+        if not api_key:
+            console.print("[red]✗ 启用认证时必须提供 --api-key[/red]")
+            return
+        server.add_auth_interceptor(
+            allowed_tokens={api_key: "cli_user"},
+            bypass_methods={"/quantumflow.v1.HealthService/Check", "/quantumflow.v1.HealthService/Watch"},
+        )
+        console.print(f"  认证: 启用 (api_key: {api_key[:4]}***)")
+
+    server.start()
+    console.print(f"[green]✓ gRPC服务器已启动 on port {port}[/green]")
+    console.print("[dim]按 Ctrl+C 停止[/dim]")
+
+    try:
+        import time
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        console.print("[yellow]正在停止gRPC服务器...[/yellow]")
+        server.stop()
+        console.print("[green]✓ gRPC服务器已停止[/green]")
+
+
+@grpc.command("invoke")
+@click.argument("method")
+@click.argument("model")
+@click.option("--prompt", "-p", default="Hello, world!", help="输入提示")
+@click.option("--max-tokens", "-t", default=100, help="最大生成token数")
+@click.option("--temperature", default=0.7, help="温度参数")
+@click.option("--host", default="localhost", help="gRPC服务器主机")
+@click.option("--port", default=50051, help="gRPC服务器端口")
+def grpc_invoke(method, model, prompt, max_tokens, temperature, host, port):
+    """通过gRPC调用推理服务
+
+    METHOD: inference(同步推理) | inference_stream(流式推理) | batch(批量推理)
+    MODEL: 模型名称
+    """
+    import grpc
+
+    from quantumflow.grpc.generated import quantumflow_pb2, quantumflow_pb2_grpc
+
+    console.print(f"[cyan]连接gRPC服务器 {host}:{port}...[/cyan]")
+
+    channel = grpc.insecure_channel(f"{host}:{port}")
+    stub = quantumflow_pb2_grpc.InferenceServiceStub(channel)
+
+    if method == "inference":
+        console.print(f"[cyan]同步推理: {model}[/cyan]")
+        request = quantumflow_pb2.InferenceRequest(
+            request_id=f"cli-{int(time.time())}",
+            model_name=model,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        response = stub.Inference(request)
+        console.print()
+        console.print("[bold green]结果:[/bold green]")
+        console.print(response.text)
+        console.print(f"[dim]状态: {quantumflow_pb2.Status.Name(response.status)}[/dim]")
+        console.print(f"[dim]Token数: {response.tokens_generated}[/dim]")
+
+    elif method == "inference_stream":
+        console.print(f"[cyan]流式推理: {model}[/cyan]")
+        request = quantumflow_pb2.InferenceRequest(
+            request_id=f"cli-{int(time.time())}",
+            model_name=model,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        console.print("[bold green]结果:[/bold green] ", end="")
+        for chunk in stub.InferenceStream(request):
+            console.print(chunk.text, end="", markup=False)
+        console.print()
+
+    elif method == "batch":
+        prompts = [prompt, f"{prompt} (2)", f"{prompt} (3)"]
+        console.print(f"[cyan]批量推理: {len(prompts)} 条请求[/cyan]")
+        request = quantumflow_pb2.BatchInferenceRequest(
+            batch_id=f"cli-batch-{int(time.time())}",
+            model_name=model,
+            prompts=prompts,
+            max_tokens=max_tokens,
+        )
+        response = stub.BatchInference(request)
+        console.print(f"[green]批量推理完成: {len(response.results)} 条结果[/green]")
+        for i, result in enumerate(response.results):
+            console.print(f"  [{i+1}] {result.text[:50]}...")
+
+    else:
+        console.print(f"[red]✗ 未知方法: {method}[/red]")
+        console.print("[dim]可用方法: inference | inference_stream | batch[/dim]")
+
+    channel.close()
+
+
+@grpc.command("health")
+@click.option("--host", default="localhost", help="gRPC服务器主机")
+@click.option("--port", default=50051, help="gRPC服务器端口")
+def grpc_health(host, port):
+    """检查gRPC服务器健康状态"""
+    import grpc
+
+    from quantumflow.grpc.generated import quantumflow_pb2, quantumflow_pb2_grpc
+
+    console.print(f"[cyan]检查gRPC服务器健康状态 {host}:{port}...[/cyan]")
+
+    channel = grpc.insecure_channel(f"{host}:{port}")
+    stub = quantumflow_pb2_grpc.HealthServiceStub(channel)
+
+    try:
+        request = quantumflow_pb2.HealthCheckRequest()
+        response = stub.Check(request)
+        if response.healthy:
+            console.print(f"[green]✓ 服务器健康: {response.status}[/green]")
+        else:
+            console.print(f"[yellow]⚠ 服务器状态: {response.status}[/yellow]")
+    except grpc.RpcError as e:
+        console.print(f"[red]✗ 连接失败: {e.code().name}: {e.details()}[/red]")
+    finally:
+        channel.close()
+
+
+@grpc.command("status")
+@click.option("--host", default="localhost", help="gRPC服务器主机")
+@click.option("--port", default=50051, help="gRPC服务器端口")
+def grpc_status(host, port):
+    """获取gRPC服务器集群状态"""
+    import grpc
+
+    from quantumflow.grpc.generated import quantumflow_pb2, quantumflow_pb2_grpc
+
+    console.print(f"[cyan]获取集群状态 {host}:{port}...[/cyan]")
+
+    channel = grpc.insecure_channel(f"{host}:{port}")
+    stub = quantumflow_pb2_grpc.ClusterServiceStub(channel)
+
+    try:
+        request = quantumflow_pb2.ListNodesRequest()
+        response = stub.ListNodes(request)
+        console.print(f"[green]集群节点数: {len(response.nodes)}[/green]")
+        if response.nodes:
+            table = Table(show_header=True, header_style="bold magenta")
+            table.add_column("节点ID", style="cyan")
+            table.add_column("主机", style="yellow")
+            table.add_column("端口", style="magenta")
+            table.add_column("状态", style="green")
+            for node in response.nodes:
+                table.add_row(node.node_id, node.host, str(node.port), quantumflow_pb2.NodeStatus.Name(node.status))
+            console.print(table)
+    except grpc.RpcError as e:
+        console.print(f"[red]✗ 连接失败: {e.code().name}: {e.details()}[/red]")
+    finally:
+        channel.close()
 
 
 @worker.command("start")

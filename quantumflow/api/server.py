@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Optional
 
 import structlog
 from fastapi import FastAPI, Request, status
@@ -17,6 +18,9 @@ from quantumflow.utils.logging import setup_logging
 from quantumflow.version import __version__
 
 logger = structlog.get_logger().bind(component="api_server")
+
+# 全局 gRPC 服务器引用
+_grpc_server: Optional["GrpcServer"] = None
 
 
 def create_app() -> FastAPI:
@@ -34,6 +38,8 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         """应用生命周期管理"""
+        global _grpc_server
+
         logger.info("app_starting", version=__version__)
 
         # 启动 GPU 监控和空闲淘汰检查
@@ -44,7 +50,57 @@ def create_app() -> FastAPI:
         # idle_ttl 默认 0（禁用），若需启用可在配置中设置
         await mgr.start_idle_eviction_checker()
 
+        # 启动 gRPC 服务器（如果启用）
+        grpc_config = getattr(config, "grpc", None)
+        if grpc_config and getattr(grpc_config, "enabled", False):
+            from quantumflow.grpc.server import GrpcServer
+
+            grpc_port = getattr(grpc_config, "port", 50051)
+            _grpc_server = GrpcServer(port=grpc_port)
+
+            # 添加所有服务
+            _grpc_server.add_inference_service(
+                engine_manager=mgr,
+                cluster_manager=None,
+            )
+            _grpc_server.add_cluster_service(cluster_manager=None)
+            _grpc_server.add_scheduler_service(scheduler=None, engine_manager=mgr)
+            _grpc_server.add_model_management_service(engine_manager=mgr)
+            _grpc_server.add_health_service(
+                engine_manager=mgr,
+                cluster_manager=None,
+            )
+
+            # 添加拦截器
+            _grpc_server.add_logging_interceptor()
+            _grpc_server.add_metrics_interceptor()
+
+            # 检查是否启用限流
+            if getattr(grpc_config, "rate_limit", {}).get("enabled", True):
+                rate_limit_config = getattr(grpc_config, "rate_limit", {})
+                _grpc_server.add_rate_limit_interceptor(
+                    qps=rate_limit_config.get("qps", 100),
+                    burst=rate_limit_config.get("burst", 200),
+                )
+
+            # 检查是否启用认证
+            auth_config = getattr(grpc_config, "auth", {})
+            if auth_config.get("enabled", False):
+                _grpc_server.add_auth_interceptor(
+                    allowed_tokens=auth_config.get("api_keys", {}),
+                    bypass_methods={"/HealthService/Check", "/HealthService/Watch"},
+                )
+
+            _grpc_server.start()
+            logger.info("grpc_server_started", port=grpc_port)
+
         yield
+
+        # 停止 gRPC 服务器
+        if _grpc_server is not None:
+            _grpc_server.stop()
+            logger.info("grpc_server_stopped")
+
         await mgr.stop_gpu_monitoring()
         logger.info("app_shutdown")
 
