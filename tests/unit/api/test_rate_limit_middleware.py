@@ -399,3 +399,132 @@ class TestTokenBucketReverseValidation:
 
         # 不应抛出异常
         assert bucket.capacity == 100
+
+
+# =============================================================================
+# 按端点限流测试
+# =============================================================================
+
+class TestPerEndpointRateLimit:
+    """按端点限流测试"""
+
+    def test_per_endpoint_separate_buckets(self):
+        """验证：不同端点使用独立令牌桶"""
+        app = FastAPI()
+        app.add_middleware(
+            RateLimitMiddleware,
+            qps=1,
+            burst=1,
+            per_endpoint=True,
+        )
+
+        @app.get("/endpoint1")
+        async def endpoint1():
+            return {"path": "/endpoint1"}
+
+        @app.get("/endpoint2")
+        async def endpoint2():
+            return {"path": "/endpoint2"}
+
+        client = TestClient(app)
+
+        # endpoint1 消耗令牌
+        assert client.get("/endpoint1").status_code == 200
+        assert client.get("/endpoint1").status_code == 429  # 耗尽
+
+        # endpoint2 应该有独立令牌桶，不受 endpoint1 影响
+        assert client.get("/endpoint2").status_code == 200
+        assert client.get("/endpoint2").status_code == 429  # 耗尽
+
+    def test_global_bucket_still_works(self):
+        """验证：per_endpoint=False 时使用全局桶"""
+        app = FastAPI()
+        app.add_middleware(
+            RateLimitMiddleware,
+            qps=1,
+            burst=1,
+            per_endpoint=False,  # 默认全局
+        )
+
+        @app.get("/endpoint1")
+        async def endpoint1():
+            return {"path": "/endpoint1"}
+
+        @app.get("/endpoint2")
+        async def endpoint2():
+            return {"path": "/endpoint2"}
+
+        client = TestClient(app)
+
+        # endpoint1 消耗令牌
+        assert client.get("/endpoint1").status_code == 200
+        assert client.get("/endpoint1").status_code == 429
+
+        # endpoint2 也被影响（共享全局桶）
+        assert client.get("/endpoint2").status_code == 429
+
+    def test_per_endpoint_with_different_paths(self):
+        """验证：多个不同路径独立限流"""
+        app = FastAPI()
+        app.add_middleware(
+            RateLimitMiddleware,
+            qps=1,
+            burst=2,
+            per_endpoint=True,
+        )
+
+        @app.get("/api/users")
+        async def users():
+            return {"path": "/api/users"}
+
+        @app.get("/api/orders")
+        async def orders():
+            return {"path": "/api/orders"}
+
+        @app.get("/api/products")
+        async def products():
+            return {"path": "/api/products"}
+
+        client = TestClient(app)
+
+        # /api/users 消耗 2 个令牌
+        assert client.get("/api/users").status_code == 200
+        assert client.get("/api/users").status_code == 200
+        assert client.get("/api/users").status_code == 429
+
+        # /api/orders 有独立令牌桶（burst=2）
+        assert client.get("/api/orders").status_code == 200
+        assert client.get("/api/orders").status_code == 200
+        assert client.get("/api/orders").status_code == 429
+
+        # /api/products 也有独立令牌桶
+        assert client.get("/api/products").status_code == 200
+        assert client.get("/api/products").status_code == 200
+        assert client.get("/api/products").status_code == 429
+
+    def test_per_endpoint_default_is_false(self):
+        """验证：per_endpoint 默认为 False"""
+        app = FastAPI()
+        # 不传 per_endpoint 参数
+        app.add_middleware(
+            RateLimitMiddleware,
+            qps=1,
+            burst=1,
+        )
+
+        @app.get("/endpoint1")
+        async def endpoint1():
+            return {"path": "/endpoint1"}
+
+        @app.get("/endpoint2")
+        async def endpoint2():
+            return {"path": "/endpoint2"}
+
+        client = TestClient(app)
+
+        # endpoint1 消耗令牌
+        assert client.get("/endpoint1").status_code == 200
+        assert client.get("/endpoint1").status_code == 429
+
+        # endpoint2 也被影响（默认全局桶）
+        assert client.get("/endpoint2").status_code == 429

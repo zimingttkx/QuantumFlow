@@ -46,6 +46,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     基于令牌桶算法，支持：
     - 全局限流
+    - 按端点限流（per_endpoint=True）
     - 可配置的 QPS 和突发容量
     """
 
@@ -54,12 +55,28 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         app,
         qps: int = 100,
         burst: int = 200,
+        per_endpoint: bool = False,
     ):
         super().__init__(app)
+        self.per_endpoint = per_endpoint
         self.bucket = TokenBucket(capacity=burst, refill_rate=float(qps))
+        self.endpoint_buckets: dict[str, "TokenBucket"] = {}
+
+    def _get_bucket(self, path: str) -> "TokenBucket":
+        """获取对应端点的令牌桶"""
+        if not self.per_endpoint:
+            return self.bucket
+        if path not in self.endpoint_buckets:
+            self.endpoint_buckets[path] = TokenBucket(
+                capacity=self.bucket.capacity,
+                refill_rate=self.bucket.refill_rate,
+            )
+        return self.endpoint_buckets[path]
 
     async def dispatch(self, request: Request, call_next):
-        if not self.bucket.try_acquire(1):
+        path = request.url.path
+        bucket = self._get_bucket(path)
+        if not bucket.try_acquire(1):
             return JSONResponse(
                 status_code=429,
                 content={

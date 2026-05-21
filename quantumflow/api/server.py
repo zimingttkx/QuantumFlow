@@ -136,6 +136,7 @@ def create_app() -> FastAPI:
             RateLimitMiddleware,
             qps=rate_limit_cfg.rest_api.qps,
             burst=rate_limit_cfg.rest_api.burst,
+            per_endpoint=rate_limit_cfg.rest_api.per_endpoint,
         )
 
     # 异常处理

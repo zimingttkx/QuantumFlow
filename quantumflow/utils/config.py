@@ -149,6 +149,7 @@ class RestApiRateLimitConfig(BaseModel):
     enabled: bool = True
     qps: int = 100
     burst: int = 200
+    per_endpoint: bool = False  # 是否按端点限流
 
 
 class RateLimitConfig(BaseModel):
