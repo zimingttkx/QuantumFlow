@@ -93,6 +93,7 @@
 | gRPC API | ✅ 已完成 | 高性能 RPC 接口，降低延迟 87% 覆盖率 |
 | REST API 限流 | ✅ 已完成 | TokenBucket 全局限流 + per_endpoint 按端点限流 |
 | Python SDK | ✅ 已完成 | Sync/Async 客户端，支持 httpx |
+| TensorRT-LLM | ✅ 已完成 | NVIDIA 高性能推理引擎后端 |
 
 ### gRPC 开发计划 (docs/grpc_development_plan.md)
 
@@ -161,7 +162,6 @@
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
-| TensorRT-LLM | 📋 规划中 | NVIDIA 高性能推理引擎 |
 | 昇腾 NPU | 📋 规划中 | 华为昇腾深度适配 |
 | Cambricon 寒武纪 | 📋 规划中 | 国产加速器支持 |
 

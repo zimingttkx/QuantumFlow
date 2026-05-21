@@ -10,6 +10,7 @@ from quantumflow.core.constants import InferenceBackendType
 from quantumflow.core.exceptions import InferenceError, ModelNotFoundError
 from quantumflow.inference.backends.huggingface import HuggingFaceEngine
 from quantumflow.inference.backends.sglang import SGLangEngine
+from quantumflow.inference.backends.tensorrt_llm import TensorRTLLMEngine
 from quantumflow.inference.backends.tgi import TGIEngine
 from quantumflow.inference.backends.vllm import VLLMEngine
 from quantumflow.inference.batch_accumulator import BatchAccumulator
@@ -124,6 +125,17 @@ class EngineManager:
                     return True
                 else:
                     logger.warning("sglang_init_failed", base_url=base_url)
+            elif backend == InferenceBackendType.TRT_LLM:
+                engine = TensorRTLLMEngine()
+                success = await engine.initialize()
+                if success:
+                    self._engines[backend] = engine
+                    self._default_engine = engine
+                    logger.info("engine_manager_initialized", backend=backend.value)
+                    return True
+                else:
+                    logger.warning("trt_llm_init_failed")
+                    return False
             else:
                 logger.warning("unsupported_backend", backend=backend.value)
                 return False

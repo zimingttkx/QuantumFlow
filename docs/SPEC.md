@@ -921,6 +921,7 @@ quantumflow generate <model_name> -p <prompt>
 ✅ **gRPC 服务** — Inference/Cluster/Scheduler/Model/Health 服务完整实现
 ✅ **REST API 限流** — TokenBucket 全局限流 + per_endpoint 按端点限流
 ✅ **Python SDK** — Sync/Async 客户端，支持 httpx
+✅ **TensorRT-LLM** — NVIDIA 高性能推理引擎后端
 
 ### 12.3 设计说明
 
@@ -939,8 +940,8 @@ quantumflow generate <model_name> -p <prompt>
 | 功能 | 说明 |
 |------|------|
 | 多租户支持 | API Key 认证 + 资源配额隔离 |
-| TensorRT-LLM | NVIDIA 高性能推理引擎后端 |
 | 昇腾 NPU | 华为昇腾深度适配 |
+| Cambricon 寒武纪 | 寒武纪 MLU 适配 |
 
 ---
 

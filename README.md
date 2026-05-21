@@ -300,7 +300,7 @@ QuantumFlow 通过 NVIDIA NVML API 采集两个独立的 GPU 指标：
 - ✅ **TGI** — Text Generation Inference，FlashAttention + Continuous Batching
 - ✅ **SGLang** — RadixAttention + Chunked Prefill + 结构化输出
 - ⚠️ **Chunked Prefill** — HuggingFace 后端已实现，其他后端规划中
-- 📋 **TensorRT-LLM** — 规划中
+- ✅ **TensorRT-LLM** — NVIDIA 高性能推理引擎后端
 
 ---
 
