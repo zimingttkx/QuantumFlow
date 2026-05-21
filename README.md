@@ -31,7 +31,7 @@
 | **本地/分布式自适应** | 单GPU自动本地推理 | 多Worker自动分布式调度 | ✅ 已完成 |
 | **国产硬件** | 昇腾NPU深度适配 | 打破 NVIDIA 垄断 | 📋 规划中 |
 | **企业级** | 多租户 / 限流 / 容灾 | 开箱即用的生产特性 | 📋 规划中 |
-| **gRPC API** | 高性能 RPC 接口 | 降低延迟，提升吞吐 | 📋 规划中 |
+| **gRPC API** | 高性能 RPC 接口 | 降低延迟，提升吞吐 | ✅ 已完成 |
 
 </div>
 
@@ -112,7 +112,7 @@ python -m quantumflow.cli generate Qwen2.5-1.5B -p "你好"  # 生成
 │  │                   接入层 (Gateway) ✅ 已完成                     │  │
 │  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐         │  │
 │  │  │ REST API│  │ gRPC API│  │ Python  │  │   CLI   │         │  │
-│  │  │ ✅FastAPI│  │ 📋规划中│  │ 📋规划中│  │ ✅ CLI  │         │  │
+│  │  │ ✅FastAPI│  │ ✅ gRPC │  │ 📋规划中│  │ ✅ CLI  │         │  │
 │  │  └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘         │  │
 │  └───────┼─────────────┼─────────────┼─────────────┼───────────────┘  │
 │          └─────────────┴─────────────┴─────────────┘                     │
@@ -614,12 +614,56 @@ async with httpx.AsyncClient() as client:
     print(resp.json()["generated_text"])
 ```
 
+### gRPC API
+
+gRPC 默认禁用，需在配置中开启：
+
+```yaml
+# configs/development.yaml
+grpc:
+  enabled: true
+  port: 50051
+  max_workers: 10
+  reflection_enabled: true
+  rate_limit:
+    enabled: true
+    qps: 100
+    burst: 200
+  auth:
+    enabled: false
+```
+
+```python
+import grpc
+from quantumflow.grpc.generated import quantumflow_pb2, quantumflow_pb2_grpc
+
+# 连接 gRPC 服务器
+channel = grpc.insecure_channel('localhost:50051')
+stub = quantumflow_pb2_grpc.InferenceServiceStub(channel)
+
+# 推理请求
+response = stub.Inference(quantumflow_pb2.InferenceRequest(
+    request_id="req-001",
+    model_name="Qwen2.5-1.5B",
+    prompt="你好",
+    max_tokens=100,
+    temperature=0.7,
+))
+print(response.text)
+
+# 流式推理
+for chunk in stub.InferenceStream(request):
+    print(chunk.text, end="")
+
+channel.close()
+```
+
 ---
 
 ## 🧪 测试
 
 ```bash
-pytest tests/ -v    # 266个测试，全部通过
+pytest tests/unit/grpc/ -v    # 531个测试，87%覆盖率(gRPC模块)
 ```
 
 ---

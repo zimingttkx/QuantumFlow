@@ -90,9 +90,64 @@
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
-| gRPC API | 📋 规划中 | 高性能 RPC 接口，降低延迟 |
+| gRPC API | ✅ 已完成 | 高性能 RPC 接口，降低延迟 87% 覆盖率 |
 | Python SDK | 📋 规划中 | 独立 SDK 包，方便集成 |
-| CLI 测试覆盖率 | 📋 提升中 | 当前 19%，目标 80%+ |
+
+### gRPC 开发计划 (docs/grpc_development_plan.md)
+
+**Phase 1: 基础设施**
+- [x] TODO-1.1 创建 `quantumflow/grpc/` 目录结构
+- [x] TODO-1.2 安装 grpcio, grpcio-tools, grpcio-reflection 依赖
+- [x] TODO-1.3 生成 Proto 代码 (`quantumflow.proto` → `*_pb2.py`, `*_pb2_grpc.py`)
+- [x] TODO-1.4 验证 Proto 生成测试
+
+**Phase 2: 异常和拦截器**
+- [x] TODO-2.1 定义 gRPC 异常类 (GrpcQuantumFlowError, NodeNotFoundError, etc.)
+- [x] TODO-2.2 日志拦截器 (LoggingInterceptor)
+- [x] TODO-2.3 认证拦截器 (AuthInterceptor)
+- [x] TODO-2.4 监控拦截器 (MetricsInterceptor)
+- [x] TODO-2.5 限流拦截器 (RateLimitInterceptor)
+
+**Phase 3: 服务实现**
+- [x] TODO-3.1 InferenceService (同步/流式/批量推理)
+- [x] TODO-3.2 ClusterService (注册/注销/心跳/列表)
+- [x] TODO-3.3 SchedulerService (提交/取消/状态查询)
+- [x] TODO-3.4 ModelManagementService (加载/卸载/列表)
+- [x] TODO-3.5 HealthService (健康检查/流式监控)
+
+**Phase 4: 服务端启动**
+- [x] TODO-4.1 GrpcServer 封装类
+- [x] TODO-4.2 整合到 FastAPI 主服务器 (lifespan)
+
+**Phase 5: 客户端**
+- [x] TODO-5.1 GrpcChannelPool 连接池管理
+- [x] TODO-5.2 InferenceClient 推理客户端
+- [x] TODO-5.3 ClusterClient 集群管理客户端
+- [x] TODO-5.4 SchedulerClient 调度客户端
+
+**Phase 6: Worker 集成**
+- [x] TODO-6.1 WorkerGrpcClient (连接 Controller)
+- [x] TODO-6.2 WorkerGrpcService (接收 gRPC 请求)
+
+### gRPC 测试计划 (docs/grpc_test_plan.md)
+
+**目标**: ≥95% 覆盖率，~480 测试用例
+
+| 测试模块 | 测试用例数 | 说明 |
+|----------|-----------|------|
+| Proto 验证 | 144 | 序列化/反序列化/枚举/边界 |
+| 异常测试 | 59 | 所有异常类型映射 |
+| 拦截器测试 | ✅ 已实现 | Logging/Auth/Metrics/RateLimit |
+| Servicer 测试 | 98 | Inference/Cluster/Scheduler/Model/Health |
+| 客户端测试 | ✅ 已实现 | 各种客户端方法 |
+| 集成测试 | ✅ 已实现 | 端到端/并发/负载 |
+| **总计** | **301+** | |
+
+**测试原则**:
+1. 严禁只做运行可用性测试
+2. 强精准断言（检查具体值，非仅非空）
+3. 全场景覆盖：常规/边界/非法/异常/并发/多分支
+4. 业务逻辑优先校验
 
 ### 中优先级
 
@@ -251,4 +306,4 @@ python -m quantumflow.cli interactive
 
 ---
 
-*最后更新: 2026-05-20*
+*最后更新: 2026-05-21*
