@@ -103,7 +103,7 @@ class SyncQuantumFlowClient:
 
 
 class AsyncQuantumFlowClient:
-    """QuantumFlow 异步客户端（占位，后续实现）"""
+    """QuantumFlow 异步客户端"""
 
     def __init__(
         self,
@@ -114,6 +114,73 @@ class AsyncQuantumFlowClient:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
+
+    async def _arequest(self, method: str, path: str, **kwargs) -> dict[str, Any]:
+        """发送异步 HTTP 请求"""
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        async with httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=self.timeout,
+            headers=headers,
+        ) as client:
+            try:
+                response = await client.request(method, path, **kwargs)
+                if response.status_code == 429:
+                    raise RateLimitError()
+                if response.status_code >= 400:
+                    raise APIError(response.status_code, response.text)
+                return response.json()
+            except httpx.TimeoutException:
+                raise TimeoutError(f"Request to {path} timed out")
+
+    async def generate(
+        self,
+        model: str,
+        prompt: str,
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+        stream: bool = False,
+        **kwargs
+    ):
+        """异步文本生成"""
+        from quantumflow.sdk.models import InferenceRequest, SamplingParams, InferenceResponse
+
+        sampling = SamplingParams(temperature=temperature, max_tokens=max_tokens, **kwargs)
+        request = InferenceRequest(
+            model=model,
+            prompt=prompt,
+            sampling_params=sampling,
+            stream=stream
+        )
+
+        data = await self._arequest("POST", "/api/v1/inference/generate", json=request.to_dict())
+        return InferenceResponse(
+            request_id=data["request_id"],
+            model=data["model"],
+            generated_text=data["generated_text"],
+            finish_reason=data["finish_reason"],
+            latency_ms=data["latency_ms"],
+            prompt_tokens=data["usage"]["prompt_tokens"],
+            completion_tokens=data["usage"]["completion_tokens"],
+            total_tokens=data["usage"]["total_tokens"],
+        )
+
+    async def list_models(self) -> list[dict[str, Any]]:
+        """异步获取模型列表"""
+        return await self._arequest("GET", "/api/v1/models")
+
+    async def health_check(self) -> dict[str, Any]:
+        """异步健康检查"""
+        return await self._arequest("GET", "/api/v1/health")
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        pass
 
 
 QuantumFlowSDK = SyncQuantumFlowClient
