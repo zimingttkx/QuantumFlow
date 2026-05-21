@@ -919,6 +919,8 @@ quantumflow generate <model_name> -p <prompt>
 ✅ **GPU 监控数据采集** — NVML 实时数据
 ✅ **Redis 队列错误处理** — 错误时抛出异常
 ✅ **gRPC 服务** — Inference/Cluster/Scheduler/Model/Health 服务完整实现
+✅ **REST API 限流** — TokenBucket 全局限流 + per_endpoint 按端点限流
+✅ **Python SDK** — Sync/Async 客户端，支持 httpx
 
 ### 12.3 设计说明
 
@@ -936,11 +938,9 @@ quantumflow generate <model_name> -p <prompt>
 
 | 功能 | 说明 |
 |------|------|
-| 多租户支持 | 租户隔离 + 资源配额 |
-| 请求限流 | Token/请求频率限制 |
-| TensorRT-LLM | NVIDIA 高性能推理引擎 |
+| 多租户支持 | API Key 认证 + 资源配额隔离 |
+| TensorRT-LLM | NVIDIA 高性能推理引擎后端 |
 | 昇腾 NPU | 华为昇腾深度适配 |
-| Python SDK | 独立 SDK 包，方便集成 |
 
 ---
 
