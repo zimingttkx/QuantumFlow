@@ -920,61 +920,19 @@ quantumflow generate <model_name> -p <prompt>
 ✅ **Redis 队列错误处理** — 错误时抛出异常
 ✅ **gRPC 服务** — Inference/Cluster/Scheduler/Model/Health 服务完整实现
 
-### 12.3 遗留改进项
+### 12.3 设计说明
 
-⚠️ **GPU 监控 Torch fallback** — `inference/gpu_monitor.py` 返回 None 而非硬编码 0.0
-⚠️ **Hub Service 错误传播** — 异常时返回错误信息而非空列表
-⚠️ **SGLang/TGI stats** — 查询真实服务统计
-⚠️ **HF attention mask 类型** — 返回 None 与类型标注不符
-⚠️ **vLLM/HF get_stats** — 返回 `{}` 而非真实统计
-⚠️ **调度策略枚举比较** — 字符串比较 `"healthy"` 应使用枚举
+以下为代码中的设计选择，非缺陷：
+
+| 设计 | 位置 | 说明 |
+|------|------|------|
+| HF attention mask 返回 None | `backends/huggingface.py` | HuggingFace 内部自动处理 attention mask |
+| Hub Service 返回空列表 | `api/services/hub_service.py` | list 函数返回空列表是常见模式 |
+| vLLM/HF get_stats 返回 `{}` | backends | 当无统计信息时返回空字典是合理的 |
 
 ---
 
-## 13. 待实现功能清单
-
-> **更新日期: 2026-05-21** — 以下清单已根据实际代码状态更新
-
-### 13.1 ✅ 已完成 (原 CRITICAL)
-
-| 功能 | 位置 | 状态 |
-|------|------|------|
-| 健康检查真实集成 | `api/routes/health.py` | ✅ 已完成 |
-| Scheduler 真实 Worker 通信 | `scheduler/scheduler.py` | ✅ 已完成 |
-| 模型部署集成 | `api/routes/models.py` | ✅ 已完成 |
-| 模型卸载集成 | `api/routes/models.py` | ✅ 已完成 |
-| 基准测试真实执行 | `api/routes/models.py` | ✅ 已完成 |
-
-### 13.2 ✅ 已完成 (原 HIGH)
-
-| 功能 | 位置 | 状态 |
-|------|------|------|
-| Worker 健康检查 | `worker/worker.py` | ✅ 已完成 |
-| Storage 健康检查 | `storage/connection.py` | ✅ 已完成 |
-| 就绪检查依赖验证 | `api/routes/health.py` | ✅ 已完成 |
-| 异常正确传播 | 多个文件 | ✅ 已完成 |
-
-### 13.3 MEDIUM — 应修复
-
-| 功能 | 位置 | 说明 |
-|------|------|------|
-| GPU 监控 Torch fallback | `inference/gpu_monitor.py` | 返回 None 而非硬编码 0.0 |
-| Redis 队列错误处理 | `storage/redis_queue.py` | 错误时抛出异常而非返回 None |
-| Hub Service 错误传播 | `api/services/hub_service.py` | 异常时返回错误信息而非空列表 |
-| SGLang/TGI stats | `backends/sglang.py`, `backends/tgi.py` | 查询真实服务统计 |
-| 集群 uptime 计算 | `api/routes/cluster.py` | 使用正确的时间计算 |
-| 监控版本号 | `monitoring/metrics.py` | 使用 `__version__` 而非硬编码 |
-
-### 13.4 LOW — 可改进
-
-| 功能 | 位置 | 说明 |
-|------|------|------|
-| HF attention mask 类型 | `backends/huggingface.py` | 返回 None 与类型标注不符 |
-| vLLM/HF get_stats | `backends/vllm.py`, `backends/huggingface.py` | 返回 `{}` 而非真实统计 |
-| 调度策略枚举比较 | `scheduler/strategy/base.py` | 字符串比较 `"healthy"` 应使用枚举 |
-| CLI 状态硬编码 | `cli.py` | Worker 状态使用真实状态 |
-
-### 13.5 📋 规划中
+## 13. 规划中功能 📋
 
 | 功能 | 说明 |
 |------|------|

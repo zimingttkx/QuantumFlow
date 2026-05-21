@@ -8,10 +8,12 @@
 
 ### 1. 多后端完善
 
-| 功能 | 描述 | 优先级 |
-|------|------|--------|
-| **TGI 后端** | Text Generation Inference 后端适配 | 📋 规划中 |
-| **SGLang 后端** | SGLang 后端适配 | 📋 规划中 |
+| 功能 | 描述 | 状态 |
+|------|------|------|
+| **HuggingFace 后端** | HF Transformers 后端，动态批处理 + torch.compile | ✅ 已完成 |
+| **vLLM 后端** | PagedAttention + Continuous Batching | ✅ 已完成 |
+| **TGI 后端** | Text Generation Inference 后端 | ✅ 已完成 |
+| **SGLang 后端** | SGLang 后端适配 | ✅ 已完成 |
 | **TensorRT-LLM 后端** | NVIDIA TensorRT-LLM 推理引擎 | 📋 规划中 |
 
 ### 2. 分布式部署 ✅ 已完成
@@ -98,8 +100,10 @@ Controller (API) → Redis Queue → Worker (TaskFetcher) → HTTP → Worker AP
 
 ## 🔧 技术债务
 
-- Torch fallback 路径下的 `memory_util_pct` 仍为 0（需要确保始终走 pynvml 路径）
-- `memory_util_pct` 在 benchmark 数据中显示为 0，需修复 GPU Monitor 的 Torch fallback
+| 问题 | 说明 | 状态 |
+|------|------|--------|
+| CLI 测试覆盖率低 | 当前仅 19%，生产环境风险 | ⚠️ 改进中 |
+| FlashAttention 集成 | 当前环境 CUDA 版本不匹配，需环境升级 | ⚠️ 待解决 |
 
 ---
 
