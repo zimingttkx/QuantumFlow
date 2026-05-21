@@ -907,40 +907,52 @@ quantumflow generate <model_name> -p <prompt>
 ✅ Redis 队列基本操作（enqueue/dequeue）
 ✅ Worker API 路由注册
 ✅ 引擎后端接口协议
+✅ **健康检查真实集成** — Redis ping、集群状态查询、uptime 计算
+✅ **Scheduler → Worker 真实通信** — `WorkerClient.inference()` 替代模拟
+✅ **模型部署真实集成** — `EngineManager.load_model()` 调用
+✅ **模型卸载真实集成** — `EngineManager.unload_model()` 调用
+✅ **基准测试真实执行** — 后台任务执行并跟踪进度
+✅ **Worker 健康检查** — 引擎状态、GPU 可用性检查
+✅ **Storage 健康检查** — 真实 Redis PING
+✅ **就绪检查依赖验证** — 检查所有依赖是否就绪
+✅ **异常正确传播** — 日志+异常替代 `except: pass`
+✅ **GPU 监控数据采集** — NVML 实时数据
+✅ **Redis 队列错误处理** — 错误时抛出异常
+✅ **gRPC 服务** — Inference/Cluster/Scheduler/Model/Health 服务完整实现
 
-### 12.3 未覆盖的功能（测试未验证）
+### 12.3 遗留改进项
 
-❌ **健康检查的真实性** — 测试只验证返回格式，不验证 Redis/集群真实连接
-❌ **调度器到 Worker 的通信** — 没有测试验证请求真正发送到 Worker
-❌ **模型部署/卸载的真实性** — 没有测试验证 EngineManager.load_model() 被调用
-❌ **基准测试的真实性** — 没有测试验证基准测试真正运行
-❌ **GPU 监控的真实数据** — Torch fallback 时硬编码 0.0 无测试覆盖
-❌ **异常处理的正确性** — `except: pass` 空块吞掉错误，无测试
-❌ **重试逻辑的边界情况** — retry 返回 None 的情况无测试
-❌ **Worker TaskFetcher 的抓取循环** — 无测试验证循环逻辑
+⚠️ **GPU 监控 Torch fallback** — `inference/gpu_monitor.py` 返回 None 而非硬编码 0.0
+⚠️ **Hub Service 错误传播** — 异常时返回错误信息而非空列表
+⚠️ **SGLang/TGI stats** — 查询真实服务统计
+⚠️ **HF attention mask 类型** — 返回 None 与类型标注不符
+⚠️ **vLLM/HF get_stats** — 返回 `{}` 而非真实统计
+⚠️ **调度策略枚举比较** — 字符串比较 `"healthy"` 应使用枚举
 
 ---
 
 ## 13. 待实现功能清单
 
-### 13.1 CRITICAL — 必须实现
+> **更新日期: 2026-05-21** — 以下清单已根据实际代码状态更新
 
-| 功能 | 位置 | 说明 |
+### 13.1 ✅ 已完成 (原 CRITICAL)
+
+| 功能 | 位置 | 状态 |
 |------|------|------|
-| 健康检查真实集成 | `api/routes/health.py` | Redis ping、集群状态查询、uptime 计算 |
-| Scheduler 真实 Worker 通信 | `scheduler/scheduler.py` | 替换 `_simulate_execution()` 为 `WorkerClient.send_inference_request()` |
-| 模型部署集成 | `api/routes/models.py` | 替换 `_mock_models` 为 `EngineManager.load_model()` |
-| 模型卸载集成 | `api/routes/models.py` | 替换 `del _mock_models` 为 `EngineManager.unload_model()` |
-| 基准测试真实执行 | `api/routes/models.py` | 启动真实基准测试任务并跟踪进度 |
+| 健康检查真实集成 | `api/routes/health.py` | ✅ 已完成 |
+| Scheduler 真实 Worker 通信 | `scheduler/scheduler.py` | ✅ 已完成 |
+| 模型部署集成 | `api/routes/models.py` | ✅ 已完成 |
+| 模型卸载集成 | `api/routes/models.py` | ✅ 已完成 |
+| 基准测试真实执行 | `api/routes/models.py` | ✅ 已完成 |
 
-### 13.2 HIGH — 重要
+### 13.2 ✅ 已完成 (原 HIGH)
 
-| 功能 | 位置 | 说明 |
+| 功能 | 位置 | 状态 |
 |------|------|------|
-| Worker 健康检查 | `worker/worker.py` | 检查引擎状态、GPU 可用性 |
-| Storage 健康检查 | `storage/connection.py` | 真实 Redis PING |
-| 就绪检查依赖验证 | `api/routes/health.py` | 检查所有依赖是否就绪 |
-| 异常正确传播 | 多个文件 | 替换 `except: pass` 为日志+异常 |
+| Worker 健康检查 | `worker/worker.py` | ✅ 已完成 |
+| Storage 健康检查 | `storage/connection.py` | ✅ 已完成 |
+| 就绪检查依赖验证 | `api/routes/health.py` | ✅ 已完成 |
+| 异常正确传播 | 多个文件 | ✅ 已完成 |
 
 ### 13.3 MEDIUM — 应修复
 
@@ -961,6 +973,16 @@ quantumflow generate <model_name> -p <prompt>
 | vLLM/HF get_stats | `backends/vllm.py`, `backends/huggingface.py` | 返回 `{}` 而非真实统计 |
 | 调度策略枚举比较 | `scheduler/strategy/base.py` | 字符串比较 `"healthy"` 应使用枚举 |
 | CLI 状态硬编码 | `cli.py` | Worker 状态使用真实状态 |
+
+### 13.5 📋 规划中
+
+| 功能 | 说明 |
+|------|------|
+| 多租户支持 | 租户隔离 + 资源配额 |
+| 请求限流 | Token/请求频率限制 |
+| TensorRT-LLM | NVIDIA 高性能推理引擎 |
+| 昇腾 NPU | 华为昇腾深度适配 |
+| Python SDK | 独立 SDK 包，方便集成 |
 
 ---
 
