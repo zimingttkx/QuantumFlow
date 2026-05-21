@@ -127,6 +127,17 @@ def create_app() -> FastAPI:
 
     app.add_middleware(GZipMiddleware, minimum_size=1000)
 
+    # 添加限流中间件
+    rate_limit_cfg = config.server.rate_limit
+    if rate_limit_cfg.enabled and rate_limit_cfg.rest_api.enabled:
+        from quantumflow.api.middlewares import RateLimitMiddleware
+
+        app.add_middleware(
+            RateLimitMiddleware,
+            qps=rate_limit_cfg.rest_api.qps,
+            burst=rate_limit_cfg.rest_api.burst,
+        )
+
     # 异常处理
     @app.exception_handler(QuantumFlowError)
     async def quantumflow_exception_handler(

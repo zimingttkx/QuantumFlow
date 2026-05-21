@@ -143,6 +143,30 @@ class GrpcRateLimitConfig(BaseModel):
     burst: int = 200
 
 
+class RestApiRateLimitConfig(BaseModel):
+    """REST API 限流配置"""
+
+    enabled: bool = True
+    qps: int = 100
+    burst: int = 200
+
+
+class RateLimitConfig(BaseModel):
+    """限流总配置"""
+
+    enabled: bool = True
+    rest_api: RestApiRateLimitConfig = Field(default_factory=RestApiRateLimitConfig)
+    grpc: GrpcRateLimitConfig = Field(default_factory=GrpcRateLimitConfig)
+
+
+class ServerConfig(BaseModel):
+    """服务器配置"""
+
+    host: str = "0.0.0.0"
+    port: int = 8000
+    rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
+
+
 class GrpcAuthConfig(BaseModel):
     """gRPC 认证配置"""
 
@@ -191,6 +215,7 @@ class QuantumFlowConfig(BaseModel):
     monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
     models: ModelConfig = Field(default_factory=ModelConfig)
     grpc: GrpcConfig = Field(default_factory=GrpcConfig)
+    server: ServerConfig = Field(default_factory=ServerConfig)
 
     @classmethod
     def from_file(cls, path: str | Path) -> Self:
