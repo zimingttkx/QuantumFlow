@@ -1,6 +1,8 @@
 """REST API 限流中间件"""
+
 import threading
 import time
+
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
@@ -60,9 +62,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.per_endpoint = per_endpoint
         self.bucket = TokenBucket(capacity=burst, refill_rate=float(qps))
-        self.endpoint_buckets: dict[str, "TokenBucket"] = {}
+        self.endpoint_buckets: dict[str, TokenBucket] = {}
 
-    def _get_bucket(self, path: str) -> "TokenBucket":
+    def _get_bucket(self, path: str) -> TokenBucket:
         """获取对应端点的令牌桶"""
         if not self.per_endpoint:
             return self.bucket

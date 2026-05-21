@@ -1,7 +1,6 @@
 """健康检查路由"""
 
 import time
-from datetime import datetime
 
 from fastapi import APIRouter, status
 
