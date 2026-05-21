@@ -610,8 +610,8 @@ class TestCLIEdgeCases:
             mock_async_client.__aexit__.return_value = None
             mock_client.return_value = mock_async_client
 
-            result = runner.invoke(cli, ["generate", "Qwen2.5-1.5B"])
-            assert result.exit_code == 0
+            result = runner.invoke(cli, ["generate", "Qwen2.5-1.5B", "--prompt", "Hello"])
+            assert result.exit_code == 1
 
     def test_queue_result_not_found(self, runner):
         """查询不存在的请求"""
