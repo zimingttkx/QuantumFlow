@@ -49,8 +49,8 @@ Controller (API) → Redis Queue → Worker (TaskFetcher) → HTTP → Worker AP
 
 | 功能 | 描述 | 优先级 |
 |------|------|--------|
-| **多租户隔离** | 租户间显存隔离，资源配额 | 📋 规划中 |
-| **限流保护** | Token bucket / Leaky bucket 限流 | 📋 规划中 |
+| **多租户隔离** | 租户间显存隔离，资源配额，API Key 认证 | ✅ 已完成 |
+| **限流保护** | Token bucket 全局限流 + per-tenant 租户级限流 | ✅ 已完成 |
 | **容灾备份** | 模型副本、自动故障转移 | 📋 规划中 |
 
 ### 5. 硬件支持

@@ -155,7 +155,7 @@
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
-| 多租户支持 | 📋 规划中 | 租户隔离 + 资源配额 |
+| 多租户支持 | ✅ 已完成 | API Key 认证 + 资源配额/显存隔离 + 租户限流 |
 | 容灾机制 | 📋 规划中 | 主备切换 + 故障恢复 |
 
 ### 低优先级（长期）
@@ -190,7 +190,11 @@ tests/unit/
 │   ├── test_backend_selection.py       # 后端选择逻辑
 │   ├── test_hub_service.py            # Hub 服务
 │   ├── test_routes_logic.py           # 路由逻辑
-│   └── test_system_profiler.py        # 系统分析器
+│   ├── test_system_profiler.py        # 系统分析器
+│   ├── test_tenant_auth.py            # 租户认证
+│   ├── test_tenant_redis_contract.py  # Redis 契约测试 (20 tests)
+│   ├── test_tenant_routes.py          # 租户 API 端点
+│   └── test_tenant_service.py         # 租户服务层
 ├── cluster/
 │   └── test_cluster_manager_heartbeat.py  # 集群心跳
 ├── distributed/
@@ -248,7 +252,8 @@ tests/integration/
 ├── test_api.py                     # API 集成测试
 ├── test_api_strict.py             # API 严格测试
 ├── test_e2e.py                    # 端到端测试
-└── test_health_integration.py     # 健康检查集成测试
+├── test_health_integration.py     # 健康检查集成测试
+└── test_tenant_cross_component.py # 跨组件租户集成测试 (19 tests)
 ```
 
 ---

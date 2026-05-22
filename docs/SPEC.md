@@ -37,7 +37,7 @@ QuantumFlow 是一个**生产级的分布式大模型推理平台**，旨在像�
 | 分布式部署 | Redis 队列 + Worker 节点，Controller 与 Worker 完全解耦 |
 | 多后端支持 | vLLM / HuggingFace / TGI / SGLang 统一接口 |
 | GPU 优化 | BatchAccumulator / Chunked Prefill / Block VRAM 显存精细管理 |
-| 多租户支持 | 租户间显存隔离，资源配额（规划中） |
+| 多租户支持 | 租户间显存隔离，资源配额，API Key 认证 | ✅ 已完成 |
 
 ### 1.3 技术栈
 
@@ -939,7 +939,6 @@ quantumflow generate <model_name> -p <prompt>
 
 | 功能 | 说明 |
 |------|------|
-| 多租户支持 | API Key 认证 + 资源配额隔离 |
 | 昇腾 NPU | 华为昇腾深度适配 |
 | Cambricon 寒武纪 | 寒武纪 MLU 适配 |
 

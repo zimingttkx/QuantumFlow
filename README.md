@@ -30,7 +30,9 @@
 | **GPU 优化** | BatchAccumulator / Chunked Prefill / Block VRAM | 单卡利用率 99%，显存精细管理 | ✅ 已完成 |
 | **本地/分布式自适应** | 单GPU自动本地推理 | 多Worker自动分布式调度 | ✅ 已完成 |
 | **国产硬件** | 昇腾NPU深度适配 | 打破 NVIDIA 垄断 | 📋 规划中 |
-| **企业级** | ~~限流~~ / ~~SDK~~ / 多租户 / 容灾 | 开箱即用的生产特性 | 🔄/📋 部分完成 |
+| **企业级** | ~~限流~~ / SDK / ~~多租户~~ / 容灾 | 开箱即用的生产特性 | 🔄 部分完成 |
+| **多租户** | API Key认证 + 资源配额隔离 | 租户级别限流/调度/显存管理 | ✅ 已完成 |
+| **SDK** | Python Sync/Async 客户端 | 原生多租户支持 (X-Tenant-ID) | ✅ 已完成 |
 | **gRPC API** | 高性能 RPC 接口 | 降低延迟，提升吞吐 | ✅ 已完成 |
 
 </div>
@@ -112,7 +114,7 @@ python -m quantumflow.cli generate Qwen2.5-1.5B -p "你好"  # 生成
 │  │                   接入层 (Gateway) ✅ 已完成                     │  │
 │  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐         │  │
 │  │  │ REST API│  │ gRPC API│  │ Python  │  │   CLI   │         │  │
-│  │  │ ✅FastAPI│  │ ✅ gRPC │  │ 📋规划中│  │ ✅ CLI  │         │  │
+│  │  │ ✅FastAPI│  │ ✅ gRPC │  │ ✅ SDK  │  │ ✅ CLI  │         │  │
 │  │  └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘         │  │
 │  └───────┼─────────────┼─────────────┼─────────────┼───────────────┘  │
 │          └─────────────┴─────────────┴─────────────┘                     │
@@ -598,20 +600,54 @@ curl http://localhost:8000/api/v1/scheduler/status
 ### Python SDK
 
 ```python
-import httpx
+from quantumflow.sdk import SyncQuantumFlowClient
 
-async with httpx.AsyncClient() as client:
-    # 推理
-    resp = await client.post("http://localhost:8000/api/v1/inference/generate",
-        json={"model": "Qwen2.5-1.5B", "prompt": "你好",
-              "sampling_params": {"max_tokens": 100}})
-    print(resp.json()["generated_text"])
+# 创建客户端（支持租户隔离）
+client = SyncQuantumFlowClient(
+    base_url="http://localhost:8000",
+    api_key="qk_your_api_key",
+    tenant_id="tenant-abc",  # 可选：指定租户
+)
 
-    # 对话
-    resp = await client.post("http://localhost:8000/api/v1/inference/chat",
-        json={"model": "Qwen2.5-1.5B",
-              "messages": [{"role": "user", "content": "你好"}]})
-    print(resp.json()["generated_text"])
+# 健康检查
+print(client.health_check())
+
+# 文本生成
+result = client.generate("Qwen2.5-1.5B", "Hello")
+print(result.generated_text)
+
+# 模型列表
+models = client.list_models()
+
+client.close()
+```
+
+### 多租户管理
+
+```bash
+# 创建租户（仅首次返回 API Key）
+curl -X POST http://localhost:8000/api/v1/tenants/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "team-alpha",
+    "priority": 5,
+    "quota": {
+      "requests_per_minute": 120,
+      "requests_per_day": 50000,
+      "concurrent_requests": 20,
+      "gpu_memory_mb": 16384
+    }
+  }'
+
+# 列出所有租户（需 API Key）
+curl http://localhost:8000/api/v1/tenants/ \
+  -H "X-API-Key: qk_your_api_key"
+
+# 使用租户 API Key 发起推理
+curl -X POST http://localhost:8000/api/v1/inference/generate \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: qk_your_api_key" \
+  -d '{"model": "Qwen2.5-1.5B", "prompt": "Hello"}'
 ```
 
 ### gRPC API
