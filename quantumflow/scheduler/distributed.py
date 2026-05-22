@@ -65,6 +65,62 @@ class DistributedScheduler(Scheduler):
             redis_url=redis_url,
         )
 
+    def _get_tenant_quota(self, tenant_id: str) -> "QuotaConfig":
+        """获取租户配额（从 Redis 加载，key 与 tenants.py 对齐）"""
+        from quantumflow.api.models.tenant import QuotaConfig
+        from quantumflow.core.constants import DEFAULT_TENANT_QUOTA, TENANT_PREFIX
+
+        redis = None
+        try:
+            from quantumflow.storage import get_redis_manager_sync
+            redis = get_redis_manager_sync().get_client()
+        except Exception:
+            pass
+
+        if redis:
+            # 通过 ID→hash 映射找到租户数据
+            hashed_key = redis.get(f"qf:tenant:id:{tenant_id}")
+            if hashed_key:
+                if isinstance(hashed_key, bytes):
+                    hashed_key = hashed_key.decode()
+                data = redis.hgetall(f"{TENANT_PREFIX}{hashed_key}")
+                if data:
+                    return QuotaConfig(
+                        requests_per_minute=int(data.get(b"quota_requests_per_minute", DEFAULT_TENANT_QUOTA["requests_per_minute"])),
+                        requests_per_day=int(data.get(b"quota_requests_per_day", DEFAULT_TENANT_QUOTA["requests_per_day"])),
+                        max_tokens_per_request=int(data.get(b"quota_max_tokens", DEFAULT_TENANT_QUOTA["max_tokens_per_request"])),
+                        gpu_memory_mb=int(data.get(b"quota_gpu_memory", DEFAULT_TENANT_QUOTA["gpu_memory_mb"])),
+                        concurrent_requests=int(data.get(b"quota_concurrent", DEFAULT_TENANT_QUOTA["concurrent_requests"])),
+                    )
+
+        return QuotaConfig(**DEFAULT_TENANT_QUOTA)
+
+    def _get_concurrent_requests(self, tenant_id: str) -> int:
+        """获取租户当前并发请求数"""
+        try:
+            from quantumflow.storage import get_redis_manager_sync
+            redis = get_redis_manager_sync().get_client()
+        except Exception:
+            return 0
+
+        if redis:
+            key = f"qf:concurrent:{tenant_id}"
+            count = redis.get(key)
+            return int(count) if count else 0
+        return 0
+
+    def _increment_concurrent_requests(self, tenant_id: str) -> None:
+        """增加租户并发请求计数"""
+        try:
+            from quantumflow.storage import get_redis_manager_sync
+            redis = get_redis_manager_sync().get_client()
+        except Exception:
+            return
+
+        if redis:
+            key = f"qf:concurrent:{tenant_id}"
+            redis.incr(key)
+
     async def start(self):
         """启动分布式调度器"""
         if self._running:
@@ -108,16 +164,39 @@ class DistributedScheduler(Scheduler):
     async def submit(
         self,
         request: SchedulingRequest,
+        tenant_id: str | None = None,
     ) -> str:
         """
         提交推理请求到Redis队列
 
         Args:
             request: 调度请求
+            tenant_id: 租户 ID（如果为 None，则从 request.tenant_id 获取）
 
         Returns:
             request_id: 请求ID
+
+        Raises:
+            Exception: 当租户并发请求数超限时
         """
+        # 获取租户 ID
+        if tenant_id is None:
+            tenant_id = getattr(request, "tenant_id", "default")
+
+        # 检查租户并发限制
+        quota = self._get_tenant_quota(tenant_id)
+        current_concurrent = self._get_concurrent_requests(tenant_id)
+
+        if current_concurrent >= quota.concurrent_requests:
+            error_msg = f"租户 {tenant_id} 并发请求数超限: {current_concurrent}/{quota.concurrent_requests}"
+            logger.warning(
+                "tenant_concurrent_limit_exceeded",
+                tenant_id=tenant_id,
+                current=current_concurrent,
+                limit=quota.concurrent_requests,
+            )
+            raise Exception(error_msg)
+
         self.stats["total_requests"] += 1
 
         logger.info(
@@ -125,6 +204,7 @@ class DistributedScheduler(Scheduler):
             request_id=request.request_id,
             model=request.model,
             priority=request.priority,
+            tenant_id=tenant_id,
         )
 
         if self._use_redis and self._redis_queue:
@@ -138,11 +218,13 @@ class DistributedScheduler(Scheduler):
                 metadata={
                     "prompt_tokens": getattr(request, "prompt_tokens", 0),
                     "max_tokens": getattr(request, "max_tokens", 512),
+                    "tenant_id": tenant_id,
                 },
             )
             success = await self._redis_queue.enqueue(queued_request)
             if success:
                 self.stats["pending_requests"] += 1
+                self._increment_concurrent_requests(tenant_id)
                 return request.request_id
             else:
                 logger.error("redis_enqueue_failed", request_id=request.request_id)

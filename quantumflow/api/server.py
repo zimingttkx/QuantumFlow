@@ -127,6 +127,11 @@ def create_app() -> FastAPI:
 
     app.add_middleware(GZipMiddleware, minimum_size=1000)
 
+    # 添加租户认证中间件
+    from quantumflow.api.middleware.auth import TenantAuthMiddleware
+
+    app.add_middleware(TenantAuthMiddleware, redis_enabled=True)
+
     # 添加限流中间件
     rate_limit_cfg = config.server.rate_limit
     if rate_limit_cfg.enabled and rate_limit_cfg.rest_api.enabled:
@@ -137,6 +142,7 @@ def create_app() -> FastAPI:
             qps=rate_limit_cfg.rest_api.qps,
             burst=rate_limit_cfg.rest_api.burst,
             per_endpoint=rate_limit_cfg.rest_api.per_endpoint,
+            per_tenant=True,
         )
 
     # 异常处理

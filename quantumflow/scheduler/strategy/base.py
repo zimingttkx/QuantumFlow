@@ -26,6 +26,7 @@ class SchedulingRequest:
     prompt_length: int = 0
     max_tokens: int = 2048
     priority: int = 5
+    tenant_id: str = "default"  # 租户 ID
     session_id: str | None = None
     tags: dict[str, str] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)

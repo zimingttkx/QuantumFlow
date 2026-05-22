@@ -12,10 +12,12 @@ class SyncQuantumFlowClient:
         self,
         base_url: str = "http://localhost:8000",
         api_key: str | None = None,
+        tenant_id: str | None = None,
         timeout: float = 30.0,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
+        self.tenant_id = tenant_id
         self.timeout = timeout
         self._client = httpx.Client(
             base_url=self.base_url,
@@ -23,13 +25,14 @@ class SyncQuantumFlowClient:
             headers={"Content-Type": "application/json"},
         )
         if api_key:
-            self._client.headers["Authorization"] = f"Bearer {api_key}"
+            self._client.headers["X-API-Key"] = api_key
+        if tenant_id:
+            self._client.headers["X-Tenant-ID"] = tenant_id
 
     def _post(self, path: str, **kwargs) -> dict[str, Any]:
         """发送 POST 请求"""
         try:
-            with self._client as client:
-                response = client.post(path, **kwargs)
+            response = self._client.post(path, **kwargs)
             if response.status_code == 429:
                 raise RateLimitError()
             if response.status_code >= 400:
@@ -41,8 +44,7 @@ class SyncQuantumFlowClient:
     def _get(self, path: str, **kwargs) -> dict[str, Any]:
         """发送 GET 请求"""
         try:
-            with self._client as client:
-                response = client.get(path, **kwargs)
+            response = self._client.get(path, **kwargs)
             if response.status_code == 429:
                 raise RateLimitError()
             if response.status_code >= 400:
@@ -109,17 +111,21 @@ class AsyncQuantumFlowClient:
         self,
         base_url: str = "http://localhost:8000",
         api_key: str | None = None,
+        tenant_id: str | None = None,
         timeout: float = 30.0,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
+        self.tenant_id = tenant_id
         self.timeout = timeout
 
     async def _arequest(self, method: str, path: str, **kwargs) -> dict[str, Any]:
         """发送异步 HTTP 请求"""
         headers = {"Content-Type": "application/json"}
         if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+            headers["X-API-Key"] = self.api_key
+        if self.tenant_id:
+            headers["X-Tenant-ID"] = self.tenant_id
 
         async with httpx.AsyncClient(
             base_url=self.base_url,

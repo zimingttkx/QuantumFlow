@@ -162,3 +162,16 @@ HEALTH_CHECK_CONFIG = {
     "detailed": True,
     "checks": ["redis", "cluster", "models"],
 }
+
+# 租户相关常量
+TENANT_PREFIX = "qf:tenant:"
+TENANT_API_KEY_PREFIX = "qf:apikey:"
+TENANT_QUOTA_PREFIX = "qf:quota:"
+TENANT_USAGE_PREFIX = "qf:usage:"
+DEFAULT_TENANT_QUOTA = {
+    "requests_per_minute": 60,
+    "requests_per_day": 10000,
+    "max_tokens_per_request": 8192,
+    "gpu_memory_mb": 4096,
+    "concurrent_requests": 10,
+}

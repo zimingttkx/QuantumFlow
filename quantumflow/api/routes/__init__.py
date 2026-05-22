@@ -11,6 +11,7 @@ from quantumflow.api.routes import (
     model_management,
     models,
     scheduler,
+    tenants,
 )
 
 router = APIRouter()
@@ -24,3 +25,4 @@ router.include_router(cluster.router)
 router.include_router(metrics.router)
 router.include_router(hub.router)
 router.include_router(scheduler.router)
+router.include_router(tenants.router)

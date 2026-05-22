@@ -214,6 +214,11 @@ class VRAMManager:
         self.idle_ttl_seconds = idle_ttl_seconds
         self._loaded: dict[str, LoadedModelInfo] = {}
         self._block_pools: dict[str, BlockPool] = {}  # model_name -> BlockPool
+        self._tenant_allocations: dict[str, int] = {}
+        self._tenant_quota_enabled: bool = True
+        self._model_allocations: dict[str, int] = {}  # model_name -> size_bytes
+        self._model_total_allocated: dict[str, int] = {}  # model_name -> total bytes allocated
+        self._model_reserved_bytes: dict[str, int] = {}  # model_name -> reserved GPU bytes
 
     # ── public API ─────────────────────────────────────────────
 
@@ -395,6 +400,97 @@ class VRAMManager:
     def get_all_block_status(self) -> dict:
         """获取所有模型的 block 池状态"""
         return {name: pool.get_status() for name, pool in self._block_pools.items()}
+
+    # ── tenant-aware allocation ──────────────────────────────────
+
+    def allocate(self, model_name: str, size_bytes: int, tenant_id: str = "default") -> bool:
+        """租户感知的显存分配"""
+        if tenant_id != "default" and self._tenant_quota_enabled:
+            quota = self._get_tenant_quota(tenant_id)
+            if quota.gpu_memory_mb > 0:
+                current_usage = self._tenant_allocations.get(tenant_id, 0)
+                requested_total = current_usage + size_bytes
+                max_bytes = quota.gpu_memory_mb * 1024 * 1024
+                if requested_total > max_bytes:
+                    return False
+        success = self._allocate_blocks(model_name, size_bytes)
+        if success:
+            self._tenant_allocations[tenant_id] = self._tenant_allocations.get(tenant_id, 0) + size_bytes
+            self._model_allocations[model_name] = size_bytes
+        return success
+
+    def release(self, model_name: str, tenant_id: str = "default") -> bool:
+        """释放模型显存并更新租户使用量"""
+        size = self._model_allocations.get(model_name, 0)
+        if self._release_blocks(model_name):
+            if tenant_id in self._tenant_allocations:
+                self._tenant_allocations[tenant_id] = max(0, self._tenant_allocations[tenant_id] - size)
+            return True
+        return False
+
+    def _allocate_blocks(self, model_name: str, size_bytes: int) -> bool:
+        """内部块分配逻辑 — 追踪模型级别的显存分配"""
+        current = self._model_reserved_bytes.get(model_name, 0)
+        self._model_reserved_bytes[model_name] = current + size_bytes
+        logger.debug(
+            "vram_blocks_allocated",
+            model=model_name,
+            size_bytes=size_bytes,
+            total_reserved=self._model_reserved_bytes[model_name],
+        )
+        return True
+
+    def _release_blocks(self, model_name: str) -> bool:
+        """内部块释放逻辑 — 释放模型级别的显存分配"""
+        size = self._model_allocations.get(model_name, 0)
+        current = self._model_reserved_bytes.get(model_name, 0)
+        self._model_reserved_bytes[model_name] = max(0, current - size)
+        logger.debug(
+            "vram_blocks_released",
+            model=model_name,
+            size_bytes=size,
+            total_reserved=self._model_reserved_bytes[model_name],
+        )
+        return True
+
+    def _get_tenant_quota(self, tenant_id: str):
+        """获取租户显存配额（从 Redis 加载，key 与 tenants.py 对齐）"""
+        from quantumflow.api.models.tenant import QuotaConfig
+        from quantumflow.core.constants import DEFAULT_TENANT_QUOTA, TENANT_PREFIX
+
+        redis = None
+        try:
+            from quantumflow.storage import get_redis_manager_sync
+            redis = get_redis_manager_sync().get_client()
+        except Exception:
+            pass
+        if redis:
+            hashed_key = redis.get(f"qf:tenant:id:{tenant_id}")
+            if hashed_key:
+                if isinstance(hashed_key, bytes):
+                    hashed_key = hashed_key.decode()
+                data = redis.hgetall(f"{TENANT_PREFIX}{hashed_key}")
+                if data:
+                    return QuotaConfig(
+                        requests_per_minute=int(data.get(b"quota_requests_per_minute", DEFAULT_TENANT_QUOTA["requests_per_minute"])),
+                        requests_per_day=int(data.get(b"quota_requests_per_day", DEFAULT_TENANT_QUOTA["requests_per_day"])),
+                        max_tokens_per_request=int(data.get(b"quota_max_tokens", DEFAULT_TENANT_QUOTA["max_tokens_per_request"])),
+                        gpu_memory_mb=int(data.get(b"quota_gpu_memory", DEFAULT_TENANT_QUOTA["gpu_memory_mb"])),
+                        concurrent_requests=int(data.get(b"quota_concurrent", DEFAULT_TENANT_QUOTA["concurrent_requests"])),
+                    )
+        return QuotaConfig(**DEFAULT_TENANT_QUOTA)
+
+    def get_tenant_usage(self, tenant_id: str) -> dict:
+        """获取租户显存使用情况"""
+        allocated = self._tenant_allocations.get(tenant_id, 0)
+        quota = self._get_tenant_quota(tenant_id)
+        return {
+            "tenant_id": tenant_id,
+            "allocated_bytes": allocated,
+            "allocated_mb": allocated / (1024 * 1024),
+            "quota_mb": quota.gpu_memory_mb,
+            "utilization": allocated / (quota.gpu_memory_mb * 1024 * 1024) if quota.gpu_memory_mb > 0 else 0.0,
+        }
 
     # ── internal ───────────────────────────────────────────────
 

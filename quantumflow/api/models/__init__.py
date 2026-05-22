@@ -34,6 +34,16 @@ from quantumflow.api.models.responses import (
     UndeployResponse,
     UnloadModelResponse,
 )
+from quantumflow.api.models.tenant import (
+    QuotaConfig,
+    Tenant,
+    TenantCreate,
+    TenantCreateResponse,
+    TenantResponse,
+    TenantStatus,
+    TenantUpdate,
+    TenantUsage,
+)
 
 __all__ = [
     # 请求模型
@@ -68,4 +78,13 @@ __all__ = [
     "LoadModelResponse",
     "UnloadModelResponse",
     "ModelStatusResponse",
+    # 租户模型
+    "Tenant",
+    "TenantCreate",
+    "TenantCreateResponse",
+    "TenantUpdate",
+    "TenantResponse",
+    "TenantStatus",
+    "TenantUsage",
+    "QuotaConfig",
 ]
