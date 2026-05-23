@@ -6,6 +6,9 @@
 - Leader 选举与脑裂防护
 """
 
+from quantumflow.failover.controller import FailoverController
+from quantumflow.failover.health_checker import HealthChecker, GPUHealthResult, HealthCheckResult
+from quantumflow.failover.leader_election import LeaderElection
 from quantumflow.failover.models import (
     FailoverEvent,
     FailoverState,
@@ -14,6 +17,8 @@ from quantumflow.failover.models import (
     NodeFailoverState,
     ReplicaRole,
 )
+from quantumflow.failover.policy import FailoverPolicy, HealthThresholds, ReplicaPolicy
+from quantumflow.failover.replica_manager import ReplicaManager
 from quantumflow.failover.state_store import NodeStateStore
 
 __all__ = [
@@ -26,4 +31,16 @@ __all__ = [
     "FailoverEvent",
     # State Store
     "NodeStateStore",
+    # Core Classes
+    "FailoverController",
+    "HealthChecker",
+    "LeaderElection",
+    "ReplicaManager",
+    # Health Check Results
+    "GPUHealthResult",
+    "HealthCheckResult",
+    # Policy Classes
+    "FailoverPolicy",
+    "HealthThresholds",
+    "ReplicaPolicy",
 ]

@@ -15,7 +15,7 @@ from typing import Any
 
 import structlog
 
-from quantumflow.cluster.manager import ClusterManager
+from quantumflow.cluster.manager import ClusterManager, NodeStatus
 from quantumflow.failover.health_checker import HealthChecker
 from quantumflow.failover.leader_election import LeaderElection
 from quantumflow.failover.models import (
@@ -163,7 +163,7 @@ class FailoverController:
         )
 
         # 如果节点变为不健康，触发故障检测
-        if str(new_status) == "unhealthy":
+        if new_status == NodeStatus.UNHEALTHY:
             await self._handle_unhealthy_node(node.node_id)
 
     async def _on_node_left(self, node: Any) -> None:

@@ -726,6 +726,91 @@ class TestEventHandling:
         assert len(handler_called) == 1
 
 
+class TestNodeHealthChangedCallback:
+    """_on_node_health_changed 回调测试"""
+
+    @pytest.fixture
+    def mock_cluster_manager(self):
+        """创建模拟的 ClusterManager"""
+        manager = MagicMock(spec=ClusterManager)
+        manager.on = MagicMock()
+        return manager
+
+    @pytest.fixture
+    def mock_state_store(self):
+        """创建模拟的 StateStore"""
+        store = MagicMock(spec=NodeStateStore)
+        store.generate_event_id = MagicMock(return_value="fe_test")
+        store.save_failover_event = AsyncMock(return_value=True)
+        return store
+
+    @pytest.fixture
+    def mock_replica_manager(self):
+        """创建模拟的 ReplicaManager"""
+        manager = MagicMock(spec=ReplicaManager)
+        manager.get_all_replicas = AsyncMock(return_value=[])
+        manager.get_model_locations = AsyncMock(return_value={})
+        return manager
+
+    @pytest.fixture
+    def mock_health_checker(self):
+        """创建模拟的 HealthChecker"""
+        checker = MagicMock(spec=HealthChecker)
+        mock_result = MagicMock()
+        mock_result.is_unhealthy.return_value = True
+        checker.check_node_health = AsyncMock(return_value=mock_result)
+        return checker
+
+    @pytest.fixture
+    def failover_controller(
+        self, mock_cluster_manager, mock_state_store, mock_replica_manager, mock_health_checker
+    ):
+        """创建 FailoverController 实例"""
+        return FailoverController(
+            cluster_manager=mock_cluster_manager,
+            state_store=mock_state_store,
+            replica_manager=mock_replica_manager,
+            health_checker=mock_health_checker,
+            node_id="node-1",
+        )
+
+    @pytest.mark.asyncio
+    async def test_on_node_health_changed_unhealthy_triggers_handler(
+        self, failover_controller, mock_cluster_manager
+    ):
+        """测试节点变为不健康时触发 _handle_unhealthy_node"""
+        mock_node = MagicMock()
+        mock_node.node_id = "node-2"
+
+        # 直接调用内部回调方法，模拟 cluster manager 触发事件
+        await failover_controller._on_node_health_changed(
+            mock_node,
+            NodeStatus.HEALTHY,
+            NodeStatus.UNHEALTHY,
+        )
+
+        # 验证 _handle_unhealthy_node 被触发（通过 health_checker 被调用来验证）
+        failover_controller._health_checker.check_node_health.assert_called_with("node-2")
+
+    @pytest.mark.asyncio
+    async def test_on_node_health_changed_healthy_no_action(
+        self, failover_controller, mock_health_checker
+    ):
+        """测试节点变为健康时不做处理"""
+        mock_node = MagicMock()
+        mock_node.node_id = "node-2"
+
+        # 直接调用内部回调方法
+        await failover_controller._on_node_health_changed(
+            mock_node,
+            NodeStatus.UNHEALTHY,
+            NodeStatus.HEALTHY,
+        )
+
+        # 验证 health_checker.check_node_health 不被调用（因为状态是健康的）
+        mock_health_checker.check_node_health.assert_not_called()
+
+
 class TestPromoteToPrimary:
     """提升为主节点测试"""
 
