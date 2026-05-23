@@ -61,6 +61,24 @@ class Node:
     current_load: float = 0.0
     loaded_models: list[str] = field(default_factory=list)
 
+    # ========== 容灾相关字段 ==========
+    # 副本角色: primary, secondary
+    replica_role: str = "secondary"
+    # VRAM 快照（用于状态同步）
+    vram_snapshot: dict = field(default_factory=dict)
+    # GPU 健康状态: {gpu_id: "healthy|degraded|fail"}
+    gpu_health: dict = field(default_factory=dict)
+    # 模型健康状态: {model_name: "healthy|degraded|fail"}
+    model_health: dict = field(default_factory=dict)
+    # 通信健康状态: {node_id: "healthy|timeout|fail"}
+    communication_health: dict = field(default_factory=dict)
+    # 最后一次副本同步时间
+    last_replica_sync: datetime = field(default_factory=datetime.now)
+    # 故障计数（用于抖动判定）
+    failure_count: int = 0
+    # 连续失败次数
+    consecutive_failures: int = 0
+
     def to_resource(self) -> NodeResource:
         """转换为NodeResource"""
         return NodeResource(
@@ -392,6 +410,248 @@ class ClusterManager:
         await self.update_node_status(node_id, NodeStatus.OFFLINE)
         # 注意: update_node_status 已经触发了 node_health_changed 事件，
         # 这里不需要再次触发
+
+    # ==================== 容灾相关方法 ====================
+
+    async def update_node_health(
+        self,
+        node_id: str,
+        health_status: str,
+        reason: str | None = None,
+    ) -> bool:
+        """
+        更新节点健康状态
+
+        Args:
+            node_id: 节点 ID
+            health_status: 健康状态 ("healthy", "degraded", "unhealthy")
+            reason: 状态变更原因
+
+        Returns:
+            是否更新成功
+        """
+        async with self._lock:
+            if node_id not in self.nodes:
+                return False
+
+            node = self.nodes[node_id]
+
+            if reason:
+                node.failure_reasons.append(reason)
+
+            if health_status == "unhealthy":
+                node.consecutive_failures += 1
+                node.failure_count += 1
+            elif health_status == "healthy":
+                node.consecutive_failures = 0
+
+            logger.info(
+                "node_health_updated",
+                node_id=node_id,
+                health_status=health_status,
+                reason=reason,
+                consecutive_failures=node.consecutive_failures,
+            )
+
+            return True
+
+    async def get_replica_role(self, node_id: str) -> str | None:
+        """
+        获取节点副本角色
+
+        Args:
+            node_id: 节点 ID
+
+        Returns:
+            副本角色 ("primary", "secondary")，节点不存在返回 None
+        """
+        node = self.nodes.get(node_id)
+        return node.replica_role if node else None
+
+    async def set_replica_role(self, node_id: str, role: str) -> bool:
+        """
+        设置节点副本角色
+
+        Args:
+            node_id: 节点 ID
+            role: 副本角色 ("primary", "secondary")
+
+        Returns:
+            是否设置成功
+        """
+        async with self._lock:
+            if node_id not in self.nodes:
+                return False
+
+            old_role = self.nodes[node_id].replica_role
+            self.nodes[node_id].replica_role = role
+
+            logger.info(
+                "node_replica_role_updated",
+                node_id=node_id,
+                old_role=old_role,
+                new_role=role,
+            )
+
+            return True
+
+    async def update_vram_snapshot(self, node_id: str, snapshot: dict) -> bool:
+        """
+        更新节点 VRAM 快照
+
+        Args:
+            node_id: 节点 ID
+            snapshot: VRAM 快照数据
+
+        Returns:
+            是否更新成功
+        """
+        async with self._lock:
+            if node_id not in self.nodes:
+                return False
+
+            self.nodes[node_id].vram_snapshot = snapshot
+            self.nodes[node_id].last_replica_sync = datetime.now()
+            return True
+
+    async def update_gpu_health(
+        self, node_id: str, gpu_id: int, status: str
+    ) -> bool:
+        """
+        更新 GPU 健康状态
+
+        Args:
+            node_id: 节点 ID
+            gpu_id: GPU ID
+            status: 健康状态 ("healthy", "degraded", "fail")
+
+        Returns:
+            是否更新成功
+        """
+        async with self._lock:
+            if node_id not in self.nodes:
+                return False
+
+            self.nodes[node_id].gpu_health[str(gpu_id)] = status
+            return True
+
+    async def update_model_health(
+        self, node_id: str, model_name: str, status: str
+    ) -> bool:
+        """
+        更新模型健康状态
+
+        Args:
+            node_id: 节点 ID
+            model_name: 模型名称
+            status: 健康状态 ("healthy", "degraded", "fail")
+
+        Returns:
+            是否更新成功
+        """
+        async with self._lock:
+            if node_id not in self.nodes:
+                return False
+
+            self.nodes[node_id].model_health[model_name] = status
+            return True
+
+    async def update_communication_health(
+        self, node_id: str, peer_node_id: str, status: str
+    ) -> bool:
+        """
+        更新节点间通信健康状态
+
+        Args:
+            node_id: 本节点 ID
+            peer_node_id: 对端节点 ID
+            status: 健康状态 ("healthy", "timeout", "fail")
+
+        Returns:
+            是否更新成功
+        """
+        async with self._lock:
+            if node_id not in self.nodes:
+                return False
+
+            self.nodes[node_id].communication_health[peer_node_id] = status
+            return True
+
+    async def get_node_failover_info(self, node_id: str) -> dict | None:
+        """
+        获取节点容灾相关信息
+
+        Args:
+            node_id: 节点 ID
+
+        Returns:
+            容灾信息字典，节点不存在返回 None
+        """
+        node = self.nodes.get(node_id)
+        if not node:
+            return None
+
+        return {
+            "node_id": node.node_id,
+            "replica_role": node.replica_role,
+            "vram_snapshot": node.vram_snapshot,
+            "gpu_health": node.gpu_health,
+            "model_health": node.model_health,
+            "communication_health": node.communication_health,
+            "last_replica_sync": node.last_replica_sync.isoformat(),
+            "failure_count": node.failure_count,
+            "consecutive_failures": node.consecutive_failures,
+            "failure_reasons": node.failure_reasons[-10:],  # 最近 10 条
+        }
+
+    async def get_primary_nodes(self) -> list[Node]:
+        """
+        获取所有主节点
+
+        Returns:
+            主节点列表
+        """
+        return [n for n in self.nodes.values() if n.replica_role == "primary"]
+
+    async def get_secondary_nodes(self) -> list[Node]:
+        """
+        获取所有备用节点
+
+        Returns:
+            备用节点列表
+        """
+        return [n for n in self.nodes.values() if n.replica_role == "secondary"]
+
+    async def get_nodes_with_model(self, model_name: str) -> list[Node]:
+        """
+        获取加载了指定模型的节点
+
+        Args:
+            model_name: 模型名称
+
+        Returns:
+            节点列表
+        """
+        return [n for n in self.nodes.values() if model_name in n.loaded_models]
+
+    async def reset_failure_count(self, node_id: str) -> bool:
+        """
+        重置节点故障计数
+
+        Args:
+            node_id: 节点 ID
+
+        Returns:
+            是否重置成功
+        """
+        async with self._lock:
+            if node_id not in self.nodes:
+                return False
+
+            self.nodes[node_id].failure_count = 0
+            self.nodes[node_id].consecutive_failures = 0
+            self.nodes[node_id].failure_reasons = []
+            return True
 
     # ==================== 事件系统 ====================
 
