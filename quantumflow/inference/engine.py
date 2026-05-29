@@ -91,6 +91,43 @@ class InferenceResult:
     metrics: dict[str, float] = field(default_factory=dict)
 
 
+@dataclass
+class QueuedRequest:
+    """
+    队列中的请求项 — 支持优先级调度
+
+    字段说明：
+    - request_id: 请求唯一标识
+    - model_name: 模型名称
+    - prompt: 输入提示
+    - sampling_params: 采样参数
+    - priority: 优先级 (0-10, 0 最高, 10 最低)
+    - submit_time: 提交时间戳（用于 FIFO 排序）
+    - future: 异步 Future，推理完成后填充结果
+    - tenant_id: 租户 ID（用于多租户场景）
+    """
+
+    request_id: str
+    model_name: str
+    prompt: str
+    sampling_params: SamplingParams
+    priority: int = 5  # 默认优先级
+    submit_time: float = 0.0  # 将在 submit 时设置
+    future: "asyncio.Future[InferenceResult] | None" = None
+    tenant_id: str = "default"
+
+    def __post_init__(self):
+        if self.submit_time == 0.0:
+            import time
+            self.submit_time = time.time()
+
+    def __lt__(self, other: "QueuedRequest") -> bool:
+        """比较优先级：先按 priority，再按 submit_time (FIFO)"""
+        if self.priority != other.priority:
+            return self.priority < other.priority
+        return self.submit_time < other.submit_time
+
+
 class InferenceEngine(ABC):
     """推理引擎抽象基类"""
 

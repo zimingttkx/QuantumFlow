@@ -226,6 +226,22 @@ class VRAMManager:
         """获取当前可用VRAM (GB)"""
         return self._read_free_vram_gb()
 
+    def get_vram_utilization(self) -> float:
+        """
+        获取当前 VRAM 利用率。
+
+        Returns:
+            0.0 到 1.0 之间的利用率值
+            - 0.0 = 空闲
+            - 1.0 = 完全占满
+        """
+        used = self._read_used_vram_gb()
+        free = self._read_free_vram_gb()
+        total = used + free
+        if total <= 0:
+            return 0.0
+        return round(used / total, 3)
+
     def estimate_model_vram_gb(self, model_path: str, max_model_len: int = 2048) -> float:
         """估算模型需要的VRAM (GB)，含模型权重+KV cache"""
         param_count = self._estimate_param_count(model_path)

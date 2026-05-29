@@ -8,11 +8,7 @@ import structlog
 
 from quantumflow.core.constants import InferenceBackendType
 from quantumflow.core.exceptions import InferenceError, ModelNotFoundError
-from quantumflow.inference.backends.huggingface import HuggingFaceEngine
-from quantumflow.inference.backends.sglang import SGLangEngine
-from quantumflow.inference.backends.tensorrt_llm import TensorRTLLMEngine
-from quantumflow.inference.backends.tgi import TGIEngine
-from quantumflow.inference.backends.vllm import VLLMEngine
+from quantumflow.inference import backends
 from quantumflow.inference.batch_accumulator import BatchAccumulator
 from quantumflow.inference.engine import (
     InferenceEngine,
@@ -24,6 +20,19 @@ from quantumflow.inference.gpu_monitor import GPUMonitor
 from quantumflow.inference.vram_manager import VRAMManager
 
 logger = structlog.get_logger().bind(component="engine_manager")
+
+
+# 获取后端类（可能为 None 如果未安装依赖）
+def _get_backend_class(backend_type: InferenceBackendType):
+    """获取后端类，如果不可用则返回 None"""
+    mapping = {
+        InferenceBackendType.HUGGINGFACE: backends.HuggingFaceEngine,
+        InferenceBackendType.VLLM: backends.VLLMEngine,
+        InferenceBackendType.TGI: backends.TGIEngine,
+        InferenceBackendType.SGLANG: backends.SGLangEngine,
+        InferenceBackendType.TRT_LLM: backends.TensorRTLLMEngine,
+    }
+    return mapping.get(backend_type)
 
 
 class EngineManager:
@@ -81,8 +90,13 @@ class EngineManager:
             是否初始化成功
         """
         try:
+            backend_class = _get_backend_class(backend)
+            if backend_class is None:
+                logger.warning("backend_not_available", backend=backend.value)
+                return False
+
             if backend == InferenceBackendType.VLLM:
-                engine = VLLMEngine()
+                engine = backend_class()
                 success = await engine.initialize()
                 if success:
                     self._engines[backend] = engine
@@ -90,7 +104,7 @@ class EngineManager:
                     logger.info("engine_manager_initialized", backend=backend.value)
                     return True
             elif backend == InferenceBackendType.HUGGINGFACE:
-                engine = HuggingFaceEngine()
+                engine = backend_class()
                 success = await engine.initialize()
                 if success:
                     self._engines[backend] = engine
@@ -99,7 +113,7 @@ class EngineManager:
                     return True
             elif backend == InferenceBackendType.TGI:
                 base_url = kwargs.get("base_url", "http://localhost:8080")
-                engine = TGIEngine(base_url=base_url)
+                engine = backend_class(base_url=base_url)
                 success = await engine.initialize()
                 if success:
                     self._engines[backend] = engine
@@ -111,7 +125,7 @@ class EngineManager:
             elif backend == InferenceBackendType.SGLANG:
                 base_url = kwargs.get("base_url", "http://localhost:30000")
                 timeout = kwargs.get("timeout", 300)
-                engine = SGLangEngine(base_url=base_url, timeout=timeout)
+                engine = backend_class(base_url=base_url, timeout=timeout)
                 success = await engine.initialize()
                 if success:
                     self._engines[backend] = engine
@@ -126,7 +140,7 @@ class EngineManager:
                 else:
                     logger.warning("sglang_init_failed", base_url=base_url)
             elif backend == InferenceBackendType.TRT_LLM:
-                engine = TensorRTLLMEngine()
+                engine = backend_class()
                 success = await engine.initialize()
                 if success:
                     self._engines[backend] = engine
