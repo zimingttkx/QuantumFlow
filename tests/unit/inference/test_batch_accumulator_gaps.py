@@ -9,6 +9,7 @@
 
 import asyncio
 import sys
+import uuid
 from unittest.mock import AsyncMock
 
 import pytest
@@ -16,7 +17,28 @@ import pytest
 sys.path.insert(0, "/home/dingziming/PycharmProjects/QuantumFlow")
 
 from quantumflow.inference.batch_accumulator import BatchAccumulator
-from quantumflow.inference.engine import InferenceResult
+from quantumflow.inference.engine import InferenceResult, QueuedRequest, SamplingParams
+
+
+def _make_result(request_id, output="ok"):
+    return InferenceResult(
+        request_id=request_id,
+        outputs=[output],
+        prompt_tokens=1, completion_tokens=1,
+        latency_ms=1, finish_reason="stop", metrics={},
+    )
+
+
+def _make_request(prompt: str, priority: int = 5) -> QueuedRequest:
+    """创建 QueuedRequest 的辅助函数"""
+    return QueuedRequest(
+        request_id=str(uuid.uuid4()),
+        model_name="test",
+        prompt=prompt,
+        sampling_params=SamplingParams(),
+        priority=priority,
+        submit_time=0.0,  # 将在 submit 时设置
+    )
 
 
 def _make_result(request_id, output="ok"):
@@ -72,11 +94,13 @@ class TestBatchAccumulatorFlushGaps:
             max_batch_size=8,
         )
 
-        # Create a future and manually add to buffer WITHOUT going through submit
+        # Create a QueuedRequest and manually add to buffer WITHOUT going through submit
         # This simulates a request that was added but not yet picked up by worker
         loop = asyncio.get_running_loop()
         future = loop.create_future()
-        acc._buffer.append(("manual_prompt", future))
+        request = _make_request("manual_prompt", priority=5)
+        request.future = future
+        acc._buffer.append(request)
         acc._ensure_worker()
 
         # Now call flush - buffer is non-empty so line 74 should be hit
