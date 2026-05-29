@@ -27,7 +27,7 @@
 | **智能调度** | Gang/Pack/自适应多策略 | 自动选择最优执行路径 | ✅ 已完成 |
 | **分布式部署** | Redis队列 + Worker节点 | Controller与Worker完全解耦 | ✅ 已完成 |
 | **多后端支持** | vLLM / HF / TGI / SGLang | 统一接口，灵活切换 | ✅ 已完成 |
-| **GPU 优化** | BatchAccumulator / Chunked Prefill / Block VRAM | 单卡利用率 99%，显存精细管理 | ✅ 已完成 |
+| **GPU 优化** | BatchAccumulator / Chunked Prefill / Block VRAM / **Priority-Aware Batching** / **Dynamic Batch Sizing** / **Multi-Model Sharing** | 单卡利用率 99%，显存精细管理，支持优先级调度 + Anti-starvation + VRAM感知动态batch + 多模型共享 | ✅ 已完成 |
 | **本地/分布式自适应** | 单GPU自动本地推理 | 多Worker自动分布式调度 | ✅ 已完成 |
 | **国产硬件** | 昇腾NPU深度适配 | 打破 NVIDIA 垄断 | 📋 规划中 |
 | **企业级** | ~~限流~~ / SDK / ~~多租户~~ / 容灾 | 开箱即用的生产特性 | 🔄 部分完成 |
@@ -221,6 +221,122 @@ python -m quantumflow.cli generate Qwen2.5-1.5B -p "你好"  # 生成
 └─────────────────────────────────────────┘
 ```
 
+### Priority-Aware Batching — 优先级感知调度
+
+```
+┌─────────────────────────────────────────┐
+│      Priority-Aware Batching ⭐         │
+│                                          │
+│   请求优先级 0-10 (0 最高, 10 最低)       │
+│                                          │
+│   ┌──────────────────────────────────┐   │
+│   │ 高优先级请求 (priority < 5)      │   │
+│   │ → 优先处理，减少延迟              │   │
+│   └──────────────────────────────────┘   │
+│   ┌──────────────────────────────────┐   │
+│   │ 低优先级请求 (priority >= 7)      │   │
+│   │ → Anti-starvation 防止饿死       │   │
+│   └──────────────────────────────────┘   │
+│                                          │
+│   ✅ 交互式请求优先处理                   │
+│   ✅ 批量任务不饿死                       │
+│   ✅ 多租户资源配额隔离                   │
+└─────────────────────────────────────────┘
+```
+
+**使用示例：**
+```python
+# 提交高优先级请求（交互式）
+result = await accumulator.submit("quick question", priority=2)
+
+# 提交低优先级请求（批量任务）
+result = await accumulator.submit("batch processing", priority=8)
+```
+
+### Dynamic Batch Sizing — VRAM 感知动态批量
+
+```
+┌─────────────────────────────────────────┐
+│      Dynamic Batch Sizing ⭐             │
+│                                          │
+│   根据 GPU 显存状态动态调整 batch_size：   │
+│                                          │
+│   ┌──────────────────────────────────┐   │
+│   │ 高 VRAM (> 90%)                  │   │
+│   │ → 减少 batch_size 避免 OOM       │   │
+│   └──────────────────────────────────┘   │
+│   ┌──────────────────────────────────┐   │
+│   │ 低 VRAM (< 70%) + 高 pending     │   │
+│   │ → 增加 batch_size 提高吞吐       │   │
+│   └──────────────────────────────────┘   │
+│                                          │
+│   算法：                                  │
+│   if vram > 90%:                         │
+│       batch_size = max(min, base * 0.5)  │
+│   elif vram < 70% and pending > base*2:  │
+│       batch_size = min(max, base * 1.5)  │
+│   else:                                   │
+│       batch_size = base                  │
+│                                          │
+│   ✅ 避免 OOM，提高吞吐                   │
+│   ✅ VRAM 利用率 > 90% 时自动保护         │
+└─────────────────────────────────────────┘
+```
+
+**使用示例：**
+```python
+from quantumflow.inference.batch_scheduler import BatchScheduler
+from quantumflow.inference.batch_config import DynamicBatchConfig
+from quantumflow.inference.vram_manager import VRAMManager
+
+# 创建调度器
+vram = VRAMManager()
+config = DynamicBatchConfig(base_max_batch_size=8)
+scheduler = BatchScheduler(vram_manager=vram, config=config)
+
+# 根据当前状态计算最优 batch size
+batch_size = scheduler.compute_batch_size(pending_count=20)
+```
+
+### Multi-Model Sharing — 多模型共享批处理
+
+```
+┌─────────────────────────────────────────┐
+│      Multi-Model Sharing ⭐             │
+│                                          │
+│   SharedBatchCoordinator                 │
+│   ┌─────────────────────────────────┐   │
+│   │  Global Priority Queue          │   │
+│   │  (所有模型请求统一排队)           │   │
+│   └─────────────────────────────────┘   │
+│            │                              │
+│   ┌────────▼────────┐                     │
+│   │  Per-GPU       │                     │
+│   │  BatchScheduler│                     │
+│   └────────┬────────┘                     │
+│            │                              │
+│   GPU 0 ──▶ Batch ──▶ GPU 1 ──▶ Batch   │
+│                                          │
+│   ✅ 多模型请求共享批处理资源             │
+│   ✅ 模型亲和性（相同模型同GPU）          │
+│   ✅ VRAM 感知调度                       │
+└─────────────────────────────────────────┘
+```
+
+**使用示例：**
+```python
+from quantumflow.inference.batch_coordinator import SharedBatchCoordinator
+
+coordinator = SharedBatchCoordinator(
+    vram_manager=vram,
+    config=DynamicBatchConfig(),
+)
+
+# 不同模型的请求可以共享 GPU 批处理
+result1 = await coordinator.submit("Qwen2.5-1.5B", "prompt1")
+result2 = await coordinator.submit("Llama-3-8B", "prompt2")
+```
+
 ---
 
 ## 📊 GPU 性能基准
@@ -325,10 +441,14 @@ QuantumFlow/
 │   ├── cluster/             # ✅ 集群管理（单机模式）
 │   │
 │   ├── inference/           # ✅ 推理引擎
-│   │   ├── engine.py        # 引擎抽象
+│   │   ├── engine.py        # 引擎抽象 + QueuedRequest
 │   │   ├── manager.py       # 引擎管理器（VRAM 感知 + 模型淘汰）
 │   │   ├── vram_manager.py  # VRAM 管理 + BlockPool 细粒度显存
-│   │   ├── batch_accumulator.py  # 动态批处理（50ms 窗口合并）
+│   │   ├── batch_accumulator.py  # 动态批处理（50ms 窗口 + 优先级调度）
+│   │   ├── batch_config.py  # 动态批处理配置（DynamicBatchConfig）
+│   │   ├── batch_scheduler.py  # Per-GPU 批处理调度器（VRAM感知动态batch）
+│   │   ├── batch_coordinator.py  # 多模型共享协调器（SharedBatchCoordinator）
+│   │   ├── priority_queue.py # 优先级队列（Anti-starvation 机制）
 │   │   ├── gpu_monitor.py   # GPU 监控（NVML 采集）
 │   │   └── backends/        # 引擎实现
 │   │       ├── huggingface.py # ✅ HF (动态批处理 + torch.compile + Chunked Prefill)

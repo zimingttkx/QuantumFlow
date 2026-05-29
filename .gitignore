@@ -71,6 +71,11 @@ instance/
 # Sphinx documentation
 docs/_build/
 
+# Internal planning docs
+docs/BATCH_ACCUMULATOR_ENHANCEMENT_PLAN.md
+docs/grpc_development_plan.md
+docs/grpc_test_plan.md
+
 # PyBuilder
 .pybuilder/
 target/
