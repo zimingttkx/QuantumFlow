@@ -5,8 +5,8 @@
 ![QuantumFlow Logo](https://img.shields.io/badge/QuantumFlow-AI%20Inference-6366F1?style=for-the-badge&logo=rocket)
 [![Python](https://img.shields.io/badge/Python-3.10+-00D9FF?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-FF6B6B?style=flat-square)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/quantumflow/quantumflow?style=flat-square&color=F59E0B)](https://github.com/quantumflow/quantumflow/stargazers)
-[![Forks](https://img.shields.io/github/forks/quantumflow/quantumflow?style=flat-square&color=10B981)](https://github.com/quantumflow/quantumflow/network/members)
+[![星标](https://img.shields.io/github/stars/quantumflow/quantumflow?style=flat-square&color=F59E0B)](https://github.com/quantumflow/quantumflow/stargazers)
+[![复刻](https://img.shields.io/github/forks/quantumflow/quantumflow?style=flat-square&color=10B981)](https://github.com/quantumflow/quantumflow/network/members)
 
 **🚀 下一代分布式大模型推理平台 — 让千亿参数模型跑在每台机器上**
 
@@ -824,10 +824,15 @@ pytest tests/unit/grpc/ -v    # 531个测试，87%覆盖率(gRPC模块)
 
 ---
 
-## ⭐ Star History
+## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=quantumflow/quantumflow&type=Date)](https://star-history.com/#quantumflow/quantumflow&Date)
-
+<a href="https://www.star-history.com/?repos=zimingttkx%2FQuantumFlow&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=zimingttkx/QuantumFlow&type=date&theme=dark&logscale&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=zimingttkx/QuantumFlow&type=date&logscale&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=zimingttkx/QuantumFlow&type=date&logscale&legend=top-left" />
+ </picture>
+</a>
 ---
 
 ## 📜 许可证
