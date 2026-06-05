@@ -1,0 +1,969 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QuantumFlow Playground</title>
+    <style>
+        :root {
+            --primary: #6366F1;
+            --primary-light: #818CF8;
+            --primary-dark: #4F46E5;
+            --secondary: #8B5CF6;
+            --accent: #10B981;
+            --warning: #F59E0B;
+            --danger: #EF4444;
+
+            --bg-dark: #0B1120;
+            --bg-card: #111827;
+            --bg-elevated: #1F2937;
+            --bg-input: #0F172A;
+            --bg-hover: #1E293B;
+
+            --border: #334155;
+            --border-light: #475569;
+
+            --text-primary: #F8FAFC;
+            --text-secondary: #94A3B8;
+            --text-muted: #64748B;
+
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.2);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -4px rgba(0, 0, 0, 0.2);
+            --shadow-glow: 0 0 24px rgba(99, 102, 241, 0.15);
+
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 14px;
+
+            --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html, body { height: 100%; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                         "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+            background: radial-gradient(ellipse at top, #1a1f3a 0%, var(--bg-dark) 50%);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        /* ============== Layout ============== */
+        .app {
+            display: grid;
+            grid-template-rows: auto 1fr auto;
+            height: 100vh;
+        }
+
+        /* ============== Header ============== */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.875rem 1.5rem;
+            background: rgba(17, 24, 39, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+            z-index: 10;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .brand-mark {
+            width: 36px; height: 36px;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            border-radius: 9px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 18px;
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
+        }
+
+        .brand-text h1 {
+            font-size: 1.05rem; font-weight: 600;
+            background: linear-gradient(135deg, var(--primary-light), var(--secondary));
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .brand-text span { font-size: 0.75rem; color: var(--text-secondary); }
+
+        .header-actions { display: flex; gap: 0.5rem; align-items: center; }
+
+        .status-pill {
+            display: flex; align-items: center; gap: 0.5rem;
+            padding: 0.375rem 0.75rem;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+        .status-pill.online .status-dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+        .status-pill.offline .status-dot { background: var(--danger); }
+
+        /* ============== Main ============== */
+        .main {
+            display: grid;
+            grid-template-columns: minmax(360px, 1fr) minmax(420px, 1.4fr);
+            gap: 1rem;
+            padding: 1rem 1.5rem;
+            overflow: hidden;
+        }
+
+        .panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .panel-header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-elevated);
+        }
+        .panel-title { font-size: 0.875rem; font-weight: 600; }
+        .panel-subtitle { font-size: 0.75rem; color: var(--text-secondary); }
+
+        .panel-body {
+            flex: 1;
+            padding: 1rem;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 0.875rem;
+        }
+
+        /* ============== Form Controls ============== */
+        .field { display: flex; flex-direction: column; gap: 0.375rem; }
+        .field-label {
+            font-size: 0.75rem; font-weight: 500;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        select, textarea, input[type="text"], input[type="number"] {
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 0.5rem 0.75rem;
+            font-family: inherit;
+            font-size: 0.875rem;
+            outline: none;
+            transition: border-color 0.15s var(--ease-out), box-shadow 0.15s var(--ease-out);
+            width: 100%;
+        }
+        select { cursor: pointer; }
+        textarea { resize: vertical; min-height: 80px; line-height: 1.5; }
+        textarea.code { font-family: ui-monospace, "SF Mono", Consolas, "Liberation Mono", monospace; font-size: 0.8125rem; }
+
+        select:focus, textarea:focus, input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+        }
+
+        .param-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.5rem;
+        }
+        .param-grid .field-label { font-size: 0.6875rem; }
+        .param-grid input { padding: 0.4rem 0.5rem; font-size: 0.8125rem; }
+
+        /* ============== Buttons ============== */
+        .btn {
+            display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
+            padding: 0.5rem 0.875rem;
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            font-family: inherit;
+            font-size: 0.8125rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s var(--ease-out);
+        }
+        .btn:hover { background: var(--bg-hover); border-color: var(--border-light); }
+        .btn:active { transform: translateY(1px); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            border-color: transparent;
+            box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+        }
+        .btn-primary:hover {
+            background: linear-gradient(135deg, var(--primary-light), var(--primary));
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.45);
+        }
+
+        .btn-danger { background: var(--danger); border-color: transparent; color: white; }
+        .btn-ghost { background: transparent; border-color: transparent; color: var(--text-secondary); }
+        .btn-ghost:hover { color: var(--text-primary); background: var(--bg-hover); }
+
+        .btn-icon { padding: 0.4rem; min-width: 32px; }
+
+        .actions {
+            display: flex; gap: 0.5rem;
+            padding: 0.875rem 1rem;
+            border-top: 1px solid var(--border);
+            background: var(--bg-elevated);
+        }
+        .actions .btn-primary { flex: 1; padding: 0.625rem 1rem; }
+
+        /* ============== Mode Toggle ============== */
+        .mode-toggle {
+            display: inline-flex;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 2px;
+        }
+        .mode-btn {
+            padding: 0.375rem 0.75rem;
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            font-weight: 500;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: all 0.15s var(--ease-out);
+        }
+        .mode-btn.active {
+            background: var(--primary);
+            color: white;
+            box-shadow: var(--shadow-sm);
+        }
+
+        /* ============== Output ============== */
+        .output-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+        .output {
+            flex: 1;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 1rem 1.25rem;
+            overflow-y: auto;
+            font-family: ui-monospace, "SF Mono", Consolas, "Liberation Mono", monospace;
+            font-size: 0.875rem;
+            line-height: 1.65;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            color: var(--text-primary);
+            min-height: 240px;
+            max-height: calc(100vh - 380px);
+        }
+        .output:empty::before {
+            content: "等待发送… 输出将显示在这里。";
+            color: var(--text-muted);
+            font-style: italic;
+        }
+
+        .output-meta {
+            display: flex;
+            gap: 1rem;
+            margin-top: 0.625rem;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            flex-wrap: wrap;
+        }
+        .output-meta span { display: inline-flex; align-items: center; gap: 0.25rem; }
+        .output-meta b { color: var(--text-primary); font-weight: 600; }
+
+        .cursor {
+            display: inline-block;
+            width: 8px; height: 1.1em;
+            background: var(--primary);
+            margin-left: 2px;
+            vertical-align: text-bottom;
+            animation: blink 1s steps(2) infinite;
+        }
+        @keyframes blink { 50% { opacity: 0; } }
+
+        /* ============== History ============== */
+        .history {
+            border-top: 1px solid var(--border);
+            background: var(--bg-card);
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .history-header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0.5rem 1.5rem;
+            background: var(--bg-elevated);
+            border-bottom: 1px solid var(--border);
+            position: sticky; top: 0; z-index: 1;
+        }
+        .history-list { padding: 0.25rem 0.5rem; }
+        .history-item {
+            display: flex; align-items: center; gap: 0.625rem;
+            padding: 0.4rem 0.625rem;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            font-size: 0.8125rem;
+        }
+        .history-item:hover { background: var(--bg-hover); }
+        .history-q { flex: 1; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .history-meta { font-size: 0.6875rem; color: var(--text-muted); }
+        .history-empty { padding: 1rem; text-align: center; color: var(--text-muted); font-size: 0.8125rem; font-style: italic; }
+
+        /* ============== Settings Drawer ============== */
+        .drawer {
+            position: fixed; top: 0; right: 0;
+            width: 360px; height: 100vh;
+            background: var(--bg-card);
+            border-left: 1px solid var(--border);
+            box-shadow: var(--shadow-lg);
+            transform: translateX(100%);
+            transition: transform 0.25s var(--ease-out);
+            z-index: 50;
+            display: flex; flex-direction: column;
+        }
+        .drawer.open { transform: translateX(0); }
+        .drawer-header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 1rem 1.25rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .drawer-body { flex: 1; padding: 1.25rem; overflow-y: auto; display: flex; flex-direction: column; gap: 1rem; }
+
+        /* ============== Toast ============== */
+        .toast {
+            position: fixed; bottom: 1.5rem; left: 50%;
+            transform: translateX(-50%) translateY(20px);
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 0.75rem 1rem;
+            font-size: 0.8125rem;
+            color: var(--text-primary);
+            box-shadow: var(--shadow-lg);
+            opacity: 0;
+            transition: opacity 0.2s, transform 0.2s var(--ease-out);
+            z-index: 100;
+            pointer-events: none;
+        }
+        .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+        .toast.error { border-color: var(--danger); }
+        .toast.success { border-color: var(--accent); }
+
+        /* ============== Spinner ============== */
+        .spinner {
+            width: 14px; height: 14px;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ============== Scrollbar ============== */
+        ::-webkit-scrollbar { width: 10px; height: 10px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; border: 2px solid var(--bg-card); }
+        ::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
+
+        /* ============== Responsive ============== */
+        @media (max-width: 900px) {
+            .main { grid-template-columns: 1fr; overflow-y: auto; }
+            .panel { max-height: none; }
+            .output { max-height: 400px; }
+            .drawer { width: 100%; }
+        }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <!-- ============== Header ============== -->
+        <header class="header">
+            <div class="brand">
+                <div class="brand-mark">⚡</div>
+                <div class="brand-text">
+                    <h1>QuantumFlow Playground</h1>
+                    <span>分布式大模型推理平台 · 交互式调试</span>
+                </div>
+            </div>
+            <div class="header-actions">
+                <div class="status-pill" id="statusPill">
+                    <span class="status-dot"></span>
+                    <span id="statusText">未连接</span>
+                </div>
+                <button class="btn btn-ghost btn-icon" id="openSettings" title="设置">⚙️</button>
+            </div>
+        </header>
+
+        <!-- ============== Main ============== -->
+        <main class="main">
+            <!-- Left: Input -->
+            <section class="panel">
+                <div class="panel-header">
+                    <span class="panel-title">输入</span>
+                    <div class="mode-toggle" role="tablist">
+                        <button class="mode-btn active" data-mode="single">单次生成</button>
+                        <button class="mode-btn" data-mode="chat">对话</button>
+                    </div>
+                </div>
+                <div class="panel-body">
+                    <div class="field">
+                        <label class="field-label" for="model">模型</label>
+                        <select id="model"></select>
+                    </div>
+
+                    <div class="field" id="systemPromptField" style="display: none;">
+                        <label class="field-label" for="systemPrompt">系统提示（可选）</label>
+                        <textarea id="systemPrompt" rows="2" placeholder="You are a helpful assistant."></textarea>
+                    </div>
+
+                    <div class="field" style="flex: 1; min-height: 120px;">
+                        <label class="field-label" for="prompt">提示</label>
+                        <textarea id="prompt" class="code" rows="6" placeholder="输入你的问题…&#10;&#10;提示：Ctrl/⌘ + Enter 发送，Esc 停止"></textarea>
+                    </div>
+
+                    <div class="param-grid">
+                        <div class="field">
+                            <label class="field-label" for="temperature">Temperature</label>
+                            <input type="number" id="temperature" value="0.7" min="0" max="2" step="0.1">
+                        </div>
+                        <div class="field">
+                            <label class="field-label" for="maxTokens">Max tokens</label>
+                            <input type="number" id="maxTokens" value="512" min="1" max="8192">
+                        </div>
+                        <div class="field">
+                            <label class="field-label" for="topP">Top-P</label>
+                            <input type="number" id="topP" value="0.9" min="0" max="1" step="0.05">
+                        </div>
+                    </div>
+                </div>
+                <div class="actions">
+                    <button class="btn btn-ghost" id="clearBtn">清空</button>
+                    <button class="btn btn-primary" id="sendBtn">
+                        <span id="sendLabel">▶ 发送</span>
+                    </button>
+                </div>
+            </section>
+
+            <!-- Right: Output -->
+            <section class="panel">
+                <div class="panel-header">
+                    <span class="panel-title">输出</span>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <button class="btn btn-ghost btn-icon" id="copyBtn" title="复制">📋</button>
+                        <button class="btn btn-ghost btn-icon" id="stopBtn" title="停止" style="display: none;">⏹</button>
+                    </div>
+                </div>
+                <div class="panel-body">
+                    <div class="output-wrap">
+                        <div class="output" id="output"></div>
+                        <div class="output-meta" id="outputMeta" style="display: none;">
+                            <span>⏱ <b id="metaLatency">-</b></span>
+                            <span>🔤 <b id="metaTokens">-</b> tokens</span>
+                            <span>🚀 <b id="metaSpeed">-</b> tok/s</span>
+                            <span>📡 <b id="metaModel">-</b></span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- ============== History ============== -->
+        <div class="history" id="historyPanel">
+            <div class="history-header">
+                <span class="panel-title" style="font-size: 0.8125rem;">📜 历史记录（最近 10 条）</span>
+                <button class="btn btn-ghost" id="clearHistoryBtn" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">清空</button>
+            </div>
+            <div class="history-list" id="historyList">
+                <div class="history-empty">暂无历史</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============== Settings Drawer ============== -->
+    <aside class="drawer" id="settingsDrawer">
+        <div class="drawer-header">
+            <span class="panel-title">⚙️ 设置</span>
+            <button class="btn btn-ghost btn-icon" id="closeSettings">✕</button>
+        </div>
+        <div class="drawer-body">
+            <div class="field">
+                <label class="field-label" for="apiBase">API Base URL</label>
+                <input type="text" id="apiBase" value="">
+            </div>
+            <div class="field">
+                <label class="field-label" for="apiKey">API Key（保存在本地）</label>
+                <input type="text" id="apiKey" placeholder="qf-xxxxxxxx" autocomplete="off">
+            </div>
+            <div class="field">
+                <label class="field-label">
+                    <input type="checkbox" id="streamEnabled" checked style="width: auto; margin-right: 0.4rem;">
+                    启用流式输出
+                </label>
+            </div>
+            <div style="margin-top: 0.5rem; display: flex; gap: 0.5rem;">
+                <button class="btn btn-primary" id="testConnBtn" style="flex: 1;">测试连接</button>
+                <button class="btn" id="saveSettings">保存</button>
+            </div>
+            <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border); font-size: 0.75rem; color: var(--text-muted); line-height: 1.6;">
+                <strong style="color: var(--text-secondary);">快捷键</strong><br>
+                <kbd>Ctrl/⌘ + Enter</kbd> 发送<br>
+                <kbd>Esc</kbd> 停止生成<br>
+                <kbd>Ctrl/⌘ + K</kbd> 清空输出
+            </div>
+        </div>
+    </aside>
+
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+    // ==================== Config ====================
+    const STORAGE_KEY = 'qf_playground_v1';
+    const DEFAULTS = {
+        apiBase: window.location.origin,
+        apiKey: '',
+        model: '',
+        temperature: 0.7,
+        maxTokens: 512,
+        topP: 0.9,
+        streamEnabled: true,
+    };
+
+    const state = {
+        ...DEFAULTS,
+        ...JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'),
+        mode: 'single',          // 'single' | 'chat'
+        messages: [],            // chat history
+        history: JSON.parse(localStorage.getItem(STORAGE_KEY + '_history') || '[]'),
+        generating: false,
+        abortController: null,
+    };
+
+    // ==================== DOM Refs ====================
+    const $ = (id) => document.getElementById(id);
+    const els = {
+        model: $('model'),
+        systemPrompt: $('systemPrompt'),
+        systemPromptField: $('systemPromptField'),
+        prompt: $('prompt'),
+        temperature: $('temperature'),
+        maxTokens: $('maxTokens'),
+        topP: $('topP'),
+        output: $('output'),
+        outputMeta: $('outputMeta'),
+        metaLatency: $('metaLatency'),
+        metaTokens: $('metaTokens'),
+        metaSpeed: $('metaSpeed'),
+        metaModel: $('metaModel'),
+        sendBtn: $('sendBtn'),
+        sendLabel: $('sendLabel'),
+        stopBtn: $('stopBtn'),
+        clearBtn: $('clearBtn'),
+        copyBtn: $('copyBtn'),
+        statusPill: $('statusPill'),
+        statusText: $('statusText'),
+        historyList: $('historyList'),
+        clearHistoryBtn: $('clearHistoryBtn'),
+        apiBase: $('apiBase'),
+        apiKey: $('apiKey'),
+        streamEnabled: $('streamEnabled'),
+        openSettings: $('openSettings'),
+        closeSettings: $('closeSettings'),
+        settingsDrawer: $('settingsDrawer'),
+        testConnBtn: $('testConnBtn'),
+        saveSettings: $('saveSettings'),
+        toast: $('toast'),
+    };
+
+    // ==================== Toast ====================
+    let toastTimer = null;
+    function toast(msg, type = '') {
+        els.toast.textContent = msg;
+        els.toast.className = 'toast show ' + type;
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => {
+            els.toast.className = 'toast';
+        }, 2400);
+    }
+
+    // ==================== Persistence ====================
+    function save() {
+        const persisted = {
+            apiBase: state.apiBase,
+            apiKey: state.apiKey,
+            model: state.model,
+            temperature: parseFloat(els.temperature.value),
+            maxTokens: parseInt(els.maxTokens.value, 10),
+            topP: parseFloat(els.topP.value),
+            streamEnabled: els.streamEnabled.checked,
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
+    }
+    function saveHistory() {
+        localStorage.setItem(STORAGE_KEY + '_history', JSON.stringify(state.history.slice(0, 10)));
+    }
+
+    // ==================== Status ====================
+    function setStatus(online) {
+        els.statusPill.classList.toggle('online', online);
+        els.statusPill.classList.toggle('offline', !online);
+        els.statusText.textContent = online ? '已连接' : '未连接';
+    }
+
+    // ==================== Models ====================
+    async function loadModels() {
+        try {
+            const headers = state.apiKey ? { 'X-API-Key': state.apiKey } : {};
+            const res = await fetch(`${state.apiBase}/api/v1/models`, { headers });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+
+            const models = Array.isArray(data) ? data : (data.models || data.items || []);
+            if (models.length === 0) {
+                els.model.innerHTML = '<option value="">(无可用模型)</option>';
+            } else {
+                els.model.innerHTML = models
+                    .map(m => `<option value="${escapeAttr(m.name || m.model || m.id)}">${escapeHtml(m.name || m.model || m.id)}${m.backend ? ` [${m.backend}]` : ''}</option>`)
+                    .join('');
+            }
+
+            // 恢复上次选择
+            if (state.model && [...els.model.options].some(o => o.value === state.model)) {
+                els.model.value = state.model;
+            } else if (models[0]) {
+                els.model.value = models[0].name || models[0].model || models[0].id;
+                state.model = els.model.value;
+            }
+            setStatus(true);
+            return true;
+        } catch (e) {
+            setStatus(false);
+            els.model.innerHTML = '<option value="">(加载失败)</option>';
+            return false;
+        }
+    }
+
+    // ==================== Send ====================
+    async function send() {
+        if (state.generating) return;
+        const prompt = els.prompt.value.trim();
+        if (!prompt) {
+            toast('请输入提示', 'error');
+            return;
+        }
+        if (!state.model && !els.model.value) {
+            toast('请先选择模型', 'error');
+            return;
+        }
+
+        const model = els.model.value;
+        const params = {
+            temperature: parseFloat(els.temperature.value) || 0.7,
+            max_tokens: parseInt(els.maxTokens.value, 10) || 512,
+            top_p: parseFloat(els.topP.value) || 0.9,
+        };
+
+        setGenerating(true);
+        els.output.textContent = '';
+        els.outputMeta.style.display = 'none';
+        const startTime = performance.now();
+        let tokenCount = 0;
+        let buffer = '';
+
+        const appendToken = (delta) => {
+            buffer += delta;
+            tokenCount++;
+            els.output.textContent = buffer;
+            // 追加光标
+            if (!els.output.querySelector('.cursor')) {
+                const c = document.createElement('span');
+                c.className = 'cursor';
+                els.output.appendChild(c);
+            }
+            els.output.scrollTop = els.output.scrollHeight;
+        };
+
+        const finalize = (ok, errMsg) => {
+            // 移除光标
+            const c = els.output.querySelector('.cursor');
+            if (c) c.remove();
+
+            const duration = (performance.now() - startTime) / 1000;
+            els.outputMeta.style.display = 'flex';
+            els.metaLatency.textContent = duration.toFixed(2) + 's';
+            els.metaTokens.textContent = tokenCount;
+            els.metaSpeed.textContent = duration > 0 ? (tokenCount / duration).toFixed(1) : '-';
+            els.metaModel.textContent = model;
+
+            if (ok) {
+                addHistory(prompt, buffer, model, duration, tokenCount);
+            } else {
+                els.output.textContent = (buffer ? buffer + '\n\n' : '') + '❌ ' + (errMsg || '请求失败');
+                toast('请求失败：' + (errMsg || '未知错误'), 'error');
+            }
+            setGenerating(false);
+        };
+
+        const headers = { 'Content-Type': 'application/json' };
+        if (state.apiKey) headers['X-API-Key'] = state.apiKey;
+
+        const url = state.streamEnabled
+            ? `${state.apiBase}/api/v1/inference/generate/stream`
+            : `${state.apiBase}/api/v1/inference/generate`;
+
+        const body = state.mode === 'chat'
+            ? {
+                model,
+                messages: [
+                    ...(els.systemPrompt.value.trim() ? [{ role: 'system', content: els.systemPrompt.value.trim() }] : []),
+                    ...state.messages,
+                    { role: 'user', content: prompt },
+                ],
+                sampling_params: params,
+            }
+            : { model, prompt, sampling_params: params };
+
+        state.abortController = new AbortController();
+
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(body),
+                signal: state.abortController.signal,
+            });
+
+            if (!res.ok) {
+                let msg = `HTTP ${res.status}`;
+                try {
+                    const err = await res.json();
+                    msg = err.error?.message || err.detail || msg;
+                } catch {}
+                finalize(false, msg);
+                return;
+            }
+
+            if (state.streamEnabled && res.body) {
+                // 流式：解析 SSE
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let sseBuf = '';
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    sseBuf += decoder.decode(value, { stream: true });
+                    const lines = sseBuf.split('\n');
+                    sseBuf = lines.pop();
+                    for (const line of lines) {
+                        if (!line.startsWith('data:')) continue;
+                        const data = line.slice(5).trim();
+                        if (data === '[DONE]') continue;
+                        try {
+                            const obj = JSON.parse(data);
+                            if (obj.delta) appendToken(obj.delta);
+                            if (obj.error) { finalize(false, obj.error); return; }
+                        } catch {}
+                    }
+                }
+            } else {
+                // 非流式
+                const data = await res.json();
+                const text = data.generated_text || data.text || data.choices?.[0]?.message?.content || JSON.stringify(data);
+                buffer = text;
+                tokenCount = data.completion_tokens || text.length;
+                appendToken(text);
+            }
+
+            // 记录对话历史
+            if (state.mode === 'chat') {
+                state.messages.push({ role: 'user', content: prompt });
+                state.messages.push({ role: 'assistant', content: buffer });
+            }
+            finalize(true);
+        } catch (e) {
+            if (e.name === 'AbortError') {
+                finalize(false, '已停止');
+            } else {
+                finalize(false, e.message);
+            }
+        }
+    }
+
+    // ==================== UI State ====================
+    function setGenerating(on) {
+        state.generating = on;
+        els.sendBtn.disabled = on;
+        els.stopBtn.style.display = on ? 'inline-flex' : 'none';
+        els.sendLabel.innerHTML = on
+            ? '<span class="spinner"></span> 生成中…'
+            : '▶ 发送';
+    }
+
+    function stop() {
+        if (state.abortController) state.abortController.abort();
+    }
+
+    function clearOutput() {
+        els.output.textContent = '';
+        els.outputMeta.style.display = 'none';
+    }
+
+    // ==================== History ====================
+    function addHistory(q, a, model, dur, tokens) {
+        state.history.unshift({ q, a, model, dur, tokens, t: Date.now() });
+        state.history = state.history.slice(0, 10);
+        saveHistory();
+        renderHistory();
+    }
+    function renderHistory() {
+        if (state.history.length === 0) {
+            els.historyList.innerHTML = '<div class="history-empty">暂无历史</div>';
+            return;
+        }
+        els.historyList.innerHTML = state.history.map((h, i) => `
+            <div class="history-item" data-idx="${i}" title="点击恢复">
+                <span class="history-q">${escapeHtml(h.q.slice(0, 60))}${h.q.length > 60 ? '…' : ''}</span>
+                <span class="history-meta">${h.tokens}t · ${h.dur?.toFixed(1)}s</span>
+            </div>
+        `).join('');
+    }
+
+    // ==================== Helpers ====================
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+    function escapeAttr(s) { return escapeHtml(s).replace(/`/g, '&#96;'); }
+
+    // ==================== Event Wiring ====================
+    function bindEvents() {
+        // Mode toggle
+        document.querySelectorAll('.mode-btn').forEach(b => {
+            b.addEventListener('click', () => {
+                document.querySelectorAll('.mode-btn').forEach(x => x.classList.remove('active'));
+                b.classList.add('active');
+                state.mode = b.dataset.mode;
+                els.systemPromptField.style.display = state.mode === 'chat' ? 'flex' : 'none';
+            });
+        });
+
+        // Send / stop / clear
+        els.sendBtn.addEventListener('click', send);
+        els.stopBtn.addEventListener('click', stop);
+        els.clearBtn.addEventListener('click', () => {
+            els.prompt.value = '';
+            if (state.mode === 'chat') {
+                state.messages = [];
+                toast('对话已重置');
+            }
+            clearOutput();
+            els.prompt.focus();
+        });
+
+        // Copy
+        els.copyBtn.addEventListener('click', async () => {
+            const text = els.output.textContent;
+            if (!text) { toast('无内容可复制', 'error'); return; }
+            try {
+                await navigator.clipboard.writeText(text);
+                toast('已复制到剪贴板', 'success');
+            } catch {
+                toast('复制失败', 'error');
+            }
+        });
+
+        // History click → restore
+        els.historyList.addEventListener('click', (e) => {
+            const item = e.target.closest('.history-item');
+            if (!item) return;
+            const h = state.history[parseInt(item.dataset.idx, 10)];
+            if (h) {
+                els.prompt.value = h.q;
+                els.output.textContent = h.a;
+                toast('已恢复历史');
+            }
+        });
+        els.clearHistoryBtn.addEventListener('click', () => {
+            state.history = [];
+            saveHistory();
+            renderHistory();
+        });
+
+        // Param persistence
+        ['temperature', 'maxTokens', 'topP'].forEach(id => {
+            els[id].addEventListener('change', save);
+        });
+        els.model.addEventListener('change', () => { state.model = els.model.value; save(); });
+
+        // Settings drawer
+        els.openSettings.addEventListener('click', () => {
+            els.apiBase.value = state.apiBase;
+            els.apiKey.value = state.apiKey;
+            els.streamEnabled.checked = state.streamEnabled;
+            els.settingsDrawer.classList.add('open');
+        });
+        els.closeSettings.addEventListener('click', () => els.settingsDrawer.classList.remove('open'));
+        els.saveSettings.addEventListener('click', () => {
+            state.apiBase = els.apiBase.value.trim() || DEFAULTS.apiBase;
+            state.apiKey = els.apiKey.value.trim();
+            state.streamEnabled = els.streamEnabled.checked;
+            save();
+            els.settingsDrawer.classList.remove('open');
+            toast('已保存', 'success');
+            loadModels();
+        });
+        els.testConnBtn.addEventListener('click', async () => {
+            const ok = await loadModels();
+            toast(ok ? '连接成功' : '连接失败', ok ? 'success' : 'error');
+        });
+
+        // Keyboard
+        document.addEventListener('keydown', (e) => {
+            const isMac = navigator.platform.includes('Mac');
+            const mod = isMac ? e.metaKey : e.ctrlKey;
+            if (mod && e.key === 'Enter') { e.preventDefault(); send(); }
+            else if (e.key === 'Escape' && state.generating) { e.preventDefault(); stop(); }
+            else if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); clearOutput(); }
+        });
+
+        // Prompt Enter without modifier = newline; with modifier = send (handled above)
+        els.prompt.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+                // 允许 Enter 直接换行；发送靠 Ctrl/⌘+Enter
+            }
+        });
+    }
+
+    // ==================== Init ====================
+    function init() {
+        // 还原参数
+        els.apiBase.value = state.apiBase;
+        els.apiKey.value = state.apiKey;
+        els.temperature.value = state.temperature;
+        els.maxTokens.value = state.maxTokens;
+        els.topP.value = state.topP;
+        els.streamEnabled.checked = state.streamEnabled;
+
+        bindEvents();
+        renderHistory();
+        loadModels();
+    }
+
+    init();
+    </script>
+</body>
+</html>
