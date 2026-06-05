@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=flat-square)](LICENSE)
 [![CUDA](https://img.shields.io/badge/CUDA-12.4%20%7C%2013.0-76B900?style=flat-square&logo=nvidia)](https://developer.nvidia.com/cuda-toolkit)
 
-[English](README.md) · [中文](README.md)
+[English](README.en.md) · [中文](README.md)
 
 ---
 
@@ -247,6 +247,18 @@ kubectl apply -f deploy/k8s/monitoring.yaml
 ```
 
 完整 YAML 模板、HPA 配置、监控告警规则、TLS 配置等详见 [DEPLOYMENT.md](./docs/DEPLOYMENT.md)。
+
+---
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=zimingttkx%2FQuantumFlow&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=zimingttkx/QuantumFlow&type=date&theme=dark&logscale&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=zimingttkx/QuantumFlow&type=date&logscale&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=zimingttkx/QuantumFlow&type=date&logscale&legend=top-left" />
+ </picture>
+</a>
 
 ---
 
