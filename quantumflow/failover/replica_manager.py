@@ -6,13 +6,16 @@
 - 副本选择与调度
 """
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import os
 import shutil
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 import structlog
 
@@ -22,6 +25,92 @@ from quantumflow.failover.policy import ReplicaPolicy
 from quantumflow.failover.state_store import NodeStateStore
 
 logger = structlog.get_logger().bind(component="replica_manager")
+
+
+# ---------------------------------------------------------------- helpers
+
+
+def _dir_size_bytes(path: str) -> int:
+    """同步计算目录总字节数（线程池调用）"""
+    total = 0
+    for dirpath, _dirnames, filenames in os.walk(path):
+        for f in filenames:
+            try:
+                fp = os.path.join(dirpath, f)
+                if os.path.isfile(fp):
+                    total += os.path.getsize(fp)
+            except OSError:
+                continue
+    return total
+
+
+def _sha256_dir(path: str) -> str:
+    """同步计算目录的 SHA256（按文件名字典序遍历）"""
+    h = hashlib.sha256()
+    for dirpath, _dirnames, filenames in os.walk(path):
+        for f in sorted(filenames):
+            fp = os.path.join(dirpath, f)
+            if not os.path.isfile(fp):
+                continue
+            # 把相对路径纳入 hash，避免 /a/file 和 /b/file 同内容时碰撞
+            rel = os.path.relpath(fp, path)
+            h.update(rel.encode("utf-8"))
+            h.update(b"\x00")
+            try:
+                with open(fp, "rb") as fh:
+                    while True:
+                        chunk = fh.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        h.update(chunk)
+            except OSError:
+                continue
+    return h.hexdigest()
+
+
+@runtime_checkable
+class CopyStrategy(Protocol):
+    """副本复制策略协议
+
+    实现此协议以支持跨节点复制（如 rsync / scp / 对象存储）。
+    """
+
+    async def copy(
+        self, source_path: str, target_node: str, model_name: str
+    ) -> int:
+        """复制模型到目标节点
+
+        Returns:
+            复制的字节数
+        """
+        ...
+
+
+class LocalCopyStrategy:
+    """默认 CopyStrategy — 仅支持本地复制
+
+    适合模型路径在同一文件系统上的场景。
+    """
+
+    async def copy(
+        self, source_path: str, target_node: str, model_name: str
+    ) -> int:
+        if target_node != "local":
+            raise NotImplementedError(
+                f"LocalCopyStrategy cannot copy to remote target: {target_node}"
+            )
+        if not os.path.isdir(source_path):
+            return 0
+        target_path = os.path.join(
+            os.path.dirname(source_path) or ".", f"{model_name}_copy"
+        )
+        loop = asyncio.get_running_loop()
+        if os.path.exists(target_path):
+            await loop.run_in_executor(None, shutil.rmtree, target_path)
+        await loop.run_in_executor(
+            None, shutil.copytree, source_path, target_path
+        )
+        return await loop.run_in_executor(None, _dir_size_bytes, target_path)
 
 
 @dataclass
@@ -64,6 +153,7 @@ class ReplicaManager:
         cluster_manager: ClusterManager,
         state_store: NodeStateStore,
         replica_policy: ReplicaPolicy | None = None,
+        copy_strategy: CopyStrategy | None = None,
     ):
         self._cluster_manager = cluster_manager
         self._state_store = state_store
@@ -75,7 +165,15 @@ class ReplicaManager:
         # 副本状态缓存
         self._replica_cache: dict[str, ModelReplica] = {}
 
+        # 复制策略（None 表示使用 _copy_model 中的本地默认实现）
+        self._copy_strategy: CopyStrategy | None = copy_strategy
+
         logger.info("replica_manager_created", policy=self._replica_policy.to_dict())
+
+    def set_copy_strategy(self, strategy: CopyStrategy) -> None:
+        """运行时切换复制策略"""
+        self._copy_strategy = strategy
+        logger.info("copy_strategy_set", strategy=type(strategy).__name__)
 
     async def _get_replica_lock(self, model_name: str) -> asyncio.Lock:
         """获取副本操作锁"""
@@ -699,45 +797,129 @@ class ReplicaManager:
     async def _copy_model(
         self, model_path: str, target_node: str, model_name: str
     ) -> int:
-        """
-        复制模型到目标节点
+        """复制模型到目标节点
 
-        实际实现需要通过 WorkerClient 传输模型文件
-        这里简化处理，模拟复制操作
+        默认使用本地 :func:`shutil.copytree`（适合 model_path 是本地路径且
+        target_node == "local" 的场景）。
+
+        对于跨节点复制，应通过 :class:`CopyStrategy` 注入真正的传输实现
+        （如基于 SSH/rsync/对象存储的策略）。未注入时给出明确告警并返回 0。
 
         Returns:
             复制的字节数
         """
-        # 模拟复制
-        await asyncio.sleep(0.1)
+        start = asyncio.get_event_loop().time()
 
-        # 估算模型大小（实际应该从节点获取）
-        estimated_size = 7 * 1024 * 1024 * 1024  # 7GB
+        if self._copy_strategy is not None:
+            try:
+                bytes_copied = await self._copy_strategy.copy(
+                    source_path=model_path,
+                    target_node=target_node,
+                    model_name=model_name,
+                )
+                duration = asyncio.get_event_loop().time() - start
+                logger.info(
+                    "model_copied_via_strategy",
+                    model_path=model_path,
+                    target_node=target_node,
+                    model_name=model_name,
+                    bytes_copied=bytes_copied,
+                    duration_seconds=round(duration, 3),
+                )
+                return int(bytes_copied)
+            except Exception as e:
+                logger.error(
+                    "copy_strategy_failed",
+                    model_path=model_path,
+                    target_node=target_node,
+                    error=str(e),
+                )
+                raise
 
-        logger.debug(
-            "model_copied",
-            model_path=model_path,
-            target_node=target_node,
-            model_name=model_name,
+        # 无注入策略时的回退
+        if target_node != "local":
+            logger.warning(
+                "no_copy_strategy_for_remote_target",
+                model_path=model_path,
+                target_node=target_node,
+                model_name=model_name,
+                hint="set ReplicaManager.copy_strategy for real remote copy",
+            )
+            return 0
+
+        # 本地复制（model_path 是本地文件系统路径）
+        if not os.path.isdir(model_path):
+            logger.error(
+                "local_model_path_not_found",
+                model_path=model_path,
+                model_name=model_name,
+            )
+            return 0
+
+        # 把目标写成 {model_name}_copy 在同盘 — 仅作为默认落点
+        target_path = os.path.join(
+            os.path.dirname(model_path) or ".", f"{model_name}_copy"
         )
-
-        return estimated_size
+        try:
+            # 在线程池里跑，避免阻塞事件循环
+            loop = asyncio.get_running_loop()
+            if os.path.exists(target_path):
+                await loop.run_in_executor(None, shutil.rmtree, target_path)
+            await loop.run_in_executor(
+                None, shutil.copytree, model_path, target_path
+            )
+            bytes_copied = await loop.run_in_executor(
+                None, _dir_size_bytes, target_path
+            )
+            duration = asyncio.get_event_loop().time() - start
+            logger.info(
+                "model_copied_locally",
+                model_path=model_path,
+                target_path=target_path,
+                model_name=model_name,
+                bytes_copied=bytes_copied,
+                duration_seconds=round(duration, 3),
+            )
+            return int(bytes_copied)
+        except Exception as e:
+            logger.error(
+                "local_copy_failed",
+                model_path=model_path,
+                target_path=target_path,
+                error=str(e),
+            )
+            return 0
 
     async def _calculate_checksum(self, model_path: str) -> str:
-        """
-        计算模型目录的 checksum
+        """计算模型目录的 SHA256 checksum（确定性，不含时间戳）
 
-        用于验证副本完整性
+        算法：按文件名字典序遍历目录下所有文件，分块读取并 update SHA256。
+        对于非本地路径（HTTP / S3 / HF Hub 等），如果能解析成本地路径则同样适用；
+        否则返回基于路径名的稳定 fallback（仍不含时间戳）。
 
         Returns:
-            SHA256 checksum
+            完整 64 字符 SHA256 hex
         """
-        # 简化处理：使用模型路径作为 checksum 的基础
-        # 实际应该计算所有模型文件的 checksum
-        hash_obj = hashlib.sha256()
-        hash_obj.update(model_path.encode())
-        hash_obj.update(str(datetime.now()).encode())  # 加入时间戳
-        return hash_obj.hexdigest()[:16]
+        if not model_path or not os.path.isdir(model_path):
+            # 远程路径或不存在 — 用稳定 hash 兜底（仍不含时间戳）
+            h = hashlib.sha256()
+            h.update(model_path.encode("utf-8"))
+            return h.hexdigest()
+
+        # 在线程池里跑，避免阻塞事件循环
+        loop = asyncio.get_running_loop()
+        try:
+            return await loop.run_in_executor(
+                None, _sha256_dir, model_path
+            )
+        except Exception as e:
+            logger.error(
+                "checksum_calc_failed", model_path=model_path, error=str(e)
+            )
+            # 出错也返回稳定 hash，不影响主流程
+            h = hashlib.sha256()
+            h.update(model_path.encode("utf-8"))
+            return h.hexdigest()
 
     async def get_all_replicas(self) -> list[ModelReplica]:
         """获取所有模型副本信息"""

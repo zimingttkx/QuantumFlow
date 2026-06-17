@@ -4,7 +4,8 @@
 """
 
 import asyncio
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -22,10 +23,44 @@ class WorkerEndpoint:
     port: int
     status: str = "healthy"
 
+    # 新增字段：与模型路由配合
+    supported_models: list[str] = field(default_factory=list)  # 已加载/支持的模型名
+    backend: str = ""                                         # 主后端 (vllm/tgi/...)
+    gpu_count: int = 0
+    gpu_family: str = "unknown"                               # 主流 GPU 家族
+    failure_count: int = 0                                    # 连续失败次数（用于熔断）
+    last_success_at: float = 0.0                              # 上次成功时间
+    last_failure_at: float = 0.0                              # 上次失败时间
+    last_failure_reason: str = ""
+
     @property
     def url(self) -> str:
         """获取Worker的完整URL"""
         return f"http://{self.host}:{self.port}"
+
+    def record_success(self) -> None:
+        self.failure_count = 0
+        self.last_success_at = time.time()
+        self.status = "healthy"
+
+    def record_failure(self, reason: str = "") -> bool:
+        """记录一次失败；返回是否需要熔断（连续失败 >= 3）"""
+        self.failure_count += 1
+        self.last_failure_at = time.time()
+        self.last_failure_reason = reason
+        if self.failure_count >= 3:
+            self.status = "unhealthy"
+            return True
+        return False
+
+    def can_serve(self, model_name: str) -> bool:
+        """判断 worker 能否服务该模型（粗筛：模型名 + 状态）"""
+        if self.status != "healthy":
+            return False
+        if not self.supported_models:
+            # 没有上报过模型列表，假设能服务（兼容老 worker）
+            return True
+        return model_name in self.supported_models
 
 
 class WorkerClient:
@@ -38,8 +73,10 @@ class WorkerClient:
     - 处理 Worker 响应和错误
     """
 
-    def __init__(self, timeout: float = 30.0):
+    def __init__(self, timeout: float = 30.0, max_retries: int = 1, retry_backoff: float = 0.5):
         self.timeout = timeout
+        self.max_retries = max_retries
+        self.retry_backoff = retry_backoff
         self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -53,6 +90,58 @@ class WorkerClient:
         if self._client and not self._client.is_closed:
             await self._client.aclose()
             self._client = None
+
+    async def health_check(self, endpoint: WorkerEndpoint) -> bool:
+        """健康检查 — 调用 /status 并更新 endpoint 状态
+
+        Returns:
+            worker 是否健康
+        """
+        try:
+            client = await self._get_client()
+            url = f"{endpoint.url}/status"
+            response = await client.get(url)
+            if response.status_code == 200:
+                body = response.json()
+                # 用 worker 上报的状态更新本地缓存
+                if isinstance(body, dict):
+                    if "loaded_models" in body and isinstance(body["loaded_models"], list):
+                        endpoint.supported_models = body["loaded_models"]
+                    if "backend" in body:
+                        endpoint.backend = body.get("backend", endpoint.backend)
+                    if "gpu_count" in body:
+                        endpoint.gpu_count = int(body.get("gpu_count", 0))
+                endpoint.record_success()
+                return True
+            endpoint.record_failure(f"http {response.status_code}")
+            return False
+        except Exception as e:
+            endpoint.record_failure(str(e))
+            return False
+
+    async def cancel(
+        self,
+        endpoint: WorkerEndpoint,
+        request_id: str,
+    ) -> bool:
+        """取消正在执行的推理请求
+
+        Returns:
+            是否成功发送取消信号（不代表推理已停止）
+        """
+        try:
+            client = await self._get_client()
+            url = f"{endpoint.url}/cancel/{request_id}"
+            response = await client.post(url)
+            return response.status_code == 200
+        except Exception as e:
+            logger.warning(
+                "worker_cancel_failed",
+                worker_url=endpoint.url,
+                request_id=request_id,
+                error=str(e),
+            )
+            return False
 
     async def inference(
         self,
@@ -74,6 +163,9 @@ class WorkerClient:
 
         Returns:
             推理结果字典
+
+        失败语义：所有重试都失败后，endpoint.failure_count 递增。
+        端点级熔断由调用方基于 can_serve() 决定是否跳过。
         """
         client = await self._get_client()
 
@@ -91,66 +183,104 @@ class WorkerClient:
         }
 
         url = f"{endpoint.url}/inference"
+        last_error = ""
 
-        try:
-            logger.debug(
-                "sending_inference_to_worker",
-                request_id=request_id,
-                worker_url=url,
-                model=model_name,
-            )
-
-            response = await client.post(url, json=payload)
-
-            if response.status_code == 200:
-                result = response.json()
-                logger.info(
-                    "inference_response_received",
+        for attempt in range(self.max_retries + 1):
+            try:
+                logger.debug(
+                    "sending_inference_to_worker",
                     request_id=request_id,
                     worker_url=url,
-                    status=result.get("status"),
+                    model=model_name,
+                    attempt=attempt,
                 )
-                return result
-            else:
+
+                response = await client.post(url, json=payload)
+
+                if response.status_code == 200:
+                    result = response.json()
+                    # 即使 HTTP 200，body 也可能包含 status=error
+                    if isinstance(result, dict) and result.get("status") == "error":
+                        last_error = result.get("error", "unknown")
+                        endpoint.record_failure(f"worker_error: {last_error[:200]}")
+                        if attempt < self.max_retries:
+                            await asyncio.sleep(self.retry_backoff * (attempt + 1))
+                            continue
+                        return result
+                    endpoint.record_success()
+                    logger.info(
+                        "inference_response_received",
+                        request_id=request_id,
+                        worker_url=url,
+                        status=result.get("status"),
+                    )
+                    return result
+
+                # 非 2xx
                 error_text = response.text
+                last_error = f"HTTP {response.status_code}: {error_text[:200]}"
+                endpoint.record_failure(last_error)
                 logger.error(
                     "worker_inference_failed",
                     request_id=request_id,
                     worker_url=url,
                     status=response.status_code,
                     error=error_text,
+                    attempt=attempt,
                 )
+                if attempt < self.max_retries:
+                    await asyncio.sleep(self.retry_backoff * (attempt + 1))
+                    continue
                 return {
                     "request_id": request_id,
                     "status": "error",
                     "error": f"Worker returned status {response.status_code}: {error_text}",
                 }
 
-        except httpx.TimeoutException:
-            logger.error(
-                "worker_inference_timeout",
-                request_id=request_id,
-                worker_url=url,
-                timeout=self.timeout,
-            )
-            return {
-                "request_id": request_id,
-                "status": "error",
-                "error": f"Request timeout after {self.timeout}s",
-            }
+            except httpx.TimeoutException:
+                last_error = f"timeout after {self.timeout}s"
+                endpoint.record_failure(last_error)
+                logger.error(
+                    "worker_inference_timeout",
+                    request_id=request_id,
+                    worker_url=url,
+                    timeout=self.timeout,
+                    attempt=attempt,
+                )
+                if attempt < self.max_retries:
+                    await asyncio.sleep(self.retry_backoff * (attempt + 1))
+                    continue
+                return {
+                    "request_id": request_id,
+                    "status": "error",
+                    "error": last_error,
+                }
 
-        except Exception as e:
-            logger.error(
-                "worker_inference_error",
-                request_id=request_id,
-                worker_url=url,
-                error=str(e),
-            )
-            return {
-                "request_id": request_id,
-                "status": "error",
-                "error": str(e),
-            }
+            except Exception as e:
+                last_error = str(e)
+                endpoint.record_failure(last_error)
+                logger.error(
+                    "worker_inference_error",
+                    request_id=request_id,
+                    worker_url=url,
+                    error=last_error,
+                    attempt=attempt,
+                )
+                if attempt < self.max_retries:
+                    await asyncio.sleep(self.retry_backoff * (attempt + 1))
+                    continue
+                return {
+                    "request_id": request_id,
+                    "status": "error",
+                    "error": last_error,
+                }
+
+        # 不可达
+        return {
+            "request_id": request_id,
+            "status": "error",
+            "error": last_error or "all retries exhausted",
+        }
 
     async def load_model(
         self,

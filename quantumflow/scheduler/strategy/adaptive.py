@@ -39,27 +39,47 @@ class AdaptiveSchedulingStrategy(SchedulingStrategy):
         return "adaptive"
 
     def _default_rules(self) -> list[dict]:
-        """默认调度规则"""
+        """默认调度规则
+
+        优先级从高到低：
+        1. 超大模型（>70B）→ Gang（需要严格满足所有 TP 卡）
+        2. 用户指定 preferred_gpu_families → Gang（拓扑敏感）
+        3. 高优先级（>=8）→ Gang
+        4. 长输出（>4096 tokens）→ Gang
+        5. 默认 → Pack（紧凑）
+        """
         return [
-            # 规则1：大模型使用Gang调度
+            # 规则1：超大模型使用 Gang 调度（要求严格满足所有 TP 卡）
             {
                 "condition": lambda r, n: r.model_size > 70_000_000_000,  # >70B
                 "strategy": "gang",
-                "priority": 10,
+                "priority": 100,
             },
-            # 规则2：高优先级请求使用Gang调度
+            # 规则2：用户指定 GPU 家族偏好 → Gang（拓扑敏感）
+            {
+                "condition": lambda r, n: bool(r.preferred_gpu_families),
+                "strategy": "gang",
+                "priority": 90,
+            },
+            # 规则3：高优先级请求（>=8）使用 Gang
             {
                 "condition": lambda r, n: r.priority >= 8,
                 "strategy": "gang",
-                "priority": 9,
+                "priority": 80,
             },
-            # 规则3：长输出使用Gang调度
+            # 规则4：长输出（>4096 tokens）使用 Gang
             {
                 "condition": lambda r, n: r.max_tokens > 4096,
                 "strategy": "gang",
-                "priority": 7,
+                "priority": 70,
             },
-            # 规则4：默认使用Pack调度
+            # 规则5：单请求需要多张卡（TP>=2）→ Gang
+            {
+                "condition": lambda r, n: r.recommended_tensor_parallel >= 2,
+                "strategy": "gang",
+                "priority": 60,
+            },
+            # 规则6：默认使用 Pack 调度（紧凑打包）
             {
                 "condition": lambda r, n: True,
                 "strategy": "pack",

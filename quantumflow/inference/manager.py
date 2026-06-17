@@ -19,18 +19,30 @@ from quantumflow.inference.engine import (
 from quantumflow.inference.gpu_monitor import GPUMonitor
 from quantumflow.inference.vram_manager import VRAMManager
 
+# 在模块级别暴露后端类，便于测试 patch（如 patch("quantumflow.inference.manager.HuggingFaceEngine")）
+HuggingFaceEngine = backends.HuggingFaceEngine
+VLLMEngine = backends.VLLMEngine
+TGIEngine = backends.TGIEngine
+SGLangEngine = backends.SGLangEngine
+TensorRTLLMEngine = backends.TensorRTLLMEngine
+
 logger = structlog.get_logger().bind(component="engine_manager")
 
 
 # 获取后端类（可能为 None 如果未安装依赖）
 def _get_backend_class(backend_type: InferenceBackendType):
-    """获取后端类，如果不可用则返回 None"""
+    """获取后端类，如果不可用则返回 None
+
+    使用模块级别名（``HuggingFaceEngine`` 等）而非 ``backends.HuggingFaceEngine``，
+    这样测试可以用 ``patch("quantumflow.inference.manager.HuggingFaceEngine")``
+    来替换实现，便于无 GPU / 无依赖环境跑测试。
+    """
     mapping = {
-        InferenceBackendType.HUGGINGFACE: backends.HuggingFaceEngine,
-        InferenceBackendType.VLLM: backends.VLLMEngine,
-        InferenceBackendType.TGI: backends.TGIEngine,
-        InferenceBackendType.SGLANG: backends.SGLangEngine,
-        InferenceBackendType.TRT_LLM: backends.TensorRTLLMEngine,
+        InferenceBackendType.HUGGINGFACE: HuggingFaceEngine,
+        InferenceBackendType.VLLM: VLLMEngine,
+        InferenceBackendType.TGI: TGIEngine,
+        InferenceBackendType.SGLANG: SGLangEngine,
+        InferenceBackendType.TRT_LLM: TensorRTLLMEngine,
     }
     return mapping.get(backend_type)
 

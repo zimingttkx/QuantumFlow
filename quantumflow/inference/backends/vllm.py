@@ -209,10 +209,14 @@ class VLLMEngine(InferenceEngine):
         prompt: str,
         sampling_params: SamplingParams,
     ) -> AsyncIterator[str]:
-        """流式生成 — 在 executor 中完成推理，逐词 yield 以模拟 token 级流式输出"""
+        """流式生成
+
+        优先使用 vLLM AsyncLLMEngine（真实逐 token 流式）；
+        若不可用则用 LLM.generate 同步获取完整结果，再按 token 拆分近似流式。
+        """
         if model_name not in self._llm_instances:
             logger.error("model_not_loaded", model=model_name)
-            return  # async generator 提前结束，async for 会正常结束
+            return
 
         try:
             from vllm import SamplingParams as VLLMSamplingParams
@@ -228,26 +232,55 @@ class VLLMEngine(InferenceEngine):
                 stop=sampling_params.stop,
             )
 
-            loop = asyncio.get_running_loop()
-            outputs = await loop.run_in_executor(
-                None, _run_vllm_generate, llm, [prompt], vllm_params
-            )
-
-            # 逐词 yield，模拟流式效果
-            for output in outputs:
-                for output_item in output.outputs:
-                    text = output_item.text
-                    if text:
-                        # 按空白字符拆分，逐个 yield 单词+空格
-                        parts = text.split(" ")
-                        for i, part in enumerate(parts):
-                            chunk = part + (" " if i < len(parts) - 1 else "")
-                            if chunk:
-                                yield chunk
-                                await asyncio.sleep(0.01)
-
+            # 检测是否是 AsyncLLMEngine
+            engine_class = type(llm).__name__
+            if engine_class == "AsyncLLMEngine":
+                # 真实流式
+                async for output in self._real_stream(llm, prompt, vllm_params):
+                    yield output
+            else:
+                # 同步 LLM：先获取完整结果，再按 token 拆分近似流式
+                loop = asyncio.get_running_loop()
+                outputs = await loop.run_in_executor(
+                    None, _run_vllm_generate, llm, [prompt], vllm_params
+                )
+                for output in outputs:
+                    for output_item in output.outputs:
+                        token_ids = output_item.token_ids
+                        text = output_item.text
+                        if token_ids is not None and len(token_ids) > 0:
+                            # 按 token 切分回退：用空白分块（无法 100% 还原 token 边界）
+                            parts = text.split(" ") if text else [""]
+                            for i, part in enumerate(parts):
+                                chunk = part + (" " if i < len(parts) - 1 else "")
+                                if chunk:
+                                    yield chunk
+                                    await asyncio.sleep(0.01)
+                        elif text:
+                            yield text
         except Exception as e:
             logger.error("stream_generate_error", model=model_name, error=str(e))
+
+    async def _real_stream(self, async_engine, prompt: str, vllm_params):
+        """使用 AsyncLLMEngine 进行真实逐 token 流式"""
+        from vllm.utils import random_uuid
+
+        request_id = f"stream-{random_uuid()}"
+        # vLLM 0.4+ 使用 generate() 返回 async iterator
+        try:
+            results = async_engine.generate(prompt, vllm_params, request_id=request_id)
+            async for result in results:
+                if hasattr(result, "outputs") and result.outputs:
+                    output_item = result.outputs[0]
+                    new_text = getattr(output_item, "text", "")
+                    if new_text:
+                        yield new_text
+                    # finish_reason 出现后停止
+                    if getattr(output_item, "finish_reason", None):
+                        return
+        except Exception as e:
+            logger.error("real_stream_error", error=str(e))
+            raise
 
     async def get_stats(self, model_name: str) -> dict[str, float]:
         if model_name not in self._llm_instances:
@@ -258,21 +291,41 @@ class VLLMEngine(InferenceEngine):
 
             stats: dict[str, float] = {}
             if torch.cuda.is_available():
-                stats["gpu_memory_allocated"] = torch.cuda.memory_allocated() / (1024**3)
-                stats["gpu_memory_reserved"] = torch.cuda.memory_reserved() / (1024**3)
+                # 当前进程看到的 torch 显存
+                stats["gpu_memory_allocated_gb"] = torch.cuda.memory_allocated() / (1024**3)
+                stats["gpu_memory_reserved_gb"] = torch.cuda.memory_reserved() / (1024**3)
+                stats["gpu_count_visible"] = float(torch.cuda.device_count())
 
-                # 尝试获取 GPU 利用率
-                try:
-                    import pynvml
-
-                    pynvml.nvmlInit()
-                    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-                    util = pynvml.nvmlDeviceGetUtilizationRates(handle)
-                    stats["gpu_utilization"] = util.gpu / 100.0
-                    stats["gpu_memory_utilization"] = util.memory / 100.0
-                    pynvml.nvmlShutdown()
-                except Exception:
-                    pass
+            # 多 GPU 统计：遍历所有可见 GPU，不再硬编码 0
+            try:
+                from quantumflow.inference.gpu_monitor import _get_nvml_manager
+                mgr = _get_nvml_manager()
+                gpu_count = int(stats.get("gpu_count_visible", 1)) or 1
+                utils = []
+                mems = []
+                temps = []
+                for i in range(gpu_count):
+                    try:
+                        u = mgr.get_utilization(i)
+                        m = mgr.get_memory_info(i)
+                        t = mgr.get_temperature(i)
+                        if u is not None:
+                            utils.append(u)
+                        if m is not None:
+                            mems.append(m.get("utilization", 0.0))
+                        if t is not None:
+                            temps.append(t)
+                    except Exception:
+                        continue
+                if utils:
+                    stats["gpu_utilization_avg"] = sum(utils) / len(utils) / 100.0
+                if mems:
+                    stats["gpu_memory_utilization_avg"] = sum(mems) / len(mems) / 100.0
+                if temps:
+                    stats["gpu_temperature_avg"] = sum(temps) / len(temps)
+            except Exception:
+                # GPU monitor 不可用时不报错（vLLM 仍在工作）
+                pass
 
             return stats
         except Exception:

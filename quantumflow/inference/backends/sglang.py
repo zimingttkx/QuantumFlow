@@ -31,12 +31,16 @@ class SGLangEngine(InferenceEngine):
         config: dict[str, Any] | None = None,
         base_url: str = "http://localhost:30000",
         timeout: int | None = None,
+        max_concurrent: int = 16,
     ):
         super().__init__(InferenceBackendType.SGLANG)
         self.config = config or {}
         self.base_url = base_url.rstrip("/")
         self._client: Any | None = None
         self._timeout = timeout or self.config.get("timeout", 300)
+        # 并发信号量：避免单实例 SGLang 被并发打爆
+        self._max_concurrent = max_concurrent
+        self._semaphore: asyncio.Semaphore | None = None
 
     async def initialize(self) -> bool:
         """初始化SGLang客户端"""
@@ -47,6 +51,7 @@ class SGLangEngine(InferenceEngine):
                 base_url=self.base_url,
                 timeout=httpx.Timeout(self._timeout),
             )
+            self._semaphore = asyncio.Semaphore(self._max_concurrent)
 
             # 健康检查
             response = await self._client.get("/health")
@@ -164,7 +169,11 @@ class SGLangEngine(InferenceEngine):
                     payload["frequency_penalty"] = sampling_params.frequency_penalty
 
                 try:
-                    response = await self._client.post("/v1/completions", json=payload)
+                    if self._semaphore is None:
+                        # 测试或未显式 initialize 的场景：lazy 创建
+                        self._semaphore = asyncio.Semaphore(self._max_concurrent)
+                    async with self._semaphore:
+                        response = await self._client.post("/v1/completions", json=payload)
                     if response.status_code != 200:
                         logger.error(
                             "sglang_generate_failed",

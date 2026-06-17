@@ -78,6 +78,10 @@ class Node:
     failure_count: int = 0
     # 连续失败次数
     consecutive_failures: int = 0
+    # 失败原因列表（最近 N 条）
+    failure_reasons: list[str] = field(default_factory=list)
+    # Worker 服务端口（供 scheduler 直接构造 endpoint）
+    worker_port: int = 8000
 
     def to_resource(self) -> NodeResource:
         """转换为NodeResource"""
@@ -93,12 +97,26 @@ class Node:
             memory_available=self.memory_available,
             disk_total=self.disk_total,
             disk_available=self.disk_available,
-            load=self.current_load,
+            load=self._compute_load(),
             labels=self.labels,
             loaded_models=self.loaded_models,
             version=self.version,
             last_heartbeat=self.last_heartbeat,
         )
+
+    def _compute_load(self) -> float:
+        """基于 GPU 显存使用率 + 利用率计算真实负载"""
+        if not self.gpu_info:
+            return self.current_load
+        mem_used = sum(g.memory_used for g in self.gpu_info)
+        mem_total = sum(g.memory_total for g in self.gpu_info) or 1
+        mem_ratio = mem_used / mem_total
+        util_ratio = (
+            sum(g.utilization for g in self.gpu_info) / len(self.gpu_info)
+            if self.gpu_info
+            else 0.0
+        )
+        return max(0.0, min(1.0, 0.6 * mem_ratio + 0.4 * util_ratio))
 
     @property
     def available_gpus(self) -> list[GPUInfo]:
@@ -335,12 +353,15 @@ class ClusterManager:
                 n for n in healthy_nodes if all(n.labels.get(k) == v for k, v in labels.items())
             ]
 
-        # 按可用GPU数量排序
-        sorted_nodes = sorted(
-            healthy_nodes,
-            key=lambda n: (len(n.available_gpus), n.current_load),
-            reverse=True,
-        )
+        # 过滤掉 GPU 显存剩余 < 10% 的节点（与 scheduler 保持一致）
+        healthy_nodes = [n for n in healthy_nodes if any(g.memory_free_percent > 0.1 for g in n.gpu_info)]
+
+        # 按 (可用 GPU 数, 真实负载升序) 排序
+        def node_score(n: Node) -> tuple:
+            available = sum(1 for g in n.gpu_info if g.memory_free_percent > 0.1)
+            return (available, -n._compute_load())
+
+        sorted_nodes = sorted(healthy_nodes, key=node_score, reverse=True)
 
         selected = []
         remaining_gpus = required_gpus
@@ -349,7 +370,7 @@ class ClusterManager:
             if remaining_gpus <= 0:
                 break
 
-            available = len(node.available_gpus)
+            available = sum(1 for g in node.gpu_info if g.memory_free_percent > 0.1)
             if available > 0:
                 selected.append(node)
                 remaining_gpus -= available

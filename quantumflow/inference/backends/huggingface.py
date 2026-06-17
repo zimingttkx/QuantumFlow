@@ -211,10 +211,22 @@ class HuggingFaceEngine(InferenceEngine):
     def _build_attention_mask(
         self, seq_len: int, past_len: int, device: torch.device
     ) -> torch.Tensor:
-        """构建 attention mask"""
-        # 返回 [1, 1, past_len, seq_len] 的 4D mask
-        # 对于 causal LM，这应该是一个下三角矩阵（past_len 部分全 1，当前位置只看 past）
-        return None  # HuggingFace 模型内部自动处理 attention mask
+        """构建 4D causal attention mask
+
+        返回形状 [1, 1, total_len, total_len] 的下三角 mask，
+        其中 total_len = past_len + seq_len。
+
+        注意：在常规 generate() 流程中我们不直接传 mask，
+        HF 模型会用 default causal mask。但 chunked_prefill 路径里
+        未来如果需要手动 forward，可以复用这个函数构造 mask。
+        """
+        import torch  # 局部导入以避免循环依赖
+
+        total_len = past_len + seq_len
+        # [total_len, total_len] 下三角（不含对角线以上）
+        mask = torch.tril(torch.ones(total_len, total_len, dtype=torch.bool, device=device))
+        # 扩展到 4D
+        return mask.view(1, 1, total_len, total_len)
 
     async def unload_model(self, model_name: str) -> bool:
         """卸载模型"""
@@ -459,7 +471,7 @@ class HuggingFaceEngine(InferenceEngine):
                 "top_k": sampling_params.top_k,
                 "repetition_penalty": sampling_params.repetition_penalty,
                 "do_sample": sampling_params.temperature > 0,
-                "use_cache": False,
+                "use_cache": True,
             }
             if sampling_params.stop:
                 gen_kwargs["stop_strings"] = sampling_params.stop
@@ -729,7 +741,7 @@ class HuggingFaceEngine(InferenceEngine):
             "repetition_penalty": sampling_params.repetition_penalty,
             "streamer": streamer,
             "do_sample": sampling_params.temperature > 0,
-            "use_cache": False,
+            "use_cache": True,
         }
 
         thread = threading.Thread(target=model.generate, kwargs=generation_kwargs)

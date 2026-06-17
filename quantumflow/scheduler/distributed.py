@@ -95,8 +95,8 @@ class DistributedScheduler(Scheduler):
 
         return QuotaConfig(**DEFAULT_TENANT_QUOTA)
 
-    def _get_concurrent_requests(self, tenant_id: str) -> int:
-        """获取租户当前并发请求数"""
+    async def _get_concurrent_requests(self, tenant_id: str) -> int:
+        """获取租户当前并发请求数（异步，与 _decrement_concurrent_requests 配对）"""
         try:
             from quantumflow.storage import get_redis_manager_sync
             redis = get_redis_manager_sync().get_client()
@@ -105,8 +105,13 @@ class DistributedScheduler(Scheduler):
 
         if redis:
             key = f"qf:concurrent:{tenant_id}"
-            count = redis.get(key)
-            return int(count) if count else 0
+            try:
+                # redis-py 同步客户端在 to_thread 中调用
+                import asyncio
+                count = await asyncio.to_thread(redis.get, key)
+                return int(count) if count else 0
+            except Exception:
+                return 0
         return 0
 
     def _increment_concurrent_requests(self, tenant_id: str) -> None:
@@ -120,6 +125,38 @@ class DistributedScheduler(Scheduler):
         if redis:
             key = f"qf:concurrent:{tenant_id}"
             redis.incr(key)
+
+    def _decrement_concurrent_requests(self, tenant_id: str) -> None:
+        """减少租户并发请求计数（不会降到 0 以下）"""
+        try:
+            from quantumflow.storage import get_redis_manager_sync
+            redis = get_redis_manager_sync().get_client()
+        except Exception:
+            return
+
+        if redis:
+            key = f"qf:concurrent:{tenant_id}"
+            # 使用 Lua 脚本保证原子性：decrement 但不低于 0
+            try:
+                redis.eval(
+                    """
+                    local current = tonumber(redis.call('GET', KEYS[1]) or '0')
+                    if current > 0 then
+                        return redis.call('DECR', KEYS[1])
+                    else
+                        redis.call('SET', KEYS[1], '0')
+                        return 0
+                    end
+                    """,
+                    1,
+                    key,
+                )
+            except Exception:
+                # 回退：直接 DECR（即使可能短暂为 -1）
+                try:
+                    redis.decr(key)
+                except Exception:
+                    pass
 
     async def start(self):
         """启动分布式调度器"""
@@ -185,7 +222,7 @@ class DistributedScheduler(Scheduler):
 
         # 检查租户并发限制
         quota = self._get_tenant_quota(tenant_id)
-        current_concurrent = self._get_concurrent_requests(tenant_id)
+        current_concurrent = await self._get_concurrent_requests(tenant_id)
 
         if current_concurrent >= quota.concurrent_requests:
             error_msg = f"租户 {tenant_id} 并发请求数超限: {current_concurrent}/{quota.concurrent_requests}"
@@ -310,6 +347,7 @@ class DistributedScheduler(Scheduler):
     ):
         """处理Redis队列中调度失败的请求"""
         request_id = request.request_id
+        tenant_id = getattr(request, "tenant_id", "default")
 
         # 重试逻辑
         request.retry_count += 1
@@ -340,6 +378,8 @@ class DistributedScheduler(Scheduler):
             )
             self.stats["failed_requests"] += 1
             self.stats["pending_requests"] -= 1
+            # 配额回收
+            self._decrement_concurrent_requests(tenant_id)
 
             # 存储错误结果
             await self._redis_queue.store_result(
@@ -403,6 +443,7 @@ class DistributedScheduler(Scheduler):
     ):
         """发送请求到Worker并处理响应"""
         request_id = request.request_id
+        tenant_id = getattr(request, "tenant_id", "default")
 
         try:
             logger.info(
@@ -440,6 +481,8 @@ class DistributedScheduler(Scheduler):
                     )
                 # 清理运行状态
                 self.running_requests.pop(request_id, None)
+                # 配额回收
+                self._decrement_concurrent_requests(tenant_id)
             else:
                 error = response.get("error", "Unknown error")
                 logger.error(
@@ -461,6 +504,7 @@ class DistributedScheduler(Scheduler):
     async def _handle_dispatch_failure(self, request: SchedulingRequest, error: str):
         """处理分发失败（重试或标记失败）"""
         request_id = request.request_id
+        tenant_id = getattr(request, "tenant_id", "default")
         retry_count = getattr(request, "retry_count", 0)
 
         if retry_count < self.max_retries:
@@ -497,6 +541,8 @@ class DistributedScheduler(Scheduler):
             # 清理运行状态
             self.running_requests.pop(request_id, None)
             self.stats["failed_requests"] += 1
+            # 配额回收
+            self._decrement_concurrent_requests(tenant_id)
 
     # ==================== Worker 管理 ====================
 
@@ -552,7 +598,12 @@ class DistributedScheduler(Scheduler):
         return await self._worker_registry.get_worker_count()
 
     def get_queue_stats(self) -> dict[str, Any]:
-        """获取队列统计"""
+        """同步获取队列统计（默认 API，向后兼容）
+
+        适用于监控 / CLI / 健康检查端点。
+        在有 Redis 时返回 ``redis_enabled=True`` 与 ``queue_size=0``（占位），
+        因为同步上下文中无法 await Redis。真实数据请用 :meth:`get_queue_stats_async`。
+        """
         stats = {
             **self.stats,
             "running_size": len(self.running_requests),
@@ -560,12 +611,23 @@ class DistributedScheduler(Scheduler):
         }
 
         if self._use_redis and self._redis_queue:
-            stats["queue_size"] = asyncio.run(self._redis_queue.queue_size())
+            # 同步入口无法 await；用本地 queue size 兜底
+            stats["queue_size"] = self.pending_queue.qsize()
             stats["redis_enabled"] = True
         else:
             stats["queue_size"] = self.pending_queue.qsize()
             stats["redis_enabled"] = False
 
+        return stats
+
+    async def get_queue_stats_async(self) -> dict[str, Any]:
+        """异步获取队列统计（可在 event loop 中使用）
+
+        在 Redis 启用时正确 await ``queue_size()``。
+        """
+        stats = self.get_queue_stats()
+        if self._use_redis and self._redis_queue:
+            stats["queue_size"] = await self._redis_queue.queue_size()
         return stats
 
 

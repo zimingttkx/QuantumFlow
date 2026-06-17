@@ -225,3 +225,102 @@ class GPUMonitor:
                 pynvml.nvmlShutdown()
             except Exception:
                 pass
+
+
+class NVMLManager:
+    """轻量级 NVML 单例 — 避免在多个后端里重复 init/shutdown
+
+    用法：
+        mgr = _get_nvml_manager()
+        util = mgr.get_utilization(0)
+        mem = mgr.get_memory_info(0)
+    """
+
+    def __init__(self):
+        self._pynvml = None
+        self._initialized = False
+        self._available = False
+
+    def _ensure_init(self) -> bool:
+        if self._initialized:
+            return self._available
+        self._initialized = True
+        try:
+            import pynvml
+
+            self._pynvml = pynvml
+            pynvml.nvmlInit()
+            self._available = True
+        except Exception:
+            self._available = False
+        return self._available
+
+    def _handle(self, index: int):
+        if not self._ensure_init():
+            raise RuntimeError("NVML not available")
+        return self._pynvml.nvmlDeviceGetHandleByIndex(index)
+
+    def get_utilization(self, index: int) -> float | None:
+        try:
+            u = self._pynvml.nvmlDeviceGetUtilizationRates(self._handle(index))
+            return float(u.gpu)
+        except Exception:
+            return None
+
+    def get_memory_info(self, index: int) -> dict | None:
+        try:
+            m = self._pynvml.nvmlDeviceGetMemoryInfo(self._handle(index))
+            total = m.total
+            used = m.used
+            return {
+                "total_bytes": int(total),
+                "used_bytes": int(used),
+                "free_bytes": int(total - used),
+                "utilization": (used / total) if total > 0 else 0.0,
+            }
+        except Exception:
+            return None
+
+    def get_temperature(self, index: int) -> float | None:
+        try:
+            return float(
+                self._pynvml.nvmlDeviceGetTemperature(
+                    self._handle(index), self._pynvml.NVML_TEMPERATURE_GPU
+                )
+            )
+        except Exception:
+            return None
+
+    def get_name(self, index: int) -> str:
+        try:
+            n = self._pynvml.nvmlDeviceGetName(self._handle(index))
+            if isinstance(n, bytes):
+                return n.decode("utf-8", errors="replace")
+            return str(n)
+        except Exception:
+            return "unknown"
+
+    def get_count(self) -> int:
+        if not self._ensure_init():
+            return 0
+        try:
+            return int(self._pynvml.nvmlDeviceGetCount())
+        except Exception:
+            return 0
+
+
+_NVML_SINGLETON: NVMLManager | None = None
+
+
+def _get_nvml_manager() -> NVMLManager:
+    """获取全局 NVML 管理器（懒加载）"""
+    global _NVML_SINGLETON
+    if _NVML_SINGLETON is None:
+        _NVML_SINGLETON = NVMLManager()
+    return _NVML_SINGLETON
+
+
+def _reset_nvml_manager() -> None:
+    """测试用：重置 NVML 单例"""
+    global _NVML_SINGLETON
+    _NVML_SINGLETON = None

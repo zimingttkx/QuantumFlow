@@ -1,5 +1,7 @@
 """调度器核心"""
 
+from __future__ import annotations
+
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -39,10 +41,11 @@ class Scheduler:
     核心调度器
 
     负责：
-    - 请求队列管理
-    - 节点资源管理
+    - 请求队列管理（带背压）
+    - 节点资源管理 + GPU 预留/释放
     - 调度策略选择
-    - 请求分发
+    - 请求分发到 Worker
+    - 失败节点隔离（连续失败 ≥ 3 隔离 N 秒）
     """
 
     def __init__(
@@ -50,6 +53,7 @@ class Scheduler:
         default_strategy: str = "adaptive",
         loop_interval_ms: int = 100,
         max_retries: int = 3,
+        failure_quarantine_seconds: float = 60.0,
     ):
         self.config = get_config()
 
@@ -57,6 +61,7 @@ class Scheduler:
         self.default_strategy = default_strategy
         self.loop_interval_ms = loop_interval_ms
         self.max_retries = max_retries
+        self.failure_quarantine_seconds = failure_quarantine_seconds
 
         # 策略注册
         self.strategies: dict[str, SchedulingStrategy] = {}
@@ -65,7 +70,7 @@ class Scheduler:
         # 自适应策略
         self.adaptive_strategy = AdaptiveSchedulingStrategy(strategies=self.strategies)
 
-        # 请求队列（使用计数器确保可排序）
+        # 请求队列
         self.pending_queue: asyncio.PriorityQueue = asyncio.PriorityQueue()
         self._request_counter: int = 0
         self.running_requests: dict[str, QueueItem] = {}
@@ -74,9 +79,21 @@ class Scheduler:
         self.available_nodes: dict[str, NodeResource] = {}
         self.node_update_callbacks: list[Callable] = []
 
+        # 节点失败记录（用于隔离）
+        # node_id -> (failure_count, last_failure_at)
+        self._node_failures: dict[str, tuple[int, float]] = {}
+        # 已隔离的节点：node_id -> quarantine_until_ts
+        self._quarantined_nodes: dict[str, float] = {}
+
         # 调度循环
         self._scheduling_task: asyncio.Task | None = None
         self._running = False
+
+        # 背压控制
+        self._consecutive_empty_loops = 0
+
+        # 请求完成回调
+        self.request_complete_callbacks: list[Callable] = []
 
         # 统计
         self.stats = {
@@ -84,15 +101,17 @@ class Scheduler:
             "successful_requests": 0,
             "failed_requests": 0,
             "pending_requests": 0,
+            "quarantined_nodes": 0,
         }
+
+    # ------------------------------------------------------------------ 初始化
 
     def _init_strategies(self):
         """初始化调度策略"""
-        # Gang调度 - 大模型
         self.strategies["gang"] = GangSchedulingStrategy(config=self.config.scheduler.model_dump())
-
-        # Pack调度 - 小模型
         self.strategies["pack"] = PackSchedulingStrategy(config=self.config.scheduler.model_dump())
+
+    # ------------------------------------------------------------------ 生命周期
 
     async def start(self):
         """启动调度器"""
@@ -116,21 +135,18 @@ class Scheduler:
             except asyncio.CancelledError:
                 pass
 
+        # 释放所有预留
+        for node in self.available_nodes.values():
+            node.reserved_gpus.clear()
+            node.reserved_memory_by_request.clear()
+            node.reserved_memory_bytes = 0
+
         logger.info("scheduler_stopped")
 
-    async def submit(
-        self,
-        request: SchedulingRequest,
-    ) -> str:
-        """
-        提交推理请求
+    # ------------------------------------------------------------------ 队列
 
-        Args:
-            request: 调度请求
-
-        Returns:
-            request_id: 请求ID
-        """
+    async def submit(self, request: SchedulingRequest) -> str:
+        """提交推理请求"""
         self.stats["total_requests"] += 1
         self.stats["pending_requests"] += 1
 
@@ -141,27 +157,37 @@ class Scheduler:
             priority=request.priority,
         )
 
-        # 加入优先级队列 (优先级, 创建时间, 序号, 请求)
-        # 序号确保相同优先级和时间戳时可以比较
         priority = request.priority
         self._request_counter += 1
-        await self.pending_queue.put((priority, request.created_at, self._request_counter, request))
-
+        await self.pending_queue.put(
+            (priority, request.created_at, self._request_counter, request)
+        )
         return request.request_id
 
+    # ------------------------------------------------------------------ 主循环
+
     async def _scheduling_loop(self):
-        """调度循环"""
+        """调度循环（带背压）"""
         logger.info("scheduling_loop_started")
 
         while self._running:
             try:
-                await asyncio.sleep(self.loop_interval_ms / 1000.0)
+                # 背压：队列空时拉长间隔
+                interval = self.loop_interval_ms / 1000.0
+                if self.pending_queue.empty():
+                    self._consecutive_empty_loops += 1
+                    interval = min(interval * (1 + self._consecutive_empty_loops * 0.1), 5.0)
+                else:
+                    self._consecutive_empty_loops = 0
 
-                # 获取可用节点
+                await asyncio.sleep(interval)
+
+                # 释放过期隔离
+                self._release_expired_quarantines()
+
                 if not self.available_nodes:
                     continue
 
-                # 批量处理队列中的请求
                 await self._process_batch()
 
             except asyncio.CancelledError:
@@ -174,13 +200,12 @@ class Scheduler:
 
     async def _process_batch(self):
         """批量处理请求"""
-        # 获取待处理请求
         batch_size = min(self.pending_queue.qsize(), 10)
-        requests_batch = []
+        requests_batch: list[SchedulingRequest] = []
 
         for _ in range(batch_size):
             try:
-                priority, created_at, counter, request = self.pending_queue.get_nowait()
+                _, _, _, request = self.pending_queue.get_nowait()
                 requests_batch.append(request)
             except asyncio.QueueEmpty:
                 break
@@ -188,61 +213,148 @@ class Scheduler:
         if not requests_batch:
             return
 
-        # 处理每个请求
         for request in requests_batch:
             result = await self._schedule_request(request)
 
             if result.success:
-                self.stats["successful_requests"] += 1
                 await self._dispatch(request, result)
             else:
-                self.stats["failed_requests"] += 1
                 await self._handle_scheduling_failure(request, result)
+
+    # ------------------------------------------------------------------ 调度核心
 
     async def _schedule_request(self, request: SchedulingRequest) -> SchedulingResult:
         """调度单个请求"""
-        # 获取可用节点列表
-        nodes = list(self.available_nodes.values())
+        # 过滤掉已隔离的节点
+        nodes = self._filter_quarantined_nodes(list(self.available_nodes.values()))
 
         if not nodes:
-            return SchedulingResult(
-                success=False,
-                reason="No available nodes",
-            )
+            return SchedulingResult(success=False, reason="No available nodes")
 
-        # 根据策略选择节点
         strategy = self._get_strategy(request, nodes)
-
         if not strategy:
             return SchedulingResult(
                 success=False,
                 reason=f"Strategy not found: {self.default_strategy}",
             )
 
-        result = strategy.select_nodes(request, nodes)
-
-        return result
+        return strategy.select_nodes(request, nodes)
 
     def _get_strategy(
         self, request: SchedulingRequest, nodes: list[NodeResource]
     ) -> SchedulingStrategy | None:
-        """获取调度策略"""
         if self.default_strategy == "adaptive":
             return self.adaptive_strategy
-
         return self.strategies.get(self.default_strategy)
 
+    # ------------------------------------------------------------------ 预留
+
+    def _reserve_for_request(
+        self, request: SchedulingRequest, result: SchedulingResult
+    ) -> bool:
+        """在所有分配的节点上预留 GPU 显存
+
+        成功：返回 True
+        失败：返回 False（不修改任何预留）
+        """
+        per_gpu_mem = (
+            request.estimated_memory_per_gpu_bytes
+            if request.parameter_count > 0
+            else int(request.model_config.get("estimated_memory", 0))
+        )
+        if per_gpu_mem == 0:
+            # 兜底：每张卡按 16GB 预留（避免 0 字节预留导致重复调度）
+            per_gpu_mem = 16 * 1024**3
+
+        for node_id, gpu_ids in result.assigned_gpus.items():
+            node = self.available_nodes.get(node_id)
+            if node is None:
+                return False
+            for gpu_id in gpu_ids:
+                # 检查不超卖
+                if node.effective_available_memory_per_gpu(gpu_id) < per_gpu_mem:
+                    return False
+            for gpu_id in gpu_ids:
+                node.reserve_gpu(request.request_id, gpu_id, per_gpu_mem)
+        return True
+
+    def _release_for_request(self, request_id: str) -> None:
+        """释放某请求的所有预留"""
+        for node in self.available_nodes.values():
+            node.release_reservation(request_id)
+
+    # ------------------------------------------------------------------ 隔离
+
+    def _release_expired_quarantines(self) -> None:
+        """释放过期的节点隔离"""
+        now = asyncio.get_event_loop().time()
+        expired = [
+            nid
+            for nid, until in self._quarantined_nodes.items()
+            if now >= until
+        ]
+        for nid in expired:
+            del self._quarantined_nodes[nid]
+            self._node_failures.pop(nid, None)
+            logger.info("node_released_from_quarantine", node_id=nid)
+
+    def _filter_quarantined_nodes(
+        self, nodes: list[NodeResource]
+    ) -> list[NodeResource]:
+        return [n for n in nodes if n.node_id not in self._quarantined_nodes]
+
+    def _record_node_failure(self, node_id: str, reason: str) -> bool:
+        """记录节点失败。返回 True 表示需要隔离。"""
+        now = asyncio.get_event_loop().time()
+        count, last = self._node_failures.get(node_id, (0, 0.0))
+        # 60 秒窗口内累计
+        if now - last > 60.0:
+            count = 0
+        count += 1
+        self._node_failures[node_id] = (count, now)
+        if count >= 3:
+            self._quarantined_nodes[node_id] = now + self.failure_quarantine_seconds
+            self.stats["quarantined_nodes"] = len(self._quarantined_nodes)
+            logger.warning(
+                "node_quarantined",
+                node_id=node_id,
+                quarantine_seconds=self.failure_quarantine_seconds,
+                reason=reason,
+            )
+            return True
+        return False
+
+    # ------------------------------------------------------------------ 分发
+
     async def _dispatch(self, request: SchedulingRequest, result: SchedulingResult):
-        """分发请求到Worker"""
+        """分发请求到 Worker
+
+        1. 预留 GPU 显存
+        2. 推送到 running_requests
+        3. 异步发送给 Worker
+        """
         request_id = request.request_id
 
-        # 更新运行状态
+        # 1. 预留（原子）
+        reserved = self._reserve_for_request(request, result)
+        if not reserved:
+            # 显存被并发抢占，调度失败回退
+            logger.warning(
+                "reservation_failed_after_scheduling",
+                request_id=request_id,
+            )
+            await self._handle_scheduling_failure(
+                request,
+                SchedulingResult(success=False, reason="GPU overcommitted"),
+            )
+            return
+
+        # 2. 跟踪
         self.running_requests[request_id] = QueueItem(
             request=request,
             scheduled_at=datetime.now(),
             result=result,
         )
-
         self.stats["pending_requests"] -= 1
 
         logger.info(
@@ -252,16 +364,14 @@ class Scheduler:
             strategy=result.strategy_used,
         )
 
-        # 发送到 Worker 执行
-        asyncio.create_task(self._send_to_worker(request, result))
+        # 3. 异步发送给所有分配的 worker（多 worker 协同推理时不会漏发）
+        asyncio.create_task(self._send_to_workers(request, result))
 
     async def _handle_scheduling_failure(
         self, request: SchedulingRequest, result: SchedulingResult
     ):
-        """处理调度失败"""
+        """处理调度失败（含重试）"""
         request_id = request.request_id
-
-        # 重试逻辑：递增 retry_count
         request.retry_count += 1
 
         if request.retry_count < self.max_retries:
@@ -271,11 +381,11 @@ class Scheduler:
                 reason=result.reason,
                 retry_count=request.retry_count,
             )
-            # 重新加入队列
             self._request_counter += 1
             await self.pending_queue.put(
                 (request.priority, request.created_at, self._request_counter, request)
             )
+            # pending_requests 计数没变（之前没增过）
         else:
             logger.error(
                 "scheduling_failed",
@@ -285,22 +395,28 @@ class Scheduler:
             )
             self.stats["failed_requests"] += 1
             self.stats["pending_requests"] -= 1
+            await self._notify_completion(request, success=False, error=result.reason)
 
-    async def _send_to_worker(self, request: SchedulingRequest, result: SchedulingResult):
-        """发送请求到 Worker 执行"""
+    async def _send_to_workers(
+        self, request: SchedulingRequest, result: SchedulingResult
+    ):
+        """发送请求到所有分配的 Worker"""
         request_id = request.request_id
 
         try:
-            # 从 model_config 获取采样参数
-            sampling_params = request.model_config.get("sampling_params", {
-                "temperature": 0.7,
-                "top_p": 0.9,
-                "max_tokens": request.max_tokens,
-            })
+            sampling_params = request.model_config.get(
+                "sampling_params",
+                {
+                    "temperature": 0.7,
+                    "top_p": 0.9,
+                    "max_tokens": request.max_tokens,
+                },
+            )
 
-            # 从 Worker 注册表获取节点端点
             registry = get_worker_registry()
 
+            # 解析每个节点的 worker endpoint
+            endpoints: list[WorkerEndpoint] = []
             for node_id in result.assigned_nodes:
                 endpoint = await registry.get_worker(node_id)
                 if endpoint is None:
@@ -310,46 +426,38 @@ class Scheduler:
                         endpoint = WorkerEndpoint(
                             node_id=node_id,
                             host=node.ip,
-                            port=8000,  # 默认端口
+                            port=getattr(node, "worker_port", 8000),
                         )
-
                 if endpoint is None:
-                    logger.error("worker_endpoint_not_found", node_id=node_id, request_id=request_id)
+                    logger.error(
+                        "worker_endpoint_not_found",
+                        node_id=node_id,
+                        request_id=request_id,
+                    )
                     continue
+                endpoints.append((node_id, endpoint))
 
-                # 创建 WorkerClient 并发送请求
-                client = WorkerClient(timeout=30.0)
-                try:
-                    worker_result = await client.inference(
-                        endpoint=endpoint,
+            if not endpoints:
+                await self._mark_failure(request, "no_worker_endpoints")
+                return
+
+            # 并发发送给所有 endpoint
+            client = WorkerClient(timeout=30.0)
+            try:
+                tasks = [
+                    client.inference(
+                        endpoint=ep,
                         request_id=request_id,
                         model_name=request.model,
                         prompt=request.prompt,
                         sampling_params=sampling_params,
                     )
-
-                    if worker_result.get("status") == "success":
-                        logger.info(
-                            "worker_execution_success",
-                            request_id=request_id,
-                            node_id=node_id,
-                        )
-                    else:
-                        logger.warning(
-                            "worker_execution_failed",
-                            request_id=request_id,
-                            node_id=node_id,
-                            error=worker_result.get("error"),
-                        )
-                finally:
-                    await client.close()
-                break  # 只发送给一个节点
-
-            # 清理运行中的请求
-            if request_id in self.running_requests:
-                del self.running_requests[request_id]
-                self.stats["successful_requests"] += 1
-                logger.info("request_completed", request_id=request_id)
+                    for _node_id, ep in endpoints
+                ]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                await self._handle_worker_results(request, endpoints, results)
+            finally:
+                await client.close()
 
         except Exception as e:
             logger.error(
@@ -357,11 +465,69 @@ class Scheduler:
                 request_id=request_id,
                 error=str(e),
             )
-            self.stats["failed_requests"] += 1
-            if request_id in self.running_requests:
-                del self.running_requests[request_id]
+            await self._mark_failure(request, str(e))
 
-    # ==================== 节点管理 ====================
+    async def _handle_worker_results(
+        self,
+        request: SchedulingRequest,
+        endpoints: list[tuple[str, WorkerEndpoint]],
+        results: list[Any],
+    ):
+        """处理 worker 返回的结果"""
+        request_id = request.request_id
+        any_success = False
+        first_error: str | None = None
+
+        for (node_id, endpoint), result in zip(endpoints, results):
+            if isinstance(result, Exception):
+                self._record_node_failure(node_id, str(result))
+                first_error = first_error or str(result)
+                continue
+            if isinstance(result, dict) and result.get("status") == "success":
+                any_success = True
+            else:
+                err = result.get("error", "unknown") if isinstance(result, dict) else "unknown"
+                self._record_node_failure(node_id, err)
+                first_error = first_error or err
+
+        if any_success:
+            self.stats["successful_requests"] += 1
+            await self._notify_completion(request, success=True, result={"request_id": request_id})
+        else:
+            await self._mark_failure(request, first_error or "all_workers_failed")
+
+    async def _mark_failure(self, request: SchedulingRequest, error: str) -> None:
+        self.stats["failed_requests"] += 1
+        self._release_for_request(request.request_id)
+        if request.request_id in self.running_requests:
+            del self.running_requests[request.request_id]
+        await self._notify_completion(request, success=False, error=error)
+
+    async def _notify_completion(
+        self,
+        request: SchedulingRequest,
+        success: bool,
+        result: dict | None = None,
+        error: str | None = None,
+    ) -> None:
+        """通知请求完成，释放预留"""
+        self._release_for_request(request.request_id)
+        if request.request_id in self.running_requests:
+            del self.running_requests[request.request_id]
+        for cb in self.request_complete_callbacks:
+            try:
+                if asyncio.iscoroutinefunction(cb):
+                    await cb(request, success, result, error)
+                else:
+                    cb(request, success, result, error)
+            except Exception as e:
+                logger.error("completion_callback_error", error=str(e))
+
+    def on_request_complete(self, callback: Callable):
+        """注册请求完成回调"""
+        self.request_complete_callbacks.append(callback)
+
+    # ------------------------------------------------------------------ 节点管理
 
     async def register_node(self, node: NodeResource):
         """注册节点"""
@@ -374,7 +540,6 @@ class Scheduler:
             status=node.status,
         )
 
-        # 触发回调
         for callback in self.node_update_callbacks:
             try:
                 await callback("register", node)
@@ -385,10 +550,11 @@ class Scheduler:
         """注销节点"""
         if node_id in self.available_nodes:
             node = self.available_nodes.pop(node_id)
+            self._quarantined_nodes.pop(node_id, None)
+            self._node_failures.pop(node_id, None)
 
             logger.info("node_unregistered", node_id=node_id)
 
-            # 触发回调
             for callback in self.node_update_callbacks:
                 try:
                     await callback("unregister", node)
@@ -410,15 +576,15 @@ class Scheduler:
         """注册节点更新回调"""
         self.node_update_callbacks.append(callback)
 
-    # ==================== 查询接口 ====================
+    # ------------------------------------------------------------------ 查询
 
     def get_pending_requests(self) -> list[SchedulingRequest]:
         """获取待调度请求"""
-        requests = []
-        for _, _, _, request in self.pending_queue._queue:  # type: ignore
-            if isinstance(request, SchedulingRequest):
-                requests.append(request)
-        return requests
+        return [
+            req
+            for _, _, _, req in self.pending_queue._queue  # type: ignore[attr-defined]
+            if isinstance(req, SchedulingRequest)
+        ]
 
     def get_running_requests(self) -> dict[str, QueueItem]:
         """获取运行中的请求"""

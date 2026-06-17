@@ -192,8 +192,21 @@ class TGIEngine(InferenceEngine):
                 logger.error(
                     "tgi_generate_failed",
                     status_code=response.status_code,
+                    body=response.text[:500],
                 )
-                return []
+                # 返回 N 条对齐的错误结果（不返回 []，避免与 caller 索引错位）
+                return [
+                    InferenceResult(
+                        request_id=f"{model_name}_{i}",
+                        outputs=[f"[TGI错误: HTTP {response.status_code}]"],
+                        prompt_tokens=0,
+                        completion_tokens=0,
+                        latency_ms=(time.time() - start_time) * 1000,
+                        finish_reason="error",
+                        metrics={},
+                    )
+                    for i in range(len(prompts))
+                ]
 
             result = response.json()
             latency_ms = (time.time() - start_time) * 1000

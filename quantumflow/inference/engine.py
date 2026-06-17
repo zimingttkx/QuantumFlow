@@ -33,6 +33,12 @@ class ModelConfig:
     prefill_chunk_size: int = 512  # 分块预填充的块大小（tokens），超过此长度自动分块
     torch_compile: bool = True  # 是否启用 torch.compile 加速
 
+    # 新增字段：与 ModelRegistry 关联
+    model_id: str = ""                              # 规范化 ID（与 ModelInfo.name 对应）
+    model_family: str = ""                          # qwen / llama / glm / deepseek
+    backend: str = ""                               # 显式指定后端（vllm / tgi / sglang / huggingface / tensorrt_llm）
+    preferred_gpu_families: list[str] = field(default_factory=list)  # ["hopper","ampere"]
+
     def to_dict(self) -> dict[str, Any]:
         """转换为字典"""
         return {
@@ -45,6 +51,10 @@ class ModelConfig:
             "dtype": self.dtype,
             "quantization": self.quantization,
             "trust_remote_code": self.trust_remote_code,
+            "model_id": self.model_id,
+            "model_family": self.model_family,
+            "backend": self.backend,
+            "preferred_gpu_families": list(self.preferred_gpu_families),
         }
 
 
