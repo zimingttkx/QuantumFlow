@@ -76,6 +76,9 @@ docs/BATCH_ACCUMULATOR_ENHANCEMENT_PLAN.md
 docs/grpc_development_plan.md
 docs/grpc_test_plan.md
 
+# Superpowers workflow artifacts (auto-generated implementation plans)
+docs/superpowers/
+
 # PyBuilder
 .pybuilder/
 target/
