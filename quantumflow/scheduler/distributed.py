@@ -55,6 +55,13 @@ class DistributedScheduler(Scheduler):
         self.redis_url = redis_url
         self._redis_queue: RedisQueue | None = None
         self._use_redis = True
+        # Bug fix (M-R2): 不再因一次失败永久禁用 Redis。
+        # 改为: 连续失败 N 次才降级,成功后自动恢复。
+        self._redis_consecutive_failures = 0
+        self._redis_disable_threshold = 5  # 连续 5 次失败才禁用
+        self._redis_disabled_at: float | None = None
+        # 失败后多久才再次尝试 Redis(指数退避上限 60s)
+        self._redis_retry_after_ts: float = 0.0
 
         # Worker 通信
         self._worker_client = WorkerClient(timeout=worker_timeout)
@@ -114,8 +121,44 @@ class DistributedScheduler(Scheduler):
                 return 0
         return 0
 
+    # Lua 脚本: 原子"check-limit + increment",返回新的计数值,超限返回 -1
+    # Bug fix (H-C5): 原本 check-then-incr 有 TOCTOU 竞态,N 个并发请求会
+    # 全部读到 limit-1,然后都通过自增,实际并发 = limit + N,远超 quota。
+    _INCR_WITH_LIMIT_LUA = """
+    local current = tonumber(redis.call('GET', KEYS[1]) or '0')
+    local limit = tonumber(ARGV[1])
+    if current >= limit then
+        return -1
+    else
+        return redis.call('INCR', KEYS[1])
+    end
+    """
+
+    def _try_increment_concurrent_requests(self, tenant_id: str, limit: int) -> int:
+        """原子地"check-limit + increment"。
+
+        Returns:
+            > 0: 新计数值(成功,可放行)
+            -1:  超限(拒绝)
+            0:   Redis 不可用(放行,走兜底)
+        """
+        try:
+            from quantumflow.storage import get_redis_manager_sync
+            redis = get_redis_manager_sync().get_client()
+        except Exception:
+            return 0
+
+        if redis:
+            key = f"qf:concurrent:{tenant_id}"
+            try:
+                result = redis.eval(self._INCR_WITH_LIMIT_LUA, 1, key, str(limit))
+                return int(result)
+            except Exception:
+                return 0
+        return 0
+
     def _increment_concurrent_requests(self, tenant_id: str) -> None:
-        """增加租户并发请求计数"""
+        """增加租户并发请求计数(无上限检查,仅用于已确认通过的场景)"""
         try:
             from quantumflow.storage import get_redis_manager_sync
             redis = get_redis_manager_sync().get_client()
@@ -222,10 +265,24 @@ class DistributedScheduler(Scheduler):
 
         # 检查租户并发限制
         quota = self._get_tenant_quota(tenant_id)
-        current_concurrent = await self._get_concurrent_requests(tenant_id)
+        # Bug fix (H-C5): 原本 check-then-incr 有 TOCTOU 竞态,改为原子
+        # check-and-incr (Redis Lua 脚本)。
+        # 必须在 event loop 中运行 Lua 脚本(redis.eval 是阻塞调用)
+        import asyncio
+        new_count = await asyncio.to_thread(
+            self._try_increment_concurrent_requests,
+            tenant_id,
+            quota.concurrent_requests,
+        )
 
-        if current_concurrent >= quota.concurrent_requests:
-            error_msg = f"租户 {tenant_id} 并发请求数超限: {current_concurrent}/{quota.concurrent_requests}"
+        if new_count == -1:
+            # 超限 — 回滚(虽然 Lua 已经原子不增,但稳妥起见检查一下)
+            # 注意: -1 意味着 Lua 没增,这里不需要 DECR
+            current_concurrent = await self._get_concurrent_requests(tenant_id)
+            error_msg = (
+                f"租户 {tenant_id} 并发请求数超限: "
+                f"{current_concurrent}/{quota.concurrent_requests}"
+            )
             logger.warning(
                 "tenant_concurrent_limit_exceeded",
                 tenant_id=tenant_id,
@@ -233,6 +290,9 @@ class DistributedScheduler(Scheduler):
                 limit=quota.concurrent_requests,
             )
             raise Exception(error_msg)
+
+        # new_count > 0: 原子自增成功,继续
+        # new_count == 0: Redis 不可用,放行(走兜底,与原行为兼容)
 
         self.stats["total_requests"] += 1
 
@@ -242,9 +302,19 @@ class DistributedScheduler(Scheduler):
             model=request.model,
             priority=request.priority,
             tenant_id=tenant_id,
+            concurrent=new_count,
         )
 
-        if self._use_redis and self._redis_queue:
+        import time
+        # Bug fix (M-R2): 检查退避策略 — 连续失败期间临时禁用,超时后自动恢复
+        _in_backoff = self._redis_retry_after_ts > time.time()
+        should_try_redis = (
+            self._use_redis
+            and self._redis_queue is not None
+            and not _in_backoff
+        )
+
+        if should_try_redis:
             # 使用Redis队列
             queued_request = QueuedRequest(
                 request_id=request.request_id,
@@ -261,14 +331,31 @@ class DistributedScheduler(Scheduler):
             success = await self._redis_queue.enqueue(queued_request)
             if success:
                 self.stats["pending_requests"] += 1
-                self._increment_concurrent_requests(tenant_id)
+                # Bug fix (M-R2): 成功后重置失败计数
+                self._redis_consecutive_failures = 0
+                self._redis_disabled_at = None
+                self._redis_retry_after_ts = 0.0
                 return request.request_id
             else:
                 logger.error("redis_enqueue_failed", request_id=request.request_id)
-                # 回退到内存队列
-                self._use_redis = False
+                # 回滚原子 incr (enqueue 失败,占用应释放)
+                await asyncio.to_thread(self._decrement_concurrent_requests, tenant_id)
+                # Bug fix (M-R2): 不再永久降级,使用退避策略
+                self._redis_consecutive_failures += 1
+                if self._redis_consecutive_failures >= self._redis_disable_threshold:
+                    self._redis_disabled_at = time.time()
+                    backoff = min(
+                        60.0,
+                        2 ** (self._redis_consecutive_failures - self._redis_disable_threshold),
+                    )
+                    self._redis_retry_after_ts = time.time() + backoff
+                    logger.warning(
+                        "redis_temporarily_disabled",
+                        consecutive_failures=self._redis_consecutive_failures,
+                        retry_after_seconds=backoff,
+                    )
 
-        # 回退到内存队列
+        # 回退到内存队列(Redis 不可用 / 失败 / 退避中)
         self.stats["pending_requests"] += 1
         priority = request.priority
         self._request_counter += 1

@@ -90,18 +90,38 @@ class AdaptiveSchedulingStrategy(SchedulingStrategy):
     def _evaluate_condition(
         self, condition: Callable, request: SchedulingRequest, nodes: list[NodeResource]
     ) -> bool:
-        """评估条件"""
+        """评估条件
+
+        Bug fix (H-C4): 原本静默吞掉所有异常，让用户自定义 rule 失效时无信号。
+        现改为: 异常时 logger.exception 留痕，并 return False。
+        """
         try:
             return condition(request, nodes)
         except Exception:
+            # 必须留痕 — 规则失效在生产环境是难以察觉的隐性 bug
+            # request 可能为 None(部分测试场景),用 getattr 防御
+            request_id = getattr(request, "request_id", None) if request is not None else None
+            logger.exception(
+                "rule_evaluation_failed",
+                request_id=request_id,
+                condition_repr=repr(condition),
+            )
             return False
 
     def _select_best_strategy(
         self, request: SchedulingRequest, available_nodes: list[NodeResource]
     ) -> str:
-        """选择最佳策略"""
+        """选择最佳策略
+
+        Bug fix (C-C3 + M-O1): 原本"规则匹配但策略未注册"会静默降级到 Pack，
+        导致 70B+ 大模型在没有 Gang 时被发到 Pack，可能 OOM。
+        现改为: 跳到下一条 rule 之前 logger.warning; 如果高风险规则的所有策略都
+        不可用，最终拒绝(返回 None)。
+        """
         # 按优先级排序规则
         sorted_rules = sorted(self.rules, key=lambda r: r.get("priority", 0), reverse=True)
+
+        matched_rule_priority: int | None = None
 
         for rule in sorted_rules:
             condition = rule.get("condition")
@@ -109,18 +129,56 @@ class AdaptiveSchedulingStrategy(SchedulingStrategy):
                 strategy_name = rule.get("strategy")
                 if strategy_name in self.strategies:
                     return strategy_name
+                # 规则匹配但策略未注册 — 不再静默跳过
+                logger.warning(
+                    "adaptive_rule_strategy_not_registered",
+                    request_id=request.request_id,
+                    rule_priority=rule.get("priority"),
+                    rule_strategy=strategy_name,
+                    available_strategies=list(self.strategies.keys()),
+                )
+                # 记录"已匹配到的最高规则优先级"，如果所有匹配都失败，用于拒绝
+                if matched_rule_priority is None:
+                    matched_rule_priority = rule.get("priority")
 
-        # 默认使用Pack
+        # 如果有规则匹配但其策略都未注册,直接拒绝而不是降级到 pack
+        if matched_rule_priority is not None:
+            logger.error(
+                "adaptive_no_strategy_for_matched_rule",
+                request_id=request.request_id,
+                matched_priority=matched_rule_priority,
+                model=request.model,
+                model_size=request.model_size,
+            )
+            return ""  # 空字符串表示"无可用策略"
+
+        # 没有规则匹配 — 默认使用 Pack
         return "pack"
 
     def can_handle(self, request: SchedulingRequest, available_nodes: list[NodeResource]) -> bool:
-        """总是可以使用自适应策略"""
+        """检查自适应策略是否可处理
+
+        Bug fix (M-C8): 原本永远返回 True,导致子策略拒绝时浪费 3 次重试。
+        现增加: 没有 healthy 节点 / 没有可用 GPU 时直接返回 False。
+        """
+        if not available_nodes:
+            return False
+        healthy = self.filter_healthy_nodes(available_nodes)
+        if not healthy:
+            return False
+        # 必须至少有一个节点有可用 GPU
+        if not any(n.available_gpus for n in healthy):
+            return False
         return True
 
     def select_nodes(
         self, request: SchedulingRequest, available_nodes: list[NodeResource]
     ) -> SchedulingResult:
-        """使用自适应策略选择节点"""
+        """使用自适应策略选择节点
+
+        Bug fix (C-C3 后续): 当 _select_best_strategy 返回空字符串(无可用策略)
+        时,直接返回失败而不是降级。
+        """
         if not available_nodes:
             return SchedulingResult(
                 success=False,
@@ -130,6 +188,18 @@ class AdaptiveSchedulingStrategy(SchedulingStrategy):
 
         # 选择最佳策略
         strategy_name = self._select_best_strategy(request, available_nodes)
+
+        # 关键: 空字符串表示"有规则匹配但策略都未注册" — 拒绝而不是降级
+        if not strategy_name:
+            return SchedulingResult(
+                success=False,
+                strategy_used=self.name,
+                reason=(
+                    f"No strategy available for matched rule "
+                    f"(model={request.model}, size={request.model_size})"
+                ),
+            )
+
         strategy = self.strategies.get(strategy_name)
 
         if not strategy:

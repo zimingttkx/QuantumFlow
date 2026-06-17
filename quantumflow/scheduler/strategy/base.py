@@ -59,12 +59,18 @@ class SchedulingRequest:
         向后兼容公式（与现有单元测试对齐）：
             params_in_billions * 2 * 1024^3
         即"每 10 亿参数 ≈ 2 GiB"，量化感知由 estimated_memory_per_gpu_bytes 提供。
+
+        Bug fix (C-B1): 0.3B-0.9B 模型原本被整数除法估成 0 字节，绕过所有
+        显存检查，导致 1B 以下模型可能 OOM。现使用向上取整 + 最小 2GB 兜底，
+        保证 0.3B 模型至少估算 2GB。
         """
         params = self.model_size
         if params == 0:
             return 0
-        # 保持原有公式，避免破坏 tests/unit/scheduler/test_strategy.py::test_estimated_memory
-        return (params // 1_000_000_000) * 2 * 1024**3
+        # 向上取整: (params + 999_999_999) // 1_000_000_000
+        # 最小值 1 → 至少 2GB（避免 0 字节导致绕过所有 per-gpu 校验）
+        billions = max(1, (params + 999_999_999) // 1_000_000_000)
+        return billions * 2 * 1024**3
 
     @property
     def estimated_memory_per_gpu_bytes(self) -> int:
@@ -318,14 +324,24 @@ class NodeResource:
             return False
         if len(self.available_gpus) < required_gpus:
             return False
+        # Bug fix (H-C2): 原本按 throughput 排序选 top-N,只检查这 N 张。
+        # 但 top-2 中第二张不够而第三张够时,会错误返回 False。
+        # 修复: 先按 per-gpu 显存过滤掉装不下的,再按 throughput 排序选 N 张。
+        fit_gpus = [
+            g for g in self.available_gpus
+            if self.effective_available_memory_per_gpu(g.gpu_id) >= required_memory_per_gpu_bytes
+        ]
+        if len(fit_gpus) < required_gpus:
+            return False
         # 按算力从高到低选 GPU
-        sorted_gpus = sorted(
-            self.available_gpus,
+        sorted_fit = sorted(
+            fit_gpus,
             key=lambda g: g.estimated_relative_throughput,
             reverse=True,
         )
-        for gpu in sorted_gpus[:required_gpus]:
+        for gpu in sorted_fit[:required_gpus]:
             if self.effective_available_memory_per_gpu(gpu.gpu_id) < required_memory_per_gpu_bytes:
+                # 理论上不会发生(因为 fit_gpus 已经过滤过),防御性检查
                 return False
         return True
 

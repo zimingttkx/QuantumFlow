@@ -95,6 +95,10 @@ class Scheduler:
         # 请求完成回调
         self.request_complete_callbacks: list[Callable] = []
 
+        # Bug fix (H-R1): 持有 background tasks 引用,避免 GC 清理导致 task 取消
+        # 也保证异常能被记录(通过 add_done_callback)
+        self._background_tasks: set[asyncio.Task] = set()
+
         # 统计
         self.stats = {
             "total_requests": 0,
@@ -256,6 +260,11 @@ class Scheduler:
 
         成功：返回 True
         失败：返回 False（不修改任何预留）
+
+        Bug fix (M-R3): 原本跨节点非原子 — 节点 A 校验通过并 reserve, 节点 B
+        校验失败 → return False 但 A 的 reservation 泄漏。修复为两阶段:
+        阶段1: 全部节点只 check 不 reserve
+        阶段2: 全部 check 通过后才统一 reserve
         """
         per_gpu_mem = (
             request.estimated_memory_per_gpu_bytes
@@ -266,16 +275,21 @@ class Scheduler:
             # 兜底：每张卡按 16GB 预留（避免 0 字节预留导致重复调度）
             per_gpu_mem = 16 * 1024**3
 
+        # 阶段1: 全部节点只 check,不 reserve
+        # 记录待 reserve 的 (node, gpu_id) 列表,阶段2 统一处理
+        pending_reservations: list[tuple[NodeResource, int]] = []
         for node_id, gpu_ids in result.assigned_gpus.items():
             node = self.available_nodes.get(node_id)
             if node is None:
                 return False
             for gpu_id in gpu_ids:
-                # 检查不超卖
                 if node.effective_available_memory_per_gpu(gpu_id) < per_gpu_mem:
                     return False
-            for gpu_id in gpu_ids:
-                node.reserve_gpu(request.request_id, gpu_id, per_gpu_mem)
+                pending_reservations.append((node, gpu_id))
+
+        # 阶段2: 全部 check 通过,统一 reserve
+        for node, gpu_id in pending_reservations:
+            node.reserve_gpu(request.request_id, gpu_id, per_gpu_mem)
         return True
 
     def _release_for_request(self, request_id: str) -> None:
@@ -365,7 +379,23 @@ class Scheduler:
         )
 
         # 3. 异步发送给所有分配的 worker（多 worker 协同推理时不会漏发）
-        asyncio.create_task(self._send_to_workers(request, result))
+        # Bug fix (H-R1): 保存 task 引用,避免 GC 取消;加 done_callback 记录异常
+        task = asyncio.create_task(self._send_to_workers(request, result))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+        def _log_task_exception(t: asyncio.Task) -> None:
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc is not None:
+                logger.error(
+                    "background_dispatch_task_failed",
+                    request_id=request_id,
+                    error=str(exc),
+                    exc_type=type(exc).__name__,
+                )
+        task.add_done_callback(_log_task_exception)
 
     async def _handle_scheduling_failure(
         self, request: SchedulingRequest, result: SchedulingResult

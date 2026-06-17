@@ -120,16 +120,18 @@ class GangSchedulingStrategy(SchedulingStrategy):
         - 长输出（>4096）
         - TP >= 2
         - 用户指定了 preferred_gpu_families
+
+        Bug fix (M-B4): 原本 `total_available` 用
+        `min(len(available_gpus), max(domain_max, required_gpus))` 计算,
+        实际节点可用 GPU 多于计算结果,导致 can_handle 撒谎(说能调度,实际
+        select_nodes 失败)。修复: 用实际 available_gpus 总数。
         """
         required_gpus = self._required_tp(request)
         healthy_nodes = self.filter_healthy_nodes(available_nodes)
-        total_available = sum(
-            min(
-                len(n.available_gpus),
-                max(self._gpu_count_in_any_nvlink_domain(n), required_gpus),
-            )
-            for n in healthy_nodes
-        )
+        if not healthy_nodes:
+            return False
+        # Bug fix (M-B4): 用真实 available_gpus 总数,而不是混淆的下界估计
+        total_available = sum(len(n.available_gpus) for n in healthy_nodes)
         if total_available < required_gpus:
             return False
         if request.model_size >= self.min_model_size:
