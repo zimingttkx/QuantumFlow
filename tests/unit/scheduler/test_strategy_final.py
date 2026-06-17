@@ -97,7 +97,12 @@ class TestAdaptiveSelectBestStrategyFallback:
         )
 
     def test_select_best_strategy_rule_matches_but_strategy_not_registered(self):
-        """Rule condition matches but strategy not in self.strategies, skips to fallback."""
+        """Rule condition matches but strategy not in self.strategies, logs warning and returns "".
+
+        Bug fix (C-C3): 原本静默降级到 "pack" 会让 70B+ 模型在没有 Gang 时被发到
+        Pack,可能 OOM。修复后:_select_best_strategy 返回空字符串,select_nodes
+        据此拒绝请求而不是降级。
+        """
         strategy = AdaptiveSchedulingStrategy(
             strategies={"pack": PackSchedulingStrategy()},
             rules=[
@@ -114,9 +119,10 @@ class TestAdaptiveSelectBestStrategyFallback:
 
         result_name = strategy._select_best_strategy(request, nodes)
 
-        # Rule matches but gang not found -> skips to fallback
-        assert result_name == "pack", (
-            f"Expected 'pack' fallback when rule's strategy not registered, got '{result_name}'"
+        # 关键: 不再静默降级到 "pack",而是返回空字符串表示"无可用策略"
+        assert result_name == "", (
+            f"Expected '' (拒绝) when rule's strategy not registered, got '{result_name!r}' — "
+            f"this would have silently downgraded large-model requests to pack and caused OOM"
         )
 
 
@@ -128,8 +134,12 @@ class TestAdaptiveSelectBestStrategyFallback:
 class TestAdaptiveSelectNodesFallback:
     """Tests for select_nodes fallback when strategy is not in self.strategies."""
 
-    def test_select_nodes_strategy_not_found_falls_back_to_pack(self):
-        """When selected strategy is not in self.strategies, falls back to pack (lines 116-129)."""
+    def test_select_nodes_strategy_not_found_rejects(self):
+        """When selected strategy is not in self.strategies, REJECTS instead of falling back.
+
+        Bug fix (C-C3): 原本静默降级到 pack 会让 70B+ 模型在没有 Gang 时被发到
+        Pack,可能 OOM。修复后:有规则匹配但策略未注册 → 拒绝请求。
+        """
         gang = GangSchedulingStrategy()
         pack = PackSchedulingStrategy()
 
@@ -153,11 +163,14 @@ class TestAdaptiveSelectNodesFallback:
 
         result = strategy.select_nodes(request, nodes)
 
-        # Should fall back to pack
-        assert result.success is True
-        assert "pack" in result.strategy_used
-        # Metadata should show base_strategy = "pack"
-        assert result.metadata["base_strategy"] == "pack"
+        # 关键: 不再静默降级,直接失败
+        assert result.success is False, (
+            f"Expected failure when matched rule's strategy not registered, "
+            f"got success with strategy_used={result.strategy_used!r}"
+        )
+        assert "No strategy available" in result.reason, (
+            f"Expected reason to mention 'No strategy available', got {result.reason!r}"
+        )
 
     def test_select_nodes_no_strategy_at_all(self):
         """When no strategy is available at all (not even pack), returns failure."""
@@ -180,15 +193,17 @@ class TestAdaptiveSelectNodesFallback:
 
         result = strategy.select_nodes(request, nodes)
 
-        # _select_best_strategy returns "pack" (line 94), but pack is not in
-        # strategies either, so strategy fallback (get("pack")) returns None
-        # This triggers: "No available strategy" failure
+        # _select_best_strategy returns "" (C-C3 fix), select_nodes returns failure
         assert result.success is False
         assert result.strategy_used == "adaptive"
-        assert result.reason == "No available strategy"
+        assert "No strategy available" in result.reason
 
-    def test_select_nodes_strategy_none_fallback_pack_success(self):
-        """When strategy is None but pack IS available, falls back successfully."""
+    def test_select_nodes_strategy_missing_rejects(self):
+        """When matched rule's strategy is not registered, REJECTS (no pack fallback).
+
+        Bug fix (C-C3): 原本静默降级到 pack,会导致大模型 OOM。
+        修复后:有规则匹配但策略未注册 → 拒绝请求。
+        """
         pack = PackSchedulingStrategy()
 
         strategy = AdaptiveSchedulingStrategy(
@@ -196,7 +211,7 @@ class TestAdaptiveSelectNodesFallback:
             rules=[
                 {
                     "condition": lambda r, n: True,
-                    "strategy": "nonexistent",
+                    "strategy": "nonexistent",  # 不在 strategies 中
                     "priority": 999,
                 },
             ],
@@ -210,9 +225,12 @@ class TestAdaptiveSelectNodesFallback:
 
         result = strategy.select_nodes(request, nodes)
 
-        assert result.success is True
-        assert "pack" in result.strategy_used
-        assert result.metadata["base_strategy"] == "pack"
+        # 关键: 不再静默降级,直接失败
+        assert result.success is False, (
+            f"Expected failure when matched rule's strategy not registered, "
+            f"got success with strategy_used={result.strategy_used!r}"
+        )
+        assert "No strategy available" in result.reason
 
 
 # =============================================================================

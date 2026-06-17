@@ -102,7 +102,12 @@ class TestDistributedSubmitRedis:
 
     @pytest.mark.asyncio
     async def test_submit_redis_failure_falls_back_to_memory(self, scheduler):
-        """When Redis enqueue fails, falls back to memory PriorityQueue."""
+        """When Redis enqueue fails, request falls back to memory PriorityQueue.
+
+        Bug fix (M-R2): 修复后不再是"一次失败就永久禁用 Redis"。
+        现在: 连续失败计数累加,达到阈值(默认 5)后才禁用。
+        本测试验证单次失败的回退路径: 计数器累加,但 Redis 仍未禁用。
+        """
         mock_queue = AsyncMock(spec=RedisQueue)
         mock_queue.enqueue = AsyncMock(return_value=False)
         scheduler._redis_queue = mock_queue
@@ -110,14 +115,74 @@ class TestDistributedSubmitRedis:
 
         request = create_scheduling_request(request_id="fallback-test")
         initial_queue_size = scheduler.pending_queue.qsize()
+        initial_failures = scheduler._redis_consecutive_failures
 
         result_id = await scheduler.submit(request)
 
         assert result_id == "fallback-test"
-        # After failure, _use_redis should be set to False
-        assert scheduler._use_redis is False
-        # Request should be in the memory queue
+        # Bug fix (M-R2): 单次失败不应立即禁用 Redis
+        assert scheduler._use_redis is True
+        # 但连续失败计数器应累加
+        assert scheduler._redis_consecutive_failures == initial_failures + 1
+        # 请求应该进入内存队列作为回退
         assert scheduler.pending_queue.qsize() == initial_queue_size + 1
+
+    @pytest.mark.asyncio
+    async def test_submit_redis_consecutive_failures_disables_redis(self, scheduler):
+        """When Redis fails N consecutive times (threshold), Redis is disabled.
+
+        Bug fix (M-R2): 连续失败达到阈值后设置 _redis_retry_after_ts,
+        后续 submit 会因 _in_backoff=True 自动跳过 Redis,实现临时禁用。
+        注意: _use_redis 字段本身不变,禁用是通过时间戳实时判断的。
+        """
+        import time
+        mock_queue = AsyncMock(spec=RedisQueue)
+        mock_queue.enqueue = AsyncMock(return_value=False)
+        scheduler._redis_queue = mock_queue
+        scheduler._use_redis = True
+        # 降低阈值以便测试快速触发
+        scheduler._redis_disable_threshold = 3
+
+        request_factory = lambda i: create_scheduling_request(request_id=f"fail-{i}")
+
+        # 触发连续 3 次失败
+        for i in range(3):
+            await scheduler.submit(request_factory(i))
+
+        # 达到阈值后,失败计数 + 禁用时间戳应被设置
+        assert scheduler._redis_consecutive_failures == 3
+        assert scheduler._redis_disabled_at is not None
+        # 退避截止时间在未来(处于 backoff 中)
+        assert scheduler._redis_retry_after_ts > time.time()
+        # 触发第 4 次 submit 时,_in_backoff=True 应跳过 Redis
+        before_call_count = mock_queue.enqueue.call_count
+        await scheduler.submit(create_scheduling_request(request_id="in-backoff"))
+        assert mock_queue.enqueue.call_count == before_call_count, (
+            "Redis enqueue 不应在 backoff 期间被调用"
+        )
+
+    @pytest.mark.asyncio
+    async def test_submit_redis_failure_resets_counter_on_success(self, scheduler):
+        """When Redis recovers (one success after failures), counter resets to 0.
+
+        Bug fix (M-R2): 成功提交后重置连续失败计数,允许 Redis 继续工作。
+        """
+        mock_queue = AsyncMock(spec=RedisQueue)
+        # 前两次失败,第三次成功
+        mock_queue.enqueue = AsyncMock(side_effect=[False, False, True])
+        scheduler._redis_queue = mock_queue
+        scheduler._use_redis = True
+
+        # 触发 2 次失败
+        await scheduler.submit(create_scheduling_request(request_id="f1"))
+        await scheduler.submit(create_scheduling_request(request_id="f2"))
+        assert scheduler._redis_consecutive_failures == 2
+
+        # 一次成功应重置计数器
+        await scheduler.submit(create_scheduling_request(request_id="ok"))
+        assert scheduler._redis_consecutive_failures == 0
+        assert scheduler._use_redis is True
+        assert scheduler._redis_disabled_at is None
 
 
 # ==================== process_batch_from_redis ====================

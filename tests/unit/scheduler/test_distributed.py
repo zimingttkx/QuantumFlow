@@ -286,7 +286,12 @@ class TestDistributedSchedulerSubmit:
 
     @pytest.mark.asyncio
     async def test_submit_redis_enqueue_fails_falls_back_to_memory(self):
-        """When Redis enqueue fails, submit falls back to memory queue."""
+        """When Redis enqueue fails, submit falls back to memory queue (single failure).
+
+        Bug fix (M-R2): 原本一次失败就 `self._use_redis = False` 永久禁用 Redis,
+        改为: 失败计数器累加,达到阈值才临时禁用并启动指数退避。
+        一次失败时: 请求走内存队列,但 Redis 仍然标记为可用(下次再试)。
+        """
         ds = DistributedScheduler()
         ds._use_redis = True
         ds._redis_queue = _make_mock_redis_queue()
@@ -298,8 +303,41 @@ class TestDistributedSchedulerSubmit:
         rid = await ds.submit(request)
 
         assert rid == "r1"
-        assert ds._use_redis is False  # Fallback disabled Redis
-        assert ds.pending_queue.qsize() == initial_qsize + 1  # In memory queue
+        # Bug fix (M-R2): 一次失败不立即禁用 Redis
+        assert ds._use_redis is True, (
+            f"Expected _use_redis to remain True after 1 failure (M-R2 fix), "
+            f"got {ds._use_redis}"
+        )
+        # 失败计数器应该累加
+        assert ds._redis_consecutive_failures == 1, (
+            f"Expected _redis_consecutive_failures=1, got {ds._redis_consecutive_failures}"
+        )
+        # 请求应该被放到内存队列
+        assert ds.pending_queue.qsize() == initial_qsize + 1
+
+    @pytest.mark.asyncio
+    async def test_submit_redis_consecutive_failures_disables_with_backoff(self):
+        """After threshold consecutive failures, Redis is temporarily disabled with backoff."""
+        ds = DistributedScheduler()
+        ds._use_redis = True
+        ds._redis_queue = _make_mock_redis_queue()
+        ds._redis_queue.enqueue = AsyncMock(return_value=False)
+        # 阈值改为 3 加速测试
+        ds._redis_disable_threshold = 3
+
+        # 3 次连续失败
+        for i in range(3):
+            await ds.submit(_make_req(f"r{i}"))
+
+        # 应该临时禁用
+        import time
+        assert ds._redis_disabled_at is not None, (
+            "After threshold failures, _redis_disabled_at should be set"
+        )
+        assert ds._redis_retry_after_ts > time.time(), (
+            "After threshold failures, _redis_retry_after_ts should be in the future"
+        )
+        assert ds._redis_consecutive_failures == 3
 
     @pytest.mark.asyncio
     async def test_submit_falls_back_to_memory_when_no_redis(self):

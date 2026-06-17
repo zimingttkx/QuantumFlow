@@ -31,7 +31,12 @@ def test_default_tenant_id():
 
 @pytest.mark.asyncio
 async def test_submit_respects_concurrent_limit():
-    """测试提交请求时尊重并发限制"""
+    """测试提交请求时尊重并发限制
+
+    Bug fix (H-C5): 原本用 check-then-incr 存在 TOCTOU 竞态。
+    修复后: 用原子 check-and-incr (Lua 脚本),返回 -1 表示超限。
+    本测试 mock 原子 incr 方法返回 -1 来模拟超限场景。
+    """
     with patch("quantumflow.scheduler.distributed.get_redis_manager") as mock_redis:
         mock_client = MagicMock()
         mock_redis.return_value.get_client.return_value = mock_client
@@ -42,6 +47,8 @@ async def test_submit_respects_concurrent_limit():
             concurrent_requests=10,
             gpu_memory_mb=0
         ))
+        # Bug fix (H-C5): 原子 incr 模拟超限
+        scheduler._try_increment_concurrent_requests = MagicMock(return_value=-1)
         scheduler._get_concurrent_requests = AsyncMock(return_value=10)
 
         request = MagicMock()
@@ -89,14 +96,19 @@ async def test_submit_with_valid_tenant():
 
 @pytest.mark.asyncio
 async def test_submit_increments_counter():
-    """测试提交请求后计数器递增"""
+    """测试提交请求后计数器递增
+
+    Bug fix (H-C5): 原本用 _increment_concurrent_requests (无原子保证)。
+    修复后: 用 _try_increment_concurrent_requests 原子 check-and-incr。
+    """
     scheduler = DistributedScheduler()
     scheduler._get_tenant_quota = MagicMock(return_value=MagicMock(
         concurrent_requests=10,
         gpu_memory_mb=0
     ))
     scheduler._get_concurrent_requests = AsyncMock(return_value=0)
-    scheduler._increment_concurrent_requests = AsyncMock()
+    # Bug fix (H-C5): 用原子 incr 替代
+    scheduler._try_increment_concurrent_requests = MagicMock(return_value=1)
 
     # Mock Redis queue
     scheduler._use_redis = True
@@ -115,5 +127,7 @@ async def test_submit_increments_counter():
     result = await scheduler.submit(request, tenant_id="test-tenant")
     assert result == "req-123"
 
-    # Verify counter was incremented
-    scheduler._increment_concurrent_requests.assert_called_once_with("test-tenant")
+    # Bug fix (H-C5): 验证原子 incr 被调用
+    scheduler._try_increment_concurrent_requests.assert_called_once_with(
+        "test-tenant", 10
+    )
