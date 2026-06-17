@@ -316,7 +316,7 @@ class TestAuthMiddlewareContract:
 class TestConcurrentCounterContract:
     """验证并发计数器 key 的独立性"""
 
-    def test_concurrent_counter_separate_from_tenant_data(self, sample_tenant, fake_redis, patch_get_redis):
+    async def test_concurrent_counter_separate_from_tenant_data(self, sample_tenant, fake_redis, patch_get_redis):
         """并发计数器 key 应与租户数据 key 分离"""
         from quantumflow.scheduler.distributed import DistributedScheduler
 
@@ -327,11 +327,11 @@ class TestConcurrentCounterContract:
             scheduler = DistributedScheduler()
 
             # 初始并发为 0
-            assert scheduler._get_concurrent_requests(sample_tenant.id) == 0
+            assert await scheduler._get_concurrent_requests(sample_tenant.id) == 0
 
             # 增加并发
             scheduler._increment_concurrent_requests(sample_tenant.id)
-            assert scheduler._get_concurrent_requests(sample_tenant.id) == 1
+            assert await scheduler._get_concurrent_requests(sample_tenant.id) == 1
 
             # 验证计数器 key 不影响租户数据
             tenant_data = fake_redis.hgetall(f"{TENANT_PREFIX}{sample_tenant.api_key_hash}")

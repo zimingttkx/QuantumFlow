@@ -96,6 +96,9 @@ class TestSchedulerScheduleRequest:
         scheduler.default_strategy = "nonexistent"
         # Add a node so we pass the empty-nodes check
         mock_node = MagicMock(spec=NodeResource)
+        # MagicMock(spec=Dataclass) 不会自动暴露 dataclass 字段
+        # 需要显式设置 node_id 以让 _filter_quarantined_nodes 正常工作
+        mock_node.node_id = "node-1"
         scheduler.available_nodes["node-1"] = mock_node
 
         result = await scheduler._schedule_request(sched_request)

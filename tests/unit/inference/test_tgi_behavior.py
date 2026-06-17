@@ -447,15 +447,19 @@ class TestTGIGenerateLogic:
     # ── 错误处理路径 ───────────────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_http_error_returns_empty_results(self, engine):
-        """[错误用例] HTTP错误码返回空结果列表"""
+    async def test_http_error_returns_aligned_error_results(self, engine):
+        """[错误用例] HTTP错误码返回与prompts对齐的错误结果列表（防止caller索引错位）"""
         mock_response = MagicMock()
         mock_response.status_code = 500
         engine._client.post = AsyncMock(return_value=mock_response)
 
         results = await engine.generate("test", ["p1", "p2"], SamplingParams())
 
-        assert results == [], "HTTP错误时应返回空列表"
+        # 修复后：返回与prompts等长的错误结果，不是 []
+        assert len(results) == 2, "HTTP错误时应返回与prompts等长的错误结果"
+        for r in results:
+            assert r.finish_reason == "error", "HTTP错误时应标记为error"
+            assert "[TGI错误" in r.outputs[0], "错误消息应包含[TGI错误"
 
     @pytest.mark.asyncio
     async def test_client_not_initialized_returns_error_results(self, engine):

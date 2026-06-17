@@ -850,24 +850,10 @@ class TestDistributedWorkerManagement:
 
 
 class TestGetQueueStats:
-    """Tests for get_queue_stats (lines 474-487)."""
+    """Tests for get_queue_stats."""
 
-    def test_get_queue_stats_with_redis(self):
-        """With Redis queue, stats include redis_enabled=True."""
-        ds = DistributedScheduler()
-        ds._use_redis = True
-        ds._redis_queue = MagicMock()
-        # queue_size is an async method that returns an int
-        ds._redis_queue.queue_size = AsyncMock(return_value=10)
-
-        stats = ds.get_queue_stats()
-
-        assert stats["redis_enabled"] is True
-        assert stats["queue_size"] == 10
-        assert "total_requests" in stats
-
-    def test_get_queue_stats_without_redis(self):
-        """Without Redis, stats include redis_enabled=False and use memory queue size."""
+    def test_get_queue_stats_sync_without_redis(self):
+        """Without Redis, sync stats include redis_enabled=False and use memory queue size."""
         ds = DistributedScheduler()
         ds._use_redis = False
 
@@ -877,7 +863,20 @@ class TestGetQueueStats:
         assert stats["queue_size"] == 0
         assert "total_requests" in stats
 
-    def test_get_queue_stats_without_redis_queue_instance(self):
+    def test_get_queue_stats_sync_with_redis_uses_memory_fallback(self):
+        """Sync path with Redis returns local memory queue size (no await)."""
+        ds = DistributedScheduler()
+        ds._use_redis = True
+        ds._redis_queue = MagicMock()
+
+        stats = ds.get_queue_stats()
+
+        assert stats["redis_enabled"] is True
+        assert "queue_size" in stats
+        # 同步路径下 queue_size 来自 pending_queue 兜底（不是 Redis）
+        assert stats["queue_size"] == 0
+
+    def test_get_queue_stats_sync_with_redis_queue_none(self):
         """When _use_redis is True but _redis_queue is None, falls back to memory."""
         ds = DistributedScheduler()
         ds._use_redis = True
@@ -887,6 +886,20 @@ class TestGetQueueStats:
 
         assert stats["redis_enabled"] is False
         assert "queue_size" in stats
+
+    @pytest.mark.asyncio
+    async def test_get_queue_stats_async_with_redis(self):
+        """Async path with Redis correctly awaits queue_size."""
+        ds = DistributedScheduler()
+        ds._use_redis = True
+        ds._redis_queue = MagicMock()
+        ds._redis_queue.queue_size = AsyncMock(return_value=10)
+
+        stats = await ds.get_queue_stats_async()
+
+        assert stats["redis_enabled"] is True
+        assert stats["queue_size"] == 10
+        assert "total_requests" in stats
 
 
 # =============================================================================

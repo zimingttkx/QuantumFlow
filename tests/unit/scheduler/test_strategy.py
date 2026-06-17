@@ -585,7 +585,8 @@ class TestAdaptiveSchedulingStrategy:
 
     @pytest.fixture
     def healthy_nodes(self):
-        """创建健康节点列表"""
+        """创建健康节点列表 — node-0 故意高负载用于测试负载均衡跳过"""
+        loads = [0.9, 0.1, 0.1, 0.1]  # node-0 高负载，其他低负载
         return [
             NodeResource(
                 node_id=f"node-{i}",
@@ -609,9 +610,9 @@ class TestAdaptiveSchedulingStrategy:
                 memory_available=64 * 1024**3,
                 disk_total=2 * 1024**4,
                 disk_available=1 * 1024**4,
-                load=0.3,
+                load=loads[i],
             )
-            for i in range(3)
+            for i in range(4)
         ]
 
     def test_name(self, strategy):

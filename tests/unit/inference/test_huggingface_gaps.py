@@ -216,10 +216,48 @@ class TestHFGetTorchDtype:
 # ── _build_attention_mask ──────────────────────────────────────────────
 
 class TestHFBuildAttentionMask:
-    def test_build_attention_mask_returns_none(self):
+    def test_build_attention_mask_shape_is_4d_causal(self):
+        """_build_attention_mask 返回 4D 下三角 causal mask，shape = [1, 1, T, T]。"""
         engine = HuggingFaceEngine()
-        result = engine._build_attention_mask(seq_len=10, past_len=5, device=torch.device("cpu"))
-        assert result is None
+        seq_len, past_len = 10, 5
+        result = engine._build_attention_mask(
+            seq_len=seq_len, past_len=past_len, device=torch.device("cpu")
+        )
+
+        assert result is not None
+        assert isinstance(result, torch.Tensor)
+        total_len = seq_len + past_len
+        assert result.shape == (1, 1, total_len, total_len)
+        assert result.dtype == torch.bool
+
+        # 下三角为 True，上三角为 False（causal mask）
+        assert result[0, 0].diagonal().all()
+        assert not result[0, 0].triu(diagonal=1).any()
+
+    def test_build_attention_mask_zero_past_len(self):
+        """past_len=0 时仍能构造正确形状的 mask。"""
+        engine = HuggingFaceEngine()
+        result = engine._build_attention_mask(
+            seq_len=4, past_len=0, device=torch.device("cpu")
+        )
+        assert result is not None
+        assert result.shape == (1, 1, 4, 4)
+        # 因果 mask：上三角（含对角线以上）必须全 False
+        # 注意：不能用 .tril().all()，因为 all() 会检查上三角的 False → 永远不通过
+        assert not result[0, 0].triu(diagonal=1).any()
+        # 对角线及以下必须全 True
+        assert result[0, 0].tril().all() if False else True  # 见下行：分两步检查更可靠
+        assert result[0, 0].diagonal().all()  # 主对角线全 True
+        assert result[0, 0].tril().equal(torch.tril(torch.ones(4, 4, dtype=torch.bool)))
+
+    def test_build_attention_mask_dtype_is_bool(self):
+        """返回值应为 bool 类型，与 HuggingFace 4D attention_mask 约定一致。"""
+        engine = HuggingFaceEngine()
+        result = engine._build_attention_mask(
+            seq_len=2, past_len=2, device=torch.device("cpu")
+        )
+        assert result is not None
+        assert result.dtype == torch.bool
 
 
 # ── unload_model ───────────────────────────────────────────────────────

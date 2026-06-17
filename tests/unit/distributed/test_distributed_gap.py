@@ -530,17 +530,24 @@ class TestGetQueueStats:
             redis_url="redis://localhost:6379/0",
         )
 
-    def test_get_queue_stats_redis_enabled_flag(self, scheduler):
+    @pytest.mark.asyncio
+    async def test_get_queue_stats_redis_enabled_flag(self, scheduler):
         """When Redis is enabled, queue_stats includes redis_enabled=True."""
         scheduler._use_redis = True
         mock_queue = AsyncMock(spec=RedisQueue)
         mock_queue.queue_size = AsyncMock(return_value=5)
         scheduler._redis_queue = mock_queue
 
-        stats = scheduler.get_queue_stats()
+        # 同步版 get_queue_stats() 在 Redis 启用时只能从 pending_queue 兜底
+        # 真正拿到 Redis 队列大小需要用异步版 get_queue_stats_async()
+        sync_stats = scheduler.get_queue_stats()
+        assert sync_stats["redis_enabled"] is True
+        # 同步路径：queue_size 来自 pending_queue（不是 redis_queue）
+        assert sync_stats["queue_size"] == scheduler.pending_queue.qsize()
 
-        assert stats["redis_enabled"] is True
-        assert stats["queue_size"] == 5
+        async_stats = await scheduler.get_queue_stats_async()
+        assert async_stats["redis_enabled"] is True
+        assert async_stats["queue_size"] == 5
 
     def test_get_queue_stats_redis_disabled_flag(self, scheduler):
         """When Redis is disabled, queue_stats uses memory queue size."""
