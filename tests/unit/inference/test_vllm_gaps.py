@@ -12,11 +12,14 @@
 
 import asyncio
 import sys
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, "/home/dingziming/PycharmProjects/QuantumFlow")
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from quantumflow.inference.backends.vllm import VLLMEngine, _build_vllm_llm, _run_vllm_generate
 from quantumflow.inference.engine import InferenceResult, ModelConfig, SamplingParams

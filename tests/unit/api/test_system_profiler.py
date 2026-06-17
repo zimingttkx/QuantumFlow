@@ -593,7 +593,17 @@ class TestRecommendModels:
         hub_recs = [r for r in result["recommendations"] if r.get("from_hub")]
         # tags is None, so _estimate_vram_from_name uses just model_id
         # model_id contains 7b -> params 7B -> vram from _estimate_vram_from_name
-        assert len(hub_recs) >= 0  # At least not crash
+        # 必须: 仍然能识别并推荐 (model_id 含 "7b"), 且 tags 字段被规范化为 []
+        # 不能用 `>= 0`(永远真) — 必须验证具体的 tags 规范化和 vram 估算值
+        assert len(hub_recs) == 1, (
+            f"tags=None 时, 仍应通过 model_id 匹配到 7B 模型; got {len(hub_recs)} recs"
+        )
+        assert hub_recs[0]["tags"] == [], (
+            f"tags=None 应被规范化为 [], 实际 {hub_recs[0]['tags']!r}"
+        )
+        assert hub_recs[0]["vram_gb"] > 0, (
+            f"应从 model_id '7b' 估算出显存 > 0, 实际 {hub_recs[0]['vram_gb']}"
+        )
 
     def test_popular_model_downloads_none(self):
         """[核心功能] downloads 为 None 时默认为 0"""

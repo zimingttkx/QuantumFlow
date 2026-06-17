@@ -1325,7 +1325,13 @@ class TestServerExceptionHandlerDirect:
             m for m in app.user_middleware
             if m.cls.__name__ == "CORSMiddleware"
         ]
-        assert len(cors_middleware) >= 0  # depends on config
+        # 必须 == 1, 不是 >= 0 (永远真)。Default config cors_enabled=True
+        # 意味着必然注册了 1 个 CORSMiddleware; 若 == 0, 说明 CORS 被悄悄禁用
+        # 浏览器跨域请求会全部失败, 但这种回归测试是发现不了的。
+        assert len(cors_middleware) == 1, (
+            f"default config 应注册 1 个 CORSMiddleware, 实际 {len(cors_middleware)} 个 — "
+            f"cors_enabled 默认值被改坏了"
+        )
 
     def test_gzip_middleware_present(self):
         from quantumflow.api.server import create_app

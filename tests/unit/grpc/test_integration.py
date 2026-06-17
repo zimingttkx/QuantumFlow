@@ -269,12 +269,39 @@ class TestClusterClientIntegration:
         assert response.success is True
 
     def test_list_nodes(self, cluster_client):
-        """测试列出节点"""
+        """测试列出节点。
+
+        在没有真实 ClusterManager 时, 服务返回静态 mock 数据 (worker-001)。
+        这里验证:
+        1. 调用不抛异常
+        2. 返回的是 ListNodesResponse, nodes 是可迭代的
+        3. 静态 mock 节点 (worker-001) 存在于列表中
+        4. 节点字段类型正确 (node_id 是 str, port > 0)
+
+        不能 `assert len(response.nodes) >= 0` (永远真) — 这无法发现:
+        - 返回空列表 (服务实现被改坏)
+        - 字段名拼错 (下游解析会全挂)
+        - node_id 类型变为 bytes (序列化层会失败)
+        """
         request = quantumflow_pb2.ListNodesRequest()
 
         response = cluster_client.list_nodes(request)
 
-        assert len(response.nodes) >= 0
+        # 真实断言 1: 必须有节点返回 (至少 mock 的 worker-001)
+        assert len(response.nodes) >= 1, (
+            f"列表节点应至少包含 mock 的 worker-001, 实际为空"
+        )
+        # 真实断言 2: mock 节点 worker-001 必须存在
+        node_ids = [n.node_id for n in response.nodes]
+        assert "worker-001" in node_ids, (
+            f"mock 节点 worker-001 应在列表中, 实际={node_ids!r}"
+        )
+        # 真实断言 3: 节点字段类型/值正确
+        for n in response.nodes:
+            assert isinstance(n.node_id, str) and n.node_id, (
+                f"node_id 应为非空 str, 实际 {n.node_id!r} ({type(n.node_id).__name__})"
+            )
+            assert 0 < n.port <= 65535, f"port 应在 1-65535, 实际 {n.port}"
 
     def test_heartbeat(self, cluster_client):
         """测试心跳"""
@@ -413,12 +440,30 @@ class TestMetricsServiceIntegration:
         channel.close()
 
     def test_get_metrics(self, metrics_channel):
-        """测试获取指标"""
+        """测试获取指标: 默认请求应返回 4 个内置指标 (requests_total, gpu_memory_usage,
+        active_inferences, node_count), 且每个指标有 name/value/timestamp 字段。
+
+        不能 `assert len >= 0` (永远真) — 这无法发现:
+        - GetMetrics 返回空 metrics (服务实现被改坏, 监控/告警全断)
+        - 指标 name 字段被改 (下游解析会全挂)
+        - value 字段类型错误 (gRPC 序列化会失败, 但单元测试 mock 下不会捕获)
+        """
         request = quantumflow_pb2.MetricsRequest()
 
         response = metrics_channel.GetMetrics(request)
 
-        assert len(response.metrics) >= 0
+        assert len(response.metrics) == 4, (
+            f"默认应返回 4 个内置指标, 实际 {len(response.metrics)} 个: "
+            f"{[m.name for m in response.metrics]}"
+        )
+        metric_names = {m.name for m in response.metrics}
+        assert "requests_total" in metric_names
+        assert "gpu_memory_usage" in metric_names
+        assert "active_inferences" in metric_names
+        assert "node_count" in metric_names
+        # 每个 MetricSample 必须有合法的 value (>0 或 == 0 都行, 但 timestamp 必为 int)
+        for m in response.metrics:
+            assert m.timestamp > 0, f"指标 {m.name!r} 的 timestamp={m.timestamp}, 应为正整数"
 
 
 class TestGrpcServerManager:

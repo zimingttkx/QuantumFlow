@@ -74,11 +74,25 @@ class TestWorkerClientCloseEdgeCases:
 
     @pytest.mark.asyncio
     async def test_close_when_client_none_is_safe(self):
-        """close() when _client is already None should not raise."""
+        """close() when _client is already None should not raise.
+
+        必须验证:
+        1. 不抛异常 (idempotent close)
+        2. _client 保持为 None (不要被 close 错误地赋值/恢复成别的对象)
+        3. 二次 close 也安全
+        """
         client = WorkerClient()
         client._client = None
         await client.close()
-        # No exception raised
+        # 真实断言: 状态保持, 二次 close 也安全
+        assert client._client is None, (
+            f"close() 后 _client 应保持 None, 实际 {client._client!r}"
+        )
+        # 二次 close 必须也安全
+        await client.close()
+        assert client._client is None, (
+            f"二次 close() 后 _client 应仍为 None, 实际 {client._client!r}"
+        )
 
     @pytest.mark.asyncio
     async def test_close_when_client_already_closed_is_safe(self):
@@ -266,10 +280,24 @@ class TestWorkerRegistryUpdateNonexistent:
 
     @pytest.mark.asyncio
     async def test_update_worker_status_nonexistent_is_safe(self):
-        """update_worker_status on non-existent worker should not raise."""
+        """update_worker_status on non-existent worker should not raise.
+
+        必须验证:
+        1. 不抛异常 (静默 no-op)
+        2. 不会意外创建/插入新的 worker 记录
+        3. 后续 get_worker(nonexistent) 返回 None (而非被错误地建出来)
+        """
         registry = WorkerRegistry()
         await registry.update_worker_status("nonexistent", "healthy")
-        # No exception raised
+        # 真实断言: 注册表保持空, 不被错误地插入 worker
+        count = await registry.get_worker_count()
+        assert count == 0, (
+            f"update_worker_status 不应创建新 worker, 实际 count={count}"
+        )
+        result = await registry.get_worker("nonexistent")
+        assert result is None, (
+            f"nonexistent worker 应仍为 None, 实际被错误地创建成 {result!r}"
+        )
 
     @pytest.mark.asyncio
     async def test_register_duplicate_overwrites(self):

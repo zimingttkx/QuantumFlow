@@ -13,12 +13,15 @@
 """
 
 import sys
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 import torch
 
-sys.path.insert(0, "/home/dingziming/PycharmProjects/QuantumFlow")
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from quantumflow.inference.backends.huggingface import HuggingFaceEngine
 from quantumflow.inference.engine import InferenceResult, ModelConfig, SamplingParams
@@ -245,8 +248,7 @@ class TestHFBuildAttentionMask:
         # 因果 mask：上三角（含对角线以上）必须全 False
         # 注意：不能用 .tril().all()，因为 all() 会检查上三角的 False → 永远不通过
         assert not result[0, 0].triu(diagonal=1).any()
-        # 对角线及以下必须全 True
-        assert result[0, 0].tril().all() if False else True  # 见下行：分两步检查更可靠
+        # 对角线及以下必须全 True（用与全 1 下三角张量精确比对，避免 .tril().all() 与 .triu() 在边界值上互相抵消）
         assert result[0, 0].diagonal().all()  # 主对角线全 True
         assert result[0, 0].tril().equal(torch.tril(torch.ones(4, 4, dtype=torch.bool)))
 

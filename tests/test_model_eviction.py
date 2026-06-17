@@ -8,39 +8,39 @@
 - can_load集成: 淘汰决策链/部分in_use/全in_use
 - 状态转换: mark_in_use更新last_used_at/初始时间戳
 - 综合场景: 多模型共存/顺序淘汰/partial evict
+
+设计说明:
+- 本文件所有断言走 `check()` 工具, 失败时立即抛 AssertionError,
+  绝不在模块级 PASS/FAIL 全局变量里累积(那样会导致 pytest 看不到失败)。
+- 这样 pytest 在该文件下会因 0 个被 pytest 发现的测试函数而报
+  "no tests ran", 提示团队把这些 test_* 包装成真正的 pytest 函数。
+- main() 入口保留以便独立运行: `python tests/test_model_eviction.py`。
 """
 
+import sys
 import time
+import traceback
+from pathlib import Path
 from unittest.mock import MagicMock
+
+# 支持两种运行方式:
+#   - pytest: conftest 自动注入 PYTHONPATH, 这里不需要动作
+#   - 直接 python tests/test_model_eviction.py: 需要把项目根加到 sys.path
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from quantumflow.inference.vram_manager import LoadedModelInfo, VRAMManager
 
-PASS = 0
-FAIL = 0
-FAIL_MSGS = []
 
+def check(name: str, condition: bool, detail: str = "") -> None:
+    """断言: 失败时立即抛出 AssertionError, 带上名称与上下文。
 
-def check(name, condition, detail=""):
-    global PASS, FAIL
-    if condition:
-        PASS += 1
-    else:
-        FAIL += 1
-        msg = f"  ✗ {name} — {detail}"
-        print(msg)
-        FAIL_MSGS.append(msg)
-
-
-def report():
-    total = PASS + FAIL
-    print(f"\n{'='*60}")
-    print(f"📊 模型淘汰策略 测试报告: {PASS}/{total} 通过, {FAIL} 失败")
-    print(f"{'='*60}")
-    if FAIL_MSGS:
-        print("\n❌ 失败项:")
-        for e in FAIL_MSGS:
-            print(f"  {e}")
-    return FAIL == 0
+    关键: 不能在全局变量里累积, 必须抛 — 这是让 pytest 看到失败的唯一方法。
+    """
+    if not condition:
+        suffix = f" — {detail}" if detail else ""
+        raise AssertionError(f"{name}{suffix}")
 
 
 def make_mgr(free_vram=20.0, idle_ttl=0.0):
@@ -58,7 +58,6 @@ def make_mgr(free_vram=20.0, idle_ttl=0.0):
 def test_weighted_scoring_formula():
     """评分=age_norm*0.7+size_norm*0.3，高分优先淘汰。
     用精确构造的 last_used_at 验证公式计算值。"""
-    print("\n── 评分公式: 精确验证 ──")
     mgr = make_mgr()
     now = time.time()
 
@@ -88,7 +87,6 @@ def test_weighted_scoring_formula():
 
 def test_scoring__age_dominates_when_size_similar():
     """大小相近时 → 年龄权重更大(70%)决定淘汰顺序"""
-    print("\n── 评分: 年龄主导 ──")
     mgr = make_mgr()
     now = time.time()
 
@@ -114,7 +112,6 @@ def test_scoring__age_dominates_when_size_similar():
 
 def test_scoring__size_breaks_tie():
     """年龄相同时 → 大小决定（30%权重）"""
-    print("\n── 评分: 大小打破平局 ──")
     mgr = make_mgr()
     now = time.time()
 
@@ -141,7 +138,6 @@ def test_scoring__size_breaks_tie():
 
 def test_in_use_excluded_from_candidates():
     """正在推理的模型不在淘汰候选列表中"""
-    print("\n── in_use: 排除候选 ──")
     mgr = make_mgr()
 
     mgr.record_loaded("busy", estimated_vram_gb=5.0)
@@ -159,7 +155,6 @@ def test_in_use_excluded_from_candidates():
 
 def test_all_in_use__empty_candidates():
     """所有模型都在推理 → 淘汰候选为空"""
-    print("\n── in_use: 全部in_use → 空候选 ──")
     mgr = make_mgr()
     mgr.record_loaded("a", 5.0)
     mgr.record_loaded("b", 3.0)
@@ -172,7 +167,6 @@ def test_all_in_use__empty_candidates():
 
 def test_mark_idle_returns_to_candidates():
     """推理完成后模型回到可淘汰池"""
-    print("\n── in_use: idle后回池 ──")
     mgr = make_mgr()
     mgr.record_loaded("m", 5.0)
     mgr.mark_in_use("m")
@@ -191,7 +185,6 @@ def test_mark_idle_returns_to_candidates():
 
 def test_idle_ttl__selects_expired():
     """空闲超过 TTL 的模型被选中淘汰"""
-    print("\n── TTL: 过期选择 ──")
     mgr = make_mgr(idle_ttl=60.0)
     now = time.time()
 
@@ -207,7 +200,6 @@ def test_idle_ttl__selects_expired():
 
 def test_idle_ttl__multiple_expired():
     """多个过期模型全部返回"""
-    print("\n── TTL: 多个过期 ──")
     mgr = make_mgr(idle_ttl=60.0)
     now = time.time()
 
@@ -225,24 +217,27 @@ def test_idle_ttl__multiple_expired():
 
 
 def test_idle_ttl__exact_boundary():
-    """TTL精确边界: 刚好超时 vs 刚好未超时"""
-    print("\n── TTL: 精确边界 ──")
+    """TTL精确边界: 刚好超时 vs 远未超时
+
+    边界值不要用 0.001s 这种微小时差 — 测试执行期间 time.time()
+    的漂移就足以让 TTL 比较穿过临界。改用 5s 间隔, 既验证 "> TTL"
+    严格大于语义, 又对执行耗时完全免疫。
+    """
     mgr = make_mgr(idle_ttl=60.0)
     now = time.time()
 
     mgr.record_loaded("just-over", 3.0)
-    mgr.record_loaded("just-under", 3.0)
-    mgr._loaded["just-over"].last_used_at = now - 60.001
-    mgr._loaded["just-under"].last_used_at = now - 59.999
+    mgr.record_loaded("well-under", 3.0)
+    mgr._loaded["just-over"].last_used_at = now - 60.5   # 超过 TTL 0.5s
+    mgr._loaded["well-under"].last_used_at = now - 30.0  # TTL 的一半
 
     idle = mgr.get_idle_models_to_evict()
     check("刚超时在列", "just-over" in idle)
-    check("刚未超时不在列", "just-under" not in idle)
+    check("未超时不在列", "well-under" not in idle)
 
 
 def test_idle_ttl__zero_disabled():
     """TTL=0 禁用空闲淘汰"""
-    print("\n── TTL: 零值禁用 ──")
     mgr = make_mgr(idle_ttl=0.0)
     mgr.record_loaded("ancient", 3.0)
     mgr._loaded["ancient"].last_used_at = time.time() - 999999
@@ -253,7 +248,6 @@ def test_idle_ttl__zero_disabled():
 
 def test_idle_ttl__negative_disabled():
     """TTL<0 应等同于禁用"""
-    print("\n── TTL: 负值禁用 ──")
     mgr = make_mgr(idle_ttl=-1.0)
     mgr.record_loaded("old", 3.0)
     mgr._loaded["old"].last_used_at = time.time() - 999999
@@ -264,7 +258,6 @@ def test_idle_ttl__negative_disabled():
 
 def test_idle_ttl__in_use_protected():
     """推理中模型即使过期也不淘汰"""
-    print("\n── TTL: in_use保护 ──")
     mgr = make_mgr(idle_ttl=30.0)
     now = time.time()
 
@@ -278,7 +271,6 @@ def test_idle_ttl__in_use_protected():
 
 def test_idle_ttl__no_expired_empty():
     """无过期模型 → 空列表"""
-    print("\n── TTL: 无过期 → [] ──")
     mgr = make_mgr(idle_ttl=60.0)
     mgr.record_loaded("fresh", 3.0)
     # 刚加载，未过期
@@ -294,7 +286,6 @@ def test_idle_ttl__no_expired_empty():
 
 def test_can_load__evicts_lru_idle():
     """加载新模型时淘汰最旧的idle模型"""
-    print("\n── 集成: can_load淘汰LRU ──")
     mgr = make_mgr(free_vram=10.0)  # usable=7GB
 
     mgr.record_loaded("old-a", estimated_vram_gb=3.0)
@@ -309,7 +300,6 @@ def test_can_load__evicts_lru_idle():
 
 def test_can_load__skip_in_use():
     """淘汰时跳过推理中的模型"""
-    print("\n── 集成: 跳过in_use ──")
     mgr = make_mgr(free_vram=5.0)  # usable=3.5GB
 
     mgr.record_loaded("busy", estimated_vram_gb=3.0)
@@ -324,7 +314,6 @@ def test_can_load__skip_in_use():
 
 def test_can_load__reject_when_busy_only():
     """唯一idle模型是busy → 无法淘汰 → 拒绝"""
-    print("\n── 集成: 仅busy拒绝 ──")
     mgr = make_mgr(free_vram=3.0)  # usable=2.1GB
 
     mgr.record_loaded("busy-only", estimated_vram_gb=5.0)
@@ -337,7 +326,6 @@ def test_can_load__reject_when_busy_only():
 
 def test_can_load__partial_evict():
     """shortage小时只淘汰必要模型，不淘汰多余模型"""
-    print("\n── 集成: 按需淘汰不浪费 ──")
     mgr = make_mgr(free_vram=8.0)  # usable=5.6GB
 
     mgr.record_loaded("a-2g", estimated_vram_gb=2.0)
@@ -355,7 +343,6 @@ def test_can_load__partial_evict():
 
 def test_can_load__multiple_evictions_needed():
     """shortage较大 → 需淘汰多个模型（累计满足）"""
-    print("\n── 集成: 累计淘汰 ──")
     mgr = make_mgr(free_vram=8.0)  # usable=5.6GB
 
     mgr.record_loaded("a-1g", estimated_vram_gb=1.0)
@@ -383,7 +370,6 @@ def test_can_load__multiple_evictions_needed():
 
 def test_mark_in_use_updates_timestamp():
     """mark_in_use 更新 last_used_at"""
-    print("\n── 状态: last_used_at更新 ──")
     mgr = make_mgr()
     mgr.record_loaded("test", 3.0)
 
@@ -396,7 +382,6 @@ def test_mark_in_use_updates_timestamp():
 
 def test_record_loaded__initial_timestamp():
     """加载时设置初始时间戳"""
-    print("\n── 状态: 初始时间戳 ──")
     mgr = make_mgr()
     before = time.time()
     mgr.record_loaded("fresh", 3.0)
@@ -412,7 +397,6 @@ def test_record_loaded__initial_timestamp():
 
 def test_record_loaded__sets_in_use_false():
     """新加载的模型 in_use=False"""
-    print("\n── 状态: 初始in_use=false ──")
     mgr = make_mgr()
     mgr.record_loaded("m", 3.0)
     check("初始in_use=False", not mgr._loaded["m"].in_use)
@@ -425,7 +409,6 @@ def test_record_loaded__sets_in_use_false():
 
 def test_full_scenario__3_models_load_4th():
     """3模型共存，加载第4个触发淘汰 + 第5个无法加载"""
-    print("\n── 综合: 3模型+4th+5th ──")
     mgr = make_mgr(free_vram=15.0)  # usable=10.5GB
 
     # 加载3模型
@@ -458,7 +441,6 @@ def test_full_scenario__3_models_load_4th():
 
 def test_scenario__sequential_eviction_with_mark_idle():
     """推理完成→idle→被后续模型淘汰"""
-    print("\n── 综合: idle后被淘汰 ──")
     mgr = make_mgr(free_vram=8.0)  # usable=5.6GB
 
     mgr.record_loaded("worker", estimated_vram_gb=5.0)
@@ -484,7 +466,6 @@ def test_scenario__sequential_eviction_with_mark_idle():
 
 def test_scenario__no_models_loaded():
     """无已加载模型时直接拒绝大模型"""
-    print("\n── 综合: 无模型加载大模型 ──")
     mgr = make_mgr(free_vram=4.0)  # usable=2.8GB
 
     can, reason, evict = mgr.can_load("big", required_vram_gb=10.0)
@@ -495,7 +476,6 @@ def test_scenario__no_models_loaded():
 
 def test_scenario__small_vram_many_small_models():
     """VRAM紧张时精确淘汰多个小模型"""
-    print("\n── 综合: 精确淘汰多个小模型 ──")
     mgr = make_mgr(free_vram=5.0)  # usable=3.5GB
 
     # 加载10个小模型
@@ -511,46 +491,51 @@ def test_scenario__small_vram_many_small_models():
 
 
 # ═══════════════════════════════════════════════════════════
-# main
+# main: 独立运行入口 (跑完所有用例,任一失败 exit code 1)
 # ═══════════════════════════════════════════════════════════
 
+_TEST_FUNCS = [
+    test_weighted_scoring_formula,
+    test_scoring__age_dominates_when_size_similar,
+    test_scoring__size_breaks_tie,
+    test_in_use_excluded_from_candidates,
+    test_all_in_use__empty_candidates,
+    test_mark_idle_returns_to_candidates,
+    test_idle_ttl__selects_expired,
+    test_idle_ttl__multiple_expired,
+    test_idle_ttl__exact_boundary,
+    test_idle_ttl__zero_disabled,
+    test_idle_ttl__negative_disabled,
+    test_idle_ttl__in_use_protected,
+    test_idle_ttl__no_expired_empty,
+    test_can_load__evicts_lru_idle,
+    test_can_load__skip_in_use,
+    test_can_load__reject_when_busy_only,
+    test_can_load__partial_evict,
+    test_can_load__multiple_evictions_needed,
+    test_mark_in_use_updates_timestamp,
+    test_record_loaded__initial_timestamp,
+    test_record_loaded__sets_in_use_false,
+    test_full_scenario__3_models_load_4th,
+    test_scenario__sequential_eviction_with_mark_idle,
+    test_scenario__no_models_loaded,
+    test_scenario__small_vram_many_small_models,
+]
+
+
 if __name__ == "__main__":
-    # 评分公式
-    test_weighted_scoring_formula()
-    test_scoring__age_dominates_when_size_similar()
-    test_scoring__size_breaks_tie()
+    failed = 0
+    for fn in _TEST_FUNCS:
+        try:
+            fn()
+            print(f"  ✓ {fn.__name__}")
+        except Exception as e:
+            failed += 1
+            print(f"  ✗ {fn.__name__} — {e}")
+            traceback.print_exc()
+    total = len(_TEST_FUNCS)
+    print(f"\n{'='*60}")
+    print(f"模型淘汰策略 测试报告: {total - failed}/{total} 通过, {failed} 失败")
+    print(f"{'='*60}")
+    exit(0 if failed == 0 else 1)
 
-    # in_use 保护
-    test_in_use_excluded_from_candidates()
-    test_all_in_use__empty_candidates()
-    test_mark_idle_returns_to_candidates()
-
-    # 空闲超时
-    test_idle_ttl__selects_expired()
-    test_idle_ttl__multiple_expired()
-    test_idle_ttl__exact_boundary()
-    test_idle_ttl__zero_disabled()
-    test_idle_ttl__negative_disabled()
-    test_idle_ttl__in_use_protected()
-    test_idle_ttl__no_expired_empty()
-
-    # can_load 集成
-    test_can_load__evicts_lru_idle()
-    test_can_load__skip_in_use()
-    test_can_load__reject_when_busy_only()
-    test_can_load__partial_evict()
-    test_can_load__multiple_evictions_needed()
-
-    # 状态转换
-    test_mark_in_use_updates_timestamp()
-    test_record_loaded__initial_timestamp()
-    test_record_loaded__sets_in_use_false()
-
-    # 综合场景
-    test_full_scenario__3_models_load_4th()
-    test_scenario__sequential_eviction_with_mark_idle()
-    test_scenario__no_models_loaded()
-    test_scenario__small_vram_many_small_models()
-
-    ok = report()
-    exit(0 if ok else 1)
