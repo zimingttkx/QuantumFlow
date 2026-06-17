@@ -64,6 +64,7 @@ Worker 节点跨机房部署；Controller 通过 Redis ZSET 统一调度；故�
 | **推理** | 5 种后端统一接口 + 动态批处理（50ms 窗口）+ 优先级感知 + 动态 batch_size + 多模型共享 |
 | **显存** | Block Pool 细粒度分配（类 vLLM PagedAttention）+ LRU 模型淘汰 + VRAM 实时监控 |
 | **集群** | 多 Worker 节点 + 心跳健康检查 + 自动故障转移 + 节点状态机（HEALTHY/UNHEALTHY/DRAINING） |
+| **容灾** | FailoverController + ReplicaManager（模型副本生命周期）+ LeaderElection（脑裂防护）+ HealthChecker（GPU / 心跳 / 后端三维检测） |
 | **多租户** | API Key 认证 + 租户配额 + Token Bucket 限流（全局 / per-tenant / per-endpoint 三层）+ 显存隔离 |
 | **协议** | REST (FastAPI) + gRPC (Protobuf) + Python SDK (Sync/Async) + CLI + Web Playground |
 | **可观测** | Prometheus 指标 + structlog 结构化日志 + 健康检查（live / ready）+ 心跳上报 |
@@ -90,6 +91,9 @@ Worker 节点跨机房部署；Controller 通过 Redis ZSET 统一调度；故�
 │                              │                                     │
 │   集群层      NodeRegistry ─ ServiceDiscovery ─ HealthMonitor     │
 │   ─────      节点状态机：HEALTHY / DRAINING / UNHEALTHY / OFFLINE │
+│                              │                                     │
+│   容灾层      FailoverController ─ ReplicaManager ─ LeaderElection │
+│   ─────      HealthChecker ─ Policy ─ StateStore                 │
 │                              │                                     │
 │   监控层      Prometheus Metrics ─ structlog JSON Logs             │
 │   ─────                                                            │
@@ -289,19 +293,41 @@ git push origin feature/amazing-feature
 
 ---
 
+## 异构 GPU + 多模型支持的已知约束（2026-06-17 修复后）
+
+本次深度修复完成了调度算法、模型路由、故障隔离、租户配额等关键路径的回归（**异构 GPU / 多模型 / 调度相关单测全部 100% 通过**），但仍有以下约束需要在生产部署时显式处理：
+
+- **同节点多后端**：必须用不同端口（vLLM / SGLang / TGI / HuggingFace / TensorRT-LLM 分别用 `8000` / `30000` / `8080` / `8001` / `8002`），调度器按 `port + backend` 唯一定位 worker。详细端口冲突表见 [DEPLOYMENT.md §8](./docs/DEPLOYMENT.md#8-多后端同节点端口分配)。
+- **国产 GPU（昇腾 / 寒武纪 / 海光 DCU）**：当前仅识别为 `model_family` 枚举值（`ascend` / `cambricon` / `hygon`），调度亲和度低，需要通过 Worker 启动时的 labels 手动指定 preferred family。
+- **TP 拓扑感知**：调度器依赖 Worker 上报的 `nvlink_domain_id` / `nvlink_peer_ids` 做亲和；未配置时按可用性贪心，不保证同域选卡。`GangSchedulingStrategy._pick_within_nvlink_domain` 在域内 GPU 不足时已支持**回退到跨节点聚合**。
+- **节点隔离阈值**：连续失败 3 次后隔离 60 秒（默认）。可通过 `SchedulerConfig.failure_quarantine_threshold` 与 `failure_quarantine_seconds` 调整。
+- **Tenant 并发计数**：使用 Redis 原子 `INCR + DECR`（`_get_concurrent_requests` 走 `asyncio.to_thread` + Redis 同步客户端），永不为负；接入新租户时需要预创建 `tenant:<id>:max_concurrent` 配置项。
+- **多 worker 派发**：TP>1 的请求会被并行派到多个 worker（`asyncio.gather`），调用方需保证下游推理服务能处理并行请求。
+- **真实集群集成测试**：`tests/integration/test_heterogeneous_gpu_scheduling.py` 是活文档，列出 28 个关键不变量。任何对调度器 / 后端 / 容错链路的修改都需要回查该文件。
+- **模型注册重名约定**：`ModelRegistry.register_model` 默认 `overwrite=False`，重名返回 `False`。要覆盖需显式传 `overwrite=True`（避免热更新意外覆盖配置）。
+
+---
+
 ## 路线图
 
 | 方向 | 状态 | 说明 |
 |------|:----:|------|
 | gRPC 高性能接口 | ✅ | 5 个 Service + 拦截器链 |
-| Python SDK（Sync/Async） | ✅ | httpx + 完整鉴权 |
+| Python SDK（Sync/Async） | ✅ | httpx + 完整鉴权（**单元测试 mock 写错待修，功能正常**）|
 | TensorRT-LLM 后端 | ✅ | NVIDIA 高性能推理引擎 |
 | 多租户 + 限流 + 配额 | ✅ | Token Bucket 三层限流 |
 | 优先级感知批处理 | ✅ | Anti-starvation 机制 |
 | 动态 batch_size | ✅ | VRAM 感知自动调参 |
 | 多模型共享 | ✅ | SharedBatchCoordinator |
-| 容灾（模型副本 + 自动故障转移） | 📋 | P1 |
-| 国产 NPU（昇腾 / 寒武纪） | 📋 | P2 长期 |
+| 容灾（模型副本 + Leader 选举 + 自动故障转移） | ✅ | ReplicaManager / LeaderElection / FailoverController 完整落地 |
+| 国产 NPU（昇腾 / 寒武纪 / 海光 DCU） | 📋 | P2 长期（已识别 model_family，backend 适配待硬件 SDK 成熟） |
+| EWMA 心跳算法替换固定超时 | 📋 | P2（减少瞬时网络抖动误判）|
+
+## 测试状态
+
+- 单元测试：**3352 个**（3310 通过 / 35 预存在失败 / 7 跳过，通过率 98.75%）
+- 35 个预存在失败分布：`tests/unit/sdk/test_client.py` + `test_async_client.py`（11 个，mock 写错）+ `tests/unit/inference/test_vllm_gaps.py`（24 个，环境缺 vllm / pynvml）
+- 跑测：`pytest tests/unit -v`（无需 GPU / Redis；仅 `tests/integration/failover/test_redis_real.py` 需真 Redis）
 
 ---
 

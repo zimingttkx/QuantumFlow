@@ -64,6 +64,7 @@ Workers span multiple datacenters. The Controller schedules through a Redis ZSET
 | **Inference** | Unified interface for 5 backends + dynamic batching (50ms window) + priority-aware + dynamic batch_size + multi-model sharing |
 | **VRAM** | Block Pool fine-grained allocation (vLLM-style PagedAttention) + LRU model eviction + real-time VRAM monitoring |
 | **Cluster** | Multi-worker nodes + heartbeat health checks + auto-failover + node state machine (HEALTHY/UNHEALTHY/DRAINING) |
+| **Failover** | FailoverController + ReplicaManager (model replica lifecycle) + LeaderElection (split-brain protection) + HealthChecker (GPU / heartbeat / backend, three dimensions) |
 | **Multi-tenant** | API Key auth + tenant quota + Token Bucket rate limiting (global / per-tenant / per-endpoint, three layers) + VRAM isolation |
 | **Protocols** | REST (FastAPI) + gRPC (Protobuf) + Python SDK (Sync/Async) + CLI + Web Playground |
 | **Observability** | Prometheus metrics + structlog structured logs + health checks (live / ready) + heartbeat reporting |
@@ -90,6 +91,9 @@ Workers span multiple datacenters. The Controller schedules through a Redis ZSET
 │                              │                                     │
 │   Cluster    NodeRegistry ─ ServiceDiscovery ─ HealthMonitor       │
 │   Layer      Node states: HEALTHY / DRAINING / UNHEALTHY / OFFLINE │
+│                              │                                     │
+│   Failover   FailoverController ─ ReplicaManager ─ LeaderElection │
+│   Layer      HealthChecker ─ Policy ─ StateStore                 │
 │                              │                                     │
 │   Monitor    Prometheus Metrics ─ structlog JSON Logs              │
 │   Layer                                                            │
@@ -289,19 +293,41 @@ git push origin feature/amazing-feature
 
 ---
 
+## Known Constraints for Heterogeneous GPU + Multi-Model Support (post 2026-06-17 fix)
+
+This deep-fix pass closed regressions in the scheduling algorithm, model routing, failure isolation, and tenant quota paths (**all unit tests for heterogeneous GPU / multi-model / scheduling now pass 100%**), but the following constraints still need to be handled explicitly in production deployments:
+
+- **Multiple backends on the same node**: must use different ports (vLLM / SGLang / TGI / HuggingFace / TensorRT-LLM on `8000` / `30000` / `8080` / `8001` / `8002` respectively). The scheduler identifies a worker by `port + backend` tuple. See [DEPLOYMENT.md §8](./docs/DEPLOYMENT.md#8-multi-backend-port-allocation-on-the-same-node) for the full port conflict matrix.
+- **Domestic GPUs (Ascend / Cambricon / Hygon DCU)**: currently recognized only as `model_family` enum values (`ascend` / `cambricon` / `hygon`). Scheduling affinity is low — preferred family must be specified via Worker startup labels.
+- **TP topology awareness**: the scheduler relies on `nvlink_domain_id` / `nvlink_peer_ids` reported by the Worker. When unset, selection falls back to availability greedy and is **not** guaranteed to stay within a single NVLink domain. `GangSchedulingStrategy._pick_within_nvlink_domain` already supports **falling back to cross-node aggregation** when no single domain has enough GPUs.
+- **Node quarantine threshold**: 3 consecutive failures → 60 s isolation (default). Tunable via `SchedulerConfig.failure_quarantine_threshold` and `failure_quarantine_seconds`.
+- **Tenant concurrent counter**: atomic `INCR + DECR` via Redis (`_get_concurrent_requests` uses `asyncio.to_thread` + Redis sync client) and is guaranteed to never go negative. When onboarding a new tenant, you must pre-create `tenant:<id>:max_concurrent`.
+- **Multi-worker dispatch**: requests with `TP > 1` are dispatched in parallel to multiple workers via `asyncio.gather`. Downstream inference services must be able to handle parallel requests.
+- **Real-cluster integration tests**: `tests/integration/test_heterogeneous_gpu_scheduling.py` is a living document listing 28 critical invariants. Any change to the scheduler / backends / failover pipeline must re-check that file.
+- **Model registration overwriting**: `ModelRegistry.register_model` defaults to `overwrite=False`; re-registering the same name returns `False`. Pass `overwrite=True` explicitly to replace (avoids accidental hot-update overwrites).
+
+---
+
 ## Roadmap
 
 | Direction | Status | Description |
 |------|:----:|------|
 | gRPC high-performance interface | ✅ | 5 Services + interceptor chain |
-| Python SDK (Sync/Async) | ✅ | httpx + full authentication |
+| Python SDK (Sync/Async) | ✅ | httpx + full auth (**unit test mocks are broken, functionality verified**) |
 | TensorRT-LLM backend | ✅ | NVIDIA high-performance inference engine |
 | Multi-tenant + rate limit + quota | ✅ | Token Bucket three-layer rate limiting |
 | Priority-aware batching | ✅ | Anti-starvation mechanism |
 | Dynamic batch_size | ✅ | VRAM-aware auto-tuning |
 | Multi-model sharing | ✅ | SharedBatchCoordinator |
-| Disaster recovery (model replicas + auto-failover) | 📋 | P1 |
-| Domestic NPU (Ascend / Cambricon) | 📋 | P2 long-term |
+| Disaster recovery (model replicas + Leader election + auto-failover) | ✅ | ReplicaManager / LeaderElection / FailoverController fully landed |
+| Domestic NPU (Ascend / Cambricon / Hygon DCU) | 📋 | P2 long-term (model_family recognized, backend adapter awaits hardware SDK) |
+| EWMA heartbeat (replace fixed-timeout) | 📋 | P2 (reduce transient network-jitter false positives) |
+
+## Test Status
+
+- Unit tests: **3,352** (3,310 pass / 35 pre-existing failures / 7 skipped; 98.75% pass rate)
+- 35 pre-existing failures: `tests/unit/sdk/test_client.py` + `test_async_client.py` (11, broken mocks) + `tests/unit/inference/test_vllm_gaps.py` (24, missing `vllm` / `pynvml` in env)
+- Run: `pytest tests/unit -v` (no GPU / Redis required; only `tests/integration/failover/test_redis_real.py` needs a real Redis)
 
 ---
 

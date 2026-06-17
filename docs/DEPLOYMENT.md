@@ -13,6 +13,7 @@
 - [监控与日志](#5-监控与日志)
 - [升级与回滚](#6-升级与回滚)
 - [常见问题](#7-常见问题)
+- [多后端同节点端口分配](#8-多后端同节点端口分配)
 
 ---
 
@@ -418,6 +419,37 @@ REST API 向后兼容。gRPC 遵循 `package quantumflow.v1;` 语义化版本管
 | `vllm` OOM | 调低 `gpu_memory_utilization`（如 0.7）或增大 `tensor_parallel_size` |
 | 多租户 403 | 检查 `X-API-Key` 是否在 `qf:tenant:ids` 集合中存在 |
 | gRPC 端口冲突 | 修改 `grpc.port` 配置并同步 Service |
+
+---
+
+## 8. 多后端同节点端口分配
+
+当一个 Worker 节点同时跑多个推理后端时，**必须**为每个后端分配不同端口（Controller 通过 `port + backend` 唯一定位 Worker）：
+
+| 后端 | 推荐端口 | 说明 |
+|------|----------|------|
+| vLLM | `8000` | 主入口；通过 `tensor_parallel_size` 切多 GPU |
+| SGLang | `30000` | SGLang 默认端口 |
+| TGI | `8080` | TGI 默认端口 |
+| HuggingFace | `8001` | 自定义（HF 没有固定端口） |
+| TensorRT-LLM | `8002` | 自定义（TRT-LLM triton 模式） |
+| QuantumFlow Controller | `8000` | ⚠️ **与 vLLM 冲突**——Controller 和 vLLM 不能同节点同端口；通常 Controller 与 Worker 分开部署 |
+| Worker HTTP | `8001` | ⚠️ **与 HF 冲突**——Worker 启 HF 时换端口（如 `8003`） |
+
+> 同节点同时跑 vLLM + HF 的部署示例（容器内）：
+> ```bash
+> # Controller 容器只跑 REST/gRPC
+> python -m quantumflow.cli serve --port 8000
+>
+> # Worker 容器
+> # vLLM 跑 8000，HF 跑 8001，Worker HTTP API 跑 9000
+> vllm serve /models/Qwen-7B --port 8000 --tensor-parallel-size 2 &
+> python -m quantumflow.worker.worker --worker-port 9000 \
+>     --backend vllm --backend-port 8000 \
+>     --backend huggingface --hf-port 8001
+> ```
+
+更多异构 GPU + 多后端混部的注意事项见 [README.md §异构 GPU + 多模型支持的已知约束](../README.md#异构-gpu--多模型支持的已知约束2026-06-17-修复后)。
 
 ---
 
