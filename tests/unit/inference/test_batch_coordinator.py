@@ -33,6 +33,23 @@ def _make_result(request_id, output="ok"):
     )
 
 
+def _make_mock_engine_manager():
+    """创建模拟的 EngineManager"""
+    mock = MagicMock()
+    mock.generate = AsyncMock(return_value=[
+        InferenceResult(
+            request_id="mock",
+            outputs=["ok"],
+            prompt_tokens=1,
+            completion_tokens=1,
+            latency_ms=1,
+            finish_reason="stop",
+            metrics={},
+        )
+    ])
+    return mock
+
+
 class TestSharedBatchCoordinatorBasics:
     """SharedBatchCoordinator 基础功能测试"""
 
@@ -44,9 +61,11 @@ class TestSharedBatchCoordinatorBasics:
 
         vram = VRAMManager()
         config = DynamicBatchConfig()
+        engine_manager = _make_mock_engine_manager()
 
         coordinator = SharedBatchCoordinator(
             vram_manager=vram,
+            engine_manager=engine_manager,
             config=config,
         )
 
@@ -62,6 +81,7 @@ class TestSharedBatchCoordinatorBasics:
 
         coordinator = SharedBatchCoordinator(
             vram_manager=VRAMManager(),
+            engine_manager=_make_mock_engine_manager(),
             config=DynamicBatchConfig(),
         )
 
@@ -80,6 +100,7 @@ class TestModelAffinity:
 
         coordinator = SharedBatchCoordinator(
             vram_manager=VRAMManager(),
+            engine_manager=_make_mock_engine_manager(),
             config=DynamicBatchConfig(),
         )
 
@@ -101,6 +122,7 @@ class TestModelAffinity:
 
         coordinator = SharedBatchCoordinator(
             vram_manager=VRAMManager(),
+            engine_manager=_make_mock_engine_manager(),
             config=DynamicBatchConfig(),
         )
 
@@ -125,6 +147,7 @@ class TestBatchCoordinatorSubmission:
 
         coordinator = SharedBatchCoordinator(
             vram_manager=VRAMManager(),
+            engine_manager=_make_mock_engine_manager(),
             config=DynamicBatchConfig(),
         )
 
@@ -153,6 +176,7 @@ class TestBatchCoordinatorSubmission:
 
         coordinator = SharedBatchCoordinator(
             vram_manager=VRAMManager(),
+            engine_manager=_make_mock_engine_manager(),
             config=DynamicBatchConfig(),
         )
 
@@ -177,6 +201,7 @@ class TestGPUSelection:
 
         coordinator = SharedBatchCoordinator(
             vram_manager=VRAMManager(),
+            engine_manager=_make_mock_engine_manager(),
             config=DynamicBatchConfig(),
         )
 
@@ -199,6 +224,7 @@ class TestGPUSelection:
 
         coordinator = SharedBatchCoordinator(
             vram_manager=VRAMManager(),
+            engine_manager=_make_mock_engine_manager(),
             config=DynamicBatchConfig(),
         )
 
@@ -219,6 +245,7 @@ class TestBatchCoordinatorStats:
 
         coordinator = SharedBatchCoordinator(
             vram_manager=VRAMManager(),
+            engine_manager=_make_mock_engine_manager(),
             config=DynamicBatchConfig(),
         )
 
@@ -233,6 +260,7 @@ class TestBatchCoordinatorStats:
 
         coordinator = SharedBatchCoordinator(
             vram_manager=VRAMManager(),
+            engine_manager=_make_mock_engine_manager(),
             config=DynamicBatchConfig(),
         )
 

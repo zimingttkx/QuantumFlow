@@ -93,7 +93,8 @@ class TestGangCrossNodeAggregation:
         request = SchedulingRequest(
             request_id="cross-node",
             model="big-model",
-            model_config={"parameter_count": 50_000_000_000, "tensor_parallel": 4},
+            model_config={"parameter_count": 50_000_000_000,
+                "estimated_memory": 10 * 1024**3, "tensor_parallel": 4, "estimated_memory": 10 * 1024**3},
         )
 
         result = strategy.select_nodes(request, nodes)
@@ -118,7 +119,7 @@ class TestGangCrossNodeAggregation:
         request = SchedulingRequest(
             request_id="five-gpus",
             model="huge",
-            model_config={"parameter_count": 100_000_000_000, "tensor_parallel": 5},
+            model_config={"parameter_count": 100_000_000_000, "tensor_parallel": 5, "estimated_memory": 20 * 1024**3, "estimated_memory": 10 * 1024**3},
         )
 
         result = strategy.select_nodes(request, nodes)
@@ -152,6 +153,7 @@ class TestGangCrossNodeAggregation:
             model="big-model",
             model_config={
                 "parameter_count": 50_000_000_000,
+                "estimated_memory": 10 * 1024**3,
                 "tensor_parallel": 4,
                 "pipeline_parallel": 2,
             },
@@ -173,7 +175,8 @@ class TestGangCrossNodeAggregation:
         request = SchedulingRequest(
             request_id="timing-test",
             model="big-model",
-            model_config={"parameter_count": 50_000_000_000, "tensor_parallel": 4},
+            model_config={"parameter_count": 50_000_000_000,
+                "estimated_memory": 10 * 1024**3, "tensor_parallel": 4, "estimated_memory": 10 * 1024**3},
             max_tokens=2048,
             prompt_length=100,
         )
@@ -197,7 +200,8 @@ class TestGangCrossNodeAggregation:
         request = SchedulingRequest(
             request_id="mixed-health",
             model="big-model",
-            model_config={"parameter_count": 50_000_000_000, "tensor_parallel": 4},
+            model_config={"parameter_count": 50_000_000_000,
+                "estimated_memory": 10 * 1024**3, "tensor_parallel": 4, "estimated_memory": 10 * 1024**3},
         )
 
         result = strategy.select_nodes(request, nodes)
@@ -236,7 +240,8 @@ class TestGangCrossNodeAggregation:
         request = SchedulingRequest(
             request_id="skip-no-gpu",
             model="big-model",
-            model_config={"parameter_count": 50_000_000_000, "tensor_parallel": 4},
+            model_config={"parameter_count": 50_000_000_000,
+                "estimated_memory": 10 * 1024**3, "tensor_parallel": 4, "estimated_memory": 10 * 1024**3},
         )
 
         result = strategy.select_nodes(request, nodes)

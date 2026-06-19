@@ -40,6 +40,7 @@ from quantumflow.inference.engine import InferenceResult, QueuedRequest, Samplin
 from quantumflow.inference.priority_queue import PriorityQueue
 
 if TYPE_CHECKING:
+    from quantumflow.inference.engine_manager import EngineManager
     from quantumflow.inference.vram_manager import VRAMManager
 
 logger = structlog.get_logger().bind(component="batch_coordinator")
@@ -59,15 +60,21 @@ class SharedBatchCoordinator:
     def __init__(
         self,
         vram_manager: "VRAMManager",
+        engine_manager: "EngineManager",
         config: DynamicBatchConfig | None = None,
     ):
         """
         Args:
             vram_manager: VRAM 管理器
+            engine_manager: 推理引擎管理器（用于实际调度推理）
             config: 动态批处理配置
         """
         self._vram_manager = vram_manager
+        self._engine_manager = engine_manager
         self._config = config or DynamicBatchConfig()
+
+        # 调度唤醒事件：有新请求到达时通知调度器
+        self._wake_event = asyncio.Event()
 
         # 全局优先级队列
         self._global_queue: PriorityQueue[QueuedRequest] = PriorityQueue()
@@ -129,6 +136,9 @@ class SharedBatchCoordinator:
         # 加入全局队列
         await self._global_queue.put(request, priority=priority)
 
+        # 唤醒调度器
+        self._wake_event.set()
+
         # 确保调度任务在运行
         self._ensure_schedule_task()
 
@@ -137,7 +147,7 @@ class SharedBatchCoordinator:
 
         # 更新统计
         self.stats["total_requests"] += 1
-        if model_name not in self._model_affinity.values():
+        if model_name not in self._model_affinity:
             self.stats["total_models"] += 1
 
         # 等待结果
@@ -149,11 +159,16 @@ class SharedBatchCoordinator:
             self._schedule_task = asyncio.create_task(self._schedule_loop())
 
     async def _schedule_loop(self):
-        """调度循环"""
+        """调度循环（事件驱动，不再 busy-wait）"""
         while not self._shutting_down:
             try:
                 await self._schedule()
-                await asyncio.sleep(0.01)  # 10ms 调度间隔
+                # 等待新请求到达事件，超时 1 秒防止永久阻塞
+                try:
+                    await asyncio.wait_for(self._wake_event.wait(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    pass
+                self._wake_event.clear()
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -168,21 +183,21 @@ class SharedBatchCoordinator:
             scheduler = self._get_or_create_scheduler(gpu_id)
 
             # 计算该 GPU 的最优 batch size
-            pending_count = self._global_queue.qsize()
+            pending_count = await self._global_queue.size()
             batch_size = scheduler.compute_batch_size(pending_count)
 
-            if batch_size <= 0 or self._global_queue.empty():
+            if batch_size <= 0 or await self._global_queue.is_empty():
                 continue
 
             # 从队列取出请求
-            batch: list[QueuedRequest] = []
-            while len(batch) < batch_size and not self._global_queue.empty():
+            wrapper: list[QueuedRequest] = []
+            while len(wrapper) < batch_size and not await self._global_queue.is_empty():
                 request = await self._global_queue.get()
                 if request:
-                    batch.append(request)
+                    wrapper.append(request)
 
-            if batch:
-                await self._execute_batch(gpu_id, batch)
+            if wrapper:
+                await self._execute_batch(gpu_id, wrapper)
 
     async def _execute_batch(self, gpu_id: int, batch: list[QueuedRequest]):
         """
@@ -210,20 +225,35 @@ class SharedBatchCoordinator:
             elif request.priority >= 7:
                 self.stats["low_priority_starved"] += 1
 
-        # TODO: 实际执行时应该调用 engine_manager.generate()
-        # 目前模拟成功响应
-        for request in batch:
-            if request.future and not request.future.done():
-                result = InferenceResult(
-                    request_id=request.request_id,
-                    outputs=["shared_batch_result"],
-                    prompt_tokens=1,
-                    completion_tokens=1,
-                    latency_ms=1,
-                    finish_reason="stop",
-                    metrics={},
+        # 按模型分组调用 engine_manager.generate() 实际执行推理
+        for model_name, group_requests in model_groups.items():
+            prompts = [r.prompt for r in group_requests]
+            sampling_params_list = [r.sampling_params for r in group_requests]
+
+            try:
+                results: list[InferenceResult] = await self._engine_manager.generate(
+                    model_name=model_name,
+                    prompts=prompts,
+                    sampling_params_list=sampling_params_list,
+                    gpu_id=gpu_id,
                 )
-                request.future.set_result(result)
+            except Exception as e:
+                logger.error(
+                    "batch_generate_error",
+                    model_name=model_name,
+                    gpu_id=gpu_id,
+                    error=str(e),
+                )
+                # 失败时设置异常到所有 future
+                for request in group_requests:
+                    if request.future and not request.future.done():
+                        request.future.set_exception(e)
+                continue
+
+            # 将结果分发回各个 future
+            for request, result in zip(group_requests, results):
+                if request.future and not request.future.done():
+                    request.future.set_result(result)
 
         logger.info(
             "batch_executed",

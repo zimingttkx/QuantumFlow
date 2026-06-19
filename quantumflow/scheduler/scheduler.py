@@ -80,8 +80,8 @@ class Scheduler:
         self.node_update_callbacks: list[Callable] = []
 
         # 节点失败记录（用于隔离）
-        # node_id -> (failure_count, last_failure_at)
-        self._node_failures: dict[str, tuple[int, float]] = {}
+        # node_id -> list[float]  (最近 N 次失败的时间戳,滑动窗口)
+        self._node_failure_timestamps: dict[str, list[float]] = {}
         # 已隔离的节点：node_id -> quarantine_until_ts
         self._quarantined_nodes: dict[str, float] = {}
 
@@ -218,12 +218,34 @@ class Scheduler:
             return
 
         for request in requests_batch:
-            result = await self._schedule_request(request)
+            try:
+                result = await self._schedule_request(request)
 
-            if result.success:
-                await self._dispatch(request, result)
-            else:
-                await self._handle_scheduling_failure(request, result)
+                if result.success:
+                    await self._dispatch(request, result)
+                else:
+                    await self._handle_scheduling_failure(request, result)
+            except Exception as e:
+                # Bug fix (C-R3): 防止请求在 get_nowait 和 _schedule_request 之间
+                # 因异常丢失。重新入队并记录错误。
+                # Bug fix (C-R3 follow-up): 递增 retry_count 并检查 max_retries，
+                # 防止持久性错误导致无限重入队。
+                request.retry_count += 1
+                logger.error(
+                    "request_lost_on_exception",
+                    request_id=request.request_id,
+                    error=str(e),
+                    exc_type=type(e).__name__,
+                    retry_count=request.retry_count,
+                )
+                if request.retry_count < self.max_retries:
+                    self._request_counter += 1
+                    await self.pending_queue.put(
+                        (request.priority, request.created_at, self._request_counter, request)
+                    )
+                else:
+                    self.stats["failed_requests"] += 1
+                    self.stats["pending_requests"] -= 1
 
     # ------------------------------------------------------------------ 调度核心
 
@@ -272,8 +294,19 @@ class Scheduler:
             else int(request.model_config.get("estimated_memory", 0))
         )
         if per_gpu_mem == 0:
+            # Bug fix (H-R5): 优先使用 SchedulingRequest.estimated_memory_per_gpu_bytes
+            # 作为更好的估算（考虑量化、TP、KV cache），再回退到 16GB 兜底。
+            per_gpu_mem = request.estimated_memory_per_gpu_bytes
+        if per_gpu_mem == 0:
             # 兜底：每张卡按 16GB 预留（避免 0 字节预留导致重复调度）
             per_gpu_mem = 16 * 1024**3
+            logger.warning(
+                "per_gpu_memory_fallback_16gb",
+                request_id=request.request_id,
+                model=request.model,
+                parameter_count=request.parameter_count,
+                reason="No memory estimate available, using 16GB fallback",
+            )
 
         # 阶段1: 全部节点只 check,不 reserve
         # 记录待 reserve 的 (node, gpu_id) 列表,阶段2 统一处理
@@ -309,7 +342,7 @@ class Scheduler:
         ]
         for nid in expired:
             del self._quarantined_nodes[nid]
-            self._node_failures.pop(nid, None)
+            self._node_failure_timestamps.pop(nid, None)
             logger.info("node_released_from_quarantine", node_id=nid)
 
     def _filter_quarantined_nodes(
@@ -318,14 +351,21 @@ class Scheduler:
         return [n for n in nodes if n.node_id not in self._quarantined_nodes]
 
     def _record_node_failure(self, node_id: str, reason: str) -> bool:
-        """记录节点失败。返回 True 表示需要隔离。"""
+        """记录节点失败。返回 True 表示需要隔离。
+
+        Bug fix (M-R10): 使用滑动窗口替代硬窗口重置。
+        保留最近 N 次失败时间戳，统计 60s 窗口内的失败次数。
+        避免"每 61s 失败一次永不隔离"的问题。
+        """
         now = asyncio.get_event_loop().time()
-        count, last = self._node_failures.get(node_id, (0, 0.0))
-        # 60 秒窗口内累计
-        if now - last > 60.0:
-            count = 0
-        count += 1
-        self._node_failures[node_id] = (count, now)
+        timestamps = self._node_failure_timestamps.get(node_id, [])
+        # 追加当前失败时间戳
+        timestamps.append(now)
+        # 只保留最近 60s 窗口内的失败记录
+        window_start = now - 60.0
+        timestamps = [t for t in timestamps if t >= window_start]
+        self._node_failure_timestamps[node_id] = timestamps
+        count = len(timestamps)
         if count >= 3:
             self._quarantined_nodes[node_id] = now + self.failure_quarantine_seconds
             self.stats["quarantined_nodes"] = len(self._quarantined_nodes)
@@ -334,6 +374,7 @@ class Scheduler:
                 node_id=node_id,
                 quarantine_seconds=self.failure_quarantine_seconds,
                 reason=reason,
+                failure_count=count,
             )
             return True
         return False
@@ -581,7 +622,7 @@ class Scheduler:
         if node_id in self.available_nodes:
             node = self.available_nodes.pop(node_id)
             self._quarantined_nodes.pop(node_id, None)
-            self._node_failures.pop(node_id, None)
+            self._node_failure_timestamps.pop(node_id, None)
 
             logger.info("node_unregistered", node_id=node_id)
 

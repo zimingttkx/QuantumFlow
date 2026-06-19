@@ -425,6 +425,7 @@ class TestGangSchedulingStrategy:
             model_config={
                 "parameter_count": 72_000_000_000,
                 "tensor_parallel": 4,
+                "estimated_memory": 10 * 1024**3,  # per-GPU, fits in 14GB available
             },
         )
 
@@ -545,6 +546,7 @@ class TestPackSchedulingStrategy:
             model_config={
                 "parameter_count": 7_000_000_000,
                 "tensor_parallel": 1,
+                "estimated_memory": 10 * 1024**3,  # per-GPU, fits in 14GB available
             },
         )
 
@@ -562,6 +564,7 @@ class TestPackSchedulingStrategy:
             model_config={
                 "parameter_count": 7_000_000_000,
                 "tensor_parallel": 1,
+                "estimated_memory": 10 * 1024**3,  # per-GPU, fits in 14GB available
             },
         )
 
@@ -640,6 +643,7 @@ class TestAdaptiveSchedulingStrategy:
             model_config={
                 "parameter_count": 72_000_000_000,
                 "tensor_parallel": 4,
+                "estimated_memory": 10 * 1024**3,  # per-GPU, fits in 14GB available
             },
         )
 
@@ -656,6 +660,7 @@ class TestAdaptiveSchedulingStrategy:
             model_config={
                 "parameter_count": 7_000_000_000,
                 "tensor_parallel": 1,
+                "estimated_memory": 10 * 1024**3,  # per-GPU, fits in 14GB available
             },
         )
 

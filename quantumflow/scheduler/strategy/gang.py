@@ -57,12 +57,31 @@ class GangSchedulingStrategy(SchedulingStrategy):
         )
 
     def _per_gpu_memory_required(self, request: SchedulingRequest) -> int:
-        """读取 per-GPU 显存需求（字节）"""
+        """读取 per-GPU 显存需求（字节）
+
+        Bug fix (C-R4): 当 parameter_count==0 且 model_config 无 estimated_memory
+        时，per_gpu_mem 为 0，绕过所有显存检查。修复：使用
+        estimated_memory_per_gpu_bytes 作为回退，若仍为 0 则使用 2GB 最小兜底。
+        """
         # 优先用新字段估算
         if request.parameter_count > 0:
             return request.estimated_memory_per_gpu_bytes
         # 回退到老字段
-        return int(request.model_config.get("estimated_memory", 0))
+        mem = int(request.model_config.get("estimated_memory", 0))
+        if mem > 0:
+            return mem
+        # 回退到 estimated_memory_per_gpu_bytes（考虑量化、TP、KV cache）
+        mem = request.estimated_memory_per_gpu_bytes
+        if mem > 0:
+            return mem
+        # 最小兜底：2GB per GPU，避免 0 字节绕过所有显存检查
+        logger.warning(
+            "per_gpu_memory_fallback_2gb",
+            request_id=request.request_id,
+            model=request.model,
+            reason="No memory estimate available, using 2GB minimum per GPU",
+        )
+        return 2 * 1024**3
 
     def _gpu_matches_family(self, gpu, request: SchedulingRequest) -> bool:
         if not request.preferred_gpu_families:

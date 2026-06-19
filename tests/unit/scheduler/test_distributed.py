@@ -522,7 +522,12 @@ class TestProcessBatchFromRedis:
 
     @pytest.mark.asyncio
     async def test_batch_from_redis_success_path(self):
-        """On successful schedule, increments stats and dispatches (lines 220-221)."""
+        """On successful schedule, dispatches without premature stat increment.
+
+        Bug fix (C-R2): stats are now only updated based on final outcome from
+        worker response, not at scheduling time. _process_batch_from_redis no
+        longer increments successful_requests/failed_requests.
+        """
         ds = DistributedScheduler()
         ds.available_nodes["n1"] = _make_node("n1")
         ds._redis_queue = _make_mock_redis_queue()
@@ -540,12 +545,18 @@ class TestProcessBatchFromRedis:
 
         await ds._process_batch_from_redis()
 
-        assert ds.stats["successful_requests"] == initial_success + 1
+        # Stats are NOT incremented at scheduling time (Bug fix C-R2)
+        assert ds.stats["successful_requests"] == initial_success
         ds._dispatch.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_batch_from_redis_schedule_failure(self):
-        """When scheduling fails, calls _handle_scheduling_failure_redis."""
+        """When scheduling fails, calls _handle_scheduling_failure_redis.
+
+        Bug fix (C-R2): stats are no longer incremented at scheduling time.
+        _process_batch_from_redis delegates to _handle_scheduling_failure_redis
+        which handles stat updates.
+        """
         ds = DistributedScheduler()
         ds._redis_queue = _make_mock_redis_queue()
         ds._redis_queue.queue_size = AsyncMock(return_value=1)
@@ -561,7 +572,8 @@ class TestProcessBatchFromRedis:
         # No available nodes -> _schedule_request will fail
         await ds._process_batch_from_redis()
 
-        assert ds.stats["failed_requests"] == initial_failed + 1
+        # Stats are NOT incremented at scheduling time (Bug fix C-R2)
+        assert ds.stats["failed_requests"] == initial_failed
         ds._handle_scheduling_failure_redis.assert_called_once()
 
     @pytest.mark.asyncio

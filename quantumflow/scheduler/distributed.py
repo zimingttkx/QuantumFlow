@@ -356,6 +356,12 @@ class DistributedScheduler(Scheduler):
                     )
 
         # 回退到内存队列(Redis 不可用 / 失败 / 退避中)
+        # Bug fix (H-R7): 当因退避跳过 Redis 直接走内存队列时，并发计数器
+        # 已在 submit 开头原子自增，此处需回滚，避免计数器泄漏。
+        # 注意：redis_enqueue_failed 路径已在 line 342 回滚过，此处仅处理
+        # 退避路径（_in_backoff=True 且未尝试 Redis enqueue）。
+        if _in_backoff and new_count > 0:
+            await asyncio.to_thread(self._decrement_concurrent_requests, tenant_id)
         self.stats["pending_requests"] += 1
         priority = request.priority
         self._request_counter += 1
@@ -423,10 +429,8 @@ class DistributedScheduler(Scheduler):
             result = await self._schedule_request(request)
 
             if result.success:
-                self.stats["successful_requests"] += 1
                 await self._dispatch(request, result)
             else:
-                self.stats["failed_requests"] += 1
                 await self._handle_scheduling_failure_redis(request, result)
 
     async def _handle_scheduling_failure_redis(
@@ -466,7 +470,7 @@ class DistributedScheduler(Scheduler):
             self.stats["failed_requests"] += 1
             self.stats["pending_requests"] -= 1
             # 配额回收
-            self._decrement_concurrent_requests(tenant_id)
+            await asyncio.to_thread(self._decrement_concurrent_requests, tenant_id)
 
             # 存储错误结果
             await self._redis_queue.store_result(
@@ -475,10 +479,27 @@ class DistributedScheduler(Scheduler):
             )
 
     async def _dispatch(self, request: SchedulingRequest, result: SchedulingResult):
-        """分发请求到Worker（真实HTTP调用）"""
+        """分发请求到Worker（真实HTTP调用）
+
+        Bug fix (C-R1): 覆盖父类 _dispatch 但遗漏了 _reserve_for_request，
+        导致分布式模式下 GPU 可被超卖。修复：在发送前调用 _reserve_for_request，
+        在失败/错误路径调用 _release_for_request。
+        """
         request_id = request.request_id
 
-        # 更新运行状态
+        # 1. 预留 GPU 显存（原子，防止超卖）
+        reserved = self._reserve_for_request(request, result)
+        if not reserved:
+            logger.warning(
+                "reservation_failed_after_scheduling",
+                request_id=request_id,
+            )
+            await self._handle_dispatch_failure(
+                request, "GPU overcommitted (reservation failed)"
+            )
+            return
+
+        # 2. 更新运行状态
         self.running_requests[request_id] = QueueItem(
             request=request,
             scheduled_at=datetime.now(),
@@ -494,22 +515,24 @@ class DistributedScheduler(Scheduler):
             strategy=result.strategy_used,
         )
 
-        # 获取分配的Worker节点
+        # 3. 获取分配的Worker节点
         if not result.assigned_nodes:
             logger.error("no_nodes_assigned", request_id=request_id)
+            self._release_for_request(request_id)
             await self._handle_dispatch_failure(request, "No nodes assigned")
             return
 
-        # 选择第一个可用的Worker节点
+        # 4. 选择第一个可用的Worker节点
         node_id = result.assigned_nodes[0]
         worker_endpoint = await self._worker_registry.get_worker(node_id)
 
         if not worker_endpoint:
             logger.error("worker_not_found", request_id=request_id, node_id=node_id)
+            self._release_for_request(request_id)
             await self._handle_dispatch_failure(request, f"Worker {node_id} not found")
             return
 
-        # 构建采样参数
+        # 5. 构建采样参数
         metadata = getattr(request, "metadata", {}) or {}
         sampling_params = {
             "temperature": metadata.get("temperature", 0.7),
@@ -519,7 +542,7 @@ class DistributedScheduler(Scheduler):
             "repetition_penalty": metadata.get("repetition_penalty", 1.0),
         }
 
-        # 异步发送到Worker（不阻塞调度循环）
+        # 6. 异步发送到Worker（不阻塞调度循环）
         asyncio.create_task(self._send_to_worker(request, worker_endpoint, sampling_params))
 
     async def _send_to_worker(
@@ -568,8 +591,11 @@ class DistributedScheduler(Scheduler):
                     )
                 # 清理运行状态
                 self.running_requests.pop(request_id, None)
+                self.stats["successful_requests"] += 1
+                # 释放 GPU 预留
+                self._release_for_request(request_id)
                 # 配额回收
-                self._decrement_concurrent_requests(tenant_id)
+                await asyncio.to_thread(self._decrement_concurrent_requests, tenant_id)
             else:
                 error = response.get("error", "Unknown error")
                 logger.error(
@@ -589,19 +615,31 @@ class DistributedScheduler(Scheduler):
             await self._handle_dispatch_failure(request, str(e))
 
     async def _handle_dispatch_failure(self, request: SchedulingRequest, error: str):
-        """处理分发失败（重试或标记失败）"""
+        """处理分发失败（重试或标记失败）
+
+        Bug fix (M-R8): retry_count 从未在分布式分发路径中递增，
+        导致 _handle_dispatch_failure 永远读到 0，请求无限重试。
+        修复：在检查前递增 request.retry_count。
+
+        Bug fix (M-R9): 重新入队时未递增 pending_requests，
+        导致统计计数不准确。修复：入队时递增 pending_requests。
+        """
         request_id = request.request_id
         tenant_id = getattr(request, "tenant_id", "default")
-        retry_count = getattr(request, "retry_count", 0)
+        # Bug fix (M-R8): 递增 retry_count
+        request.retry_count += 1
+        retry_count = request.retry_count
 
         if retry_count < self.max_retries:
             logger.warning(
                 "dispatch_retry",
                 request_id=request_id,
                 error=error,
-                retry_count=retry_count + 1,
+                retry_count=retry_count,
             )
             # 重新入队等待重试
+            # 释放当前预留（重试时会重新 _reserve_for_request）
+            self._release_for_request(request_id)
             if self._redis_queue:
                 queued_request = QueuedRequest(
                     request_id=request.request_id,
@@ -609,9 +647,11 @@ class DistributedScheduler(Scheduler):
                     prompt=request.prompt,
                     priority=request.priority,
                     created_at=request.created_at,
-                    metadata={"retry_count": retry_count + 1},
+                    metadata={"retry_count": retry_count},
                 )
                 await self._redis_queue.requeue(queued_request)
+                # Bug fix (M-R9): 重新入队时递增 pending_requests
+                self.stats["pending_requests"] += 1
         else:
             logger.error(
                 "dispatch_failed",
@@ -628,8 +668,10 @@ class DistributedScheduler(Scheduler):
             # 清理运行状态
             self.running_requests.pop(request_id, None)
             self.stats["failed_requests"] += 1
+            # 释放 GPU 预留（Bug fix: 防止预留泄漏）
+            self._release_for_request(request_id)
             # 配额回收
-            self._decrement_concurrent_requests(tenant_id)
+            await asyncio.to_thread(self._decrement_concurrent_requests, tenant_id)
 
     # ==================== Worker 管理 ====================
 
@@ -736,7 +778,10 @@ async def init_scheduler(
 ) -> DistributedScheduler:
     """初始化调度器"""
     global _scheduler
-    _scheduler = DistributedScheduler(redis_url=redis_url)
+    _scheduler = DistributedScheduler(
+        default_strategy=default_strategy,
+        redis_url=redis_url,
+    )
     await _scheduler.start()
     return _scheduler
 

@@ -324,7 +324,11 @@ class TestGangContinueOnNoAvailableGpu:
 
         request = SchedulingRequest(
             request_id="r1", model="big-model",
-            model_config={"parameter_count": 50_000_000_000, "tensor_parallel": 4},
+            model_config={
+                "parameter_count": 50_000_000_000,
+                "tensor_parallel": 4,
+                "estimated_memory": 10 * 1024**3,  # per-GPU, fits in 14GB available
+            },
         )
 
         result = strategy.select_nodes(request, [node_full, node_avail])
@@ -362,7 +366,11 @@ class TestGangContinueOnNoAvailableGpu:
 
         request = SchedulingRequest(
             request_id="r1", model="big-model",
-            model_config={"parameter_count": 50_000_000_000, "tensor_parallel": 3},
+            model_config={
+                "parameter_count": 50_000_000_000,
+                "tensor_parallel": 3,
+                "estimated_memory": 10 * 1024**3,  # per-GPU, fits in 14GB available
+            },
         )
 
         result = strategy.select_nodes(request, [node_full, node_half, node_avail])
