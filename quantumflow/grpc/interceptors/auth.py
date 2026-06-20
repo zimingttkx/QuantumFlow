@@ -7,6 +7,8 @@
 - 过期 token 支持
 """
 
+import threading
+import time
 from typing import Callable, Dict, Optional, Set
 
 import grpc
@@ -60,12 +62,25 @@ class AuthInterceptor(grpc.ServerInterceptor):
         if not self._validate_token(token):
             # 认证失败
             if self.require_auth_for_all:
-                raise grpc.RpcError(
+                return self._create_aborting_handler(
                     grpc.StatusCode.UNAUTHENTICATED,
                     "Invalid or missing authentication credentials",
                 )
 
         return continuation(handler_call_details)
+
+    def _create_aborting_handler(
+        self, status_code: grpc.StatusCode, details: str
+    ) -> grpc.RpcMethodHandler:
+        """创建一个会中止调用的 RpcMethodHandler"""
+        def aborting_handler(request, context):
+            context.abort(status_code, details)
+
+        return grpc.unary_unary_rpc_method_handler(
+            aborting_handler,
+            request_deserializer=None,
+            response_serializer=None,
+        )
 
     def _get_method_name(self, handler_call_details: grpc.HandlerCallDetails) -> str:
         """获取方法名"""
@@ -155,9 +170,6 @@ class TokenBucket:
         Returns:
             True 如果获取成功，False 如果令牌不足
         """
-        import threading
-        import time
-
         with self._lock:
             self._refill()
             if self._tokens >= tokens:
@@ -167,8 +179,6 @@ class TokenBucket:
 
     def _refill(self) -> None:
         """补充令牌"""
-        import time
-
         now = time.monotonic()
         elapsed = now - self._last_refill
         tokens_to_add = elapsed * self.refill_rate
@@ -178,13 +188,6 @@ class TokenBucket:
     @property
     def available_tokens(self) -> float:
         """获取当前可用令牌数"""
-        import threading
-        import time
-
         with self._lock:
             self._refill()
             return self._tokens
-
-
-import threading
-import time

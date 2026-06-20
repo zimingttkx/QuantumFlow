@@ -118,8 +118,9 @@ class RateLimitInterceptor(grpc.ServerInterceptor):
 
     def _get_bucket_for_method(self, method_name: str) -> TokenBucket:
         """获取方法对应的令牌桶"""
-        if method_name in self._method_buckets:
-            return self._method_buckets[method_name]
+        with self._lock:
+            if method_name in self._method_buckets:
+                return self._method_buckets[method_name]
 
         # 方法特定的配置优先
         if method_name in self.methods:

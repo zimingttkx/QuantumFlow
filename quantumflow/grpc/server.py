@@ -51,6 +51,7 @@ class GrpcServer:
         self._interceptors: List[grpc.ServerInterceptor] = []
         self._lock = threading.Lock()
         self._started: bool = False
+        self._atexit_registered: bool = False
 
         # 创建服务器
         self._create_server()
@@ -237,7 +238,9 @@ class GrpcServer:
             print(f"gRPC server started on port {self.port}")
 
             # 注册关闭钩子
-            atexit.register(self.stop)
+            if not self._atexit_registered:
+                atexit.register(self.stop)
+                self._atexit_registered = True
 
     def _register_services(self) -> None:
         """注册所有服务到服务器"""
@@ -291,6 +294,7 @@ class GrpcServer:
             if self._server is not None:
                 self._server.stop(grace=grace)
                 self._server = None
+                self._started = False
                 print("gRPC server stopped")
 
     def wait_for_termination(self) -> None:
@@ -358,7 +362,8 @@ class GrpcServerManager:
         Returns:
             GrpcServer 实例或 None
         """
-        return self._servers.get(name)
+        with self._lock:
+            return self._servers.get(name)
 
     def start_server(self, name: str) -> None:
         """启动服务器
@@ -366,7 +371,8 @@ class GrpcServerManager:
         Args:
             name: 服务器名称
         """
-        server = self.get_server(name)
+        with self._lock:
+            server = self._servers.get(name)
         if server is None:
             raise ValueError(f"Server '{name}' not found")
         server.start()
@@ -378,7 +384,8 @@ class GrpcServerManager:
             name: 服务器名称
             grace: 优雅关闭等待时间
         """
-        server = self.get_server(name)
+        with self._lock:
+            server = self._servers.get(name)
         if server is not None:
             server.stop(grace=grace)
 

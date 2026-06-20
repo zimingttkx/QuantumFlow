@@ -49,7 +49,7 @@ class SchedulerClient:
         Returns:
             SchedulingResponse 消息
         """
-        timeout = timeout or self.timeout
+        timeout = timeout if timeout is not None else self.timeout
         return self._stub.SubmitRequest(request, timeout=timeout)
 
     def cancel(
@@ -66,7 +66,7 @@ class SchedulerClient:
         Returns:
             CancelResponse 消息
         """
-        timeout = timeout or self.timeout
+        timeout = timeout if timeout is not None else self.timeout
         return self._stub.Cancel(request, timeout=timeout)
 
     def get_status(
@@ -83,7 +83,7 @@ class SchedulerClient:
         Returns:
             GetSchedulingStatusResponse 消息
         """
-        timeout = timeout or self.timeout
+        timeout = timeout if timeout is not None else self.timeout
         return self._stub.GetStatus(request, timeout=timeout)
 
     def cancel_stream(
@@ -100,7 +100,7 @@ class SchedulerClient:
         Returns:
             CancelResponse 消息迭代器
         """
-        timeout = timeout or self.timeout
+        timeout = timeout if timeout is not None else self.timeout
         return self._stub.CancelRequestStream(request_iterator, timeout=timeout)
 
     def close(self) -> None:

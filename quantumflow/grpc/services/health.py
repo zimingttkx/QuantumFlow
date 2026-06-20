@@ -5,6 +5,7 @@
 - 流式健康监控 (Watch)
 """
 
+import threading
 import time
 from typing import Iterator
 
@@ -29,6 +30,7 @@ class HealthServiceServicer(BaseService, quantumflow_pb2_grpc.HealthServiceServi
         super().__init__(engine_manager=engine_manager, cluster_manager=cluster_manager)
         self._healthy = True
         self._status = "OK"
+        self._health_lock = threading.Lock()
 
     def Check(
         self,
@@ -45,6 +47,8 @@ class HealthServiceServicer(BaseService, quantumflow_pb2_grpc.HealthServiceServi
             HealthCheckResponse 消息
         """
         details = {}
+        healthy = True
+        status = "OK"
 
         # 检查各组件健康状态
         if self.engine_manager:
@@ -53,8 +57,8 @@ class HealthServiceServicer(BaseService, quantumflow_pb2_grpc.HealthServiceServi
                 details["engine_manager"] = "OK"
             except Exception as e:
                 details["engine_manager"] = f"ERROR: {str(e)}"
-                self._healthy = False
-                self._status = "DEGRADED"
+                healthy = False
+                status = "DEGRADED"
 
         if self.cluster_manager:
             try:
@@ -62,20 +66,24 @@ class HealthServiceServicer(BaseService, quantumflow_pb2_grpc.HealthServiceServi
                 details["cluster_manager"] = "OK"
             except Exception as e:
                 details["cluster_manager"] = f"ERROR: {str(e)}"
-                self._healthy = False
-                self._status = "DEGRADED"
+                healthy = False
+                status = "DEGRADED"
 
         # 检查指定服务
         if request.service and request.service != "all":
             service_status = self._check_service(request.service)
             details[request.service] = service_status
             if service_status != "OK":
-                self._healthy = False
-                self._status = "DEGRADED"
+                healthy = False
+                status = "DEGRADED"
+
+        with self._health_lock:
+            self._healthy = healthy
+            self._status = status
 
         return quantumflow_pb2.HealthCheckResponse(
-            healthy=self._healthy,
-            status=self._status,
+            healthy=healthy,
+            status=status,
             details=details,
         )
 
@@ -98,7 +106,7 @@ class HealthServiceServicer(BaseService, quantumflow_pb2_grpc.HealthServiceServi
             yield response
 
             # 等待 5 秒再发送下一个
-            time.sleep(5)
+            context.cancel_event.wait(5)
 
     def set_healthy(self, healthy: bool, status: str = None) -> None:
         """设置健康状态
@@ -107,13 +115,14 @@ class HealthServiceServicer(BaseService, quantumflow_pb2_grpc.HealthServiceServi
             healthy: 是否健康
             status: 状态描述
         """
-        self._healthy = healthy
-        if status:
-            self._status = status
-        elif not healthy:
-            self._status = "UNHEALTHY"
-        else:
-            self._status = "OK"
+        with self._health_lock:
+            self._healthy = healthy
+            if status:
+                self._status = status
+            elif not healthy:
+                self._status = "UNHEALTHY"
+            else:
+                self._status = "OK"
 
     def _check_service(self, service: str) -> str:
         """检查指定服务

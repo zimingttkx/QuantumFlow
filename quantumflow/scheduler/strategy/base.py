@@ -187,6 +187,21 @@ class NodeResource:
     status: str
     gpu_count: int
     gpus: list[GPUResource]
+
+    def __post_init__(self):
+        """Validate that gpu_count matches len(gpus), autocorrect if it doesn't."""
+        actual = len(self.gpus)
+        if self.gpu_count != actual:
+            if self.gpu_count == 0:
+                # gpu_count was not explicitly set; derive from gpus list
+                object.__setattr__(self, 'gpu_count', actual)
+            elif actual == 0:
+                # gpus list is empty; trust gpu_count (node may not have reported GPUs yet)
+                pass
+            else:
+                # Both are non-zero but disagree — trust the gpus list
+                object.__setattr__(self, 'gpu_count', actual)
+
     cpu_count: int
     memory_total: int
     memory_available: int
@@ -319,7 +334,8 @@ class NodeResource:
 
         # 新 API 路径
         assert isinstance(required_memory_per_gpu_bytes, (int, type(None)))
-        required_memory_per_gpu_bytes = required_memory_per_gpu_bytes or 0
+        if required_memory_per_gpu_bytes is None:
+            required_memory_per_gpu_bytes = 0
         if required_memory_per_gpu_bytes == 0 or required_gpus == 0:
             return False
         if len(self.available_gpus) < required_gpus:

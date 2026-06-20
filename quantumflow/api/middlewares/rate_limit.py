@@ -136,18 +136,24 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         burst: int = 200,
         per_endpoint: bool = False,
         per_tenant: bool = False,
+        max_endpoint_buckets: int = 1000,
     ):
         super().__init__(app)
         self.per_endpoint = per_endpoint
         self.per_tenant = per_tenant
         self.bucket = TokenBucket(capacity=burst, refill_rate=float(qps))
         self.endpoint_buckets: dict[str, TokenBucket] = {}
+        self._max_endpoint_buckets = max_endpoint_buckets
 
     def _get_bucket(self, path: str) -> TokenBucket:
         """获取对应端点的令牌桶"""
         if not self.per_endpoint:
             return self.bucket
         if path not in self.endpoint_buckets:
+            # Evict oldest entry if at capacity to prevent unbounded growth
+            if len(self.endpoint_buckets) >= self._max_endpoint_buckets:
+                oldest = next(iter(self.endpoint_buckets))
+                del self.endpoint_buckets[oldest]
             self.endpoint_buckets[path] = TokenBucket(
                 capacity=self.bucket.capacity,
                 refill_rate=self.bucket.refill_rate,
@@ -166,7 +172,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 allowed = _global_limiter.check_limit(
                     tenant.id,
                     qps=tenant.quota.requests_per_minute,
-                    burst=tenant.quota.concurrent_requests
+                    burst=max(tenant.quota.concurrent_requests, tenant.quota.requests_per_minute)
                 )
                 if not allowed:
                     return JSONResponse(

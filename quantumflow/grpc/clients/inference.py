@@ -49,7 +49,7 @@ class InferenceClient:
         Returns:
             InferenceResponse 消息
         """
-        timeout = timeout or self.timeout
+        timeout = timeout if timeout is not None else self.timeout
         return self._stub.Inference(request, timeout=timeout)
 
     def inference_stream(
@@ -66,7 +66,7 @@ class InferenceClient:
         Returns:
             InferenceResponse 消息迭代器
         """
-        timeout = timeout or self.timeout
+        timeout = timeout if timeout is not None else self.timeout
         return self._stub.InferenceStream(request, timeout=timeout)
 
     def batch_inference(
@@ -83,7 +83,7 @@ class InferenceClient:
         Returns:
             BatchInferenceResponse 消息
         """
-        timeout = timeout or self.timeout
+        timeout = timeout if timeout is not None else self.timeout
         return self._stub.BatchInference(request, timeout=timeout)
 
     def close(self) -> None:

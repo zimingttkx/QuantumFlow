@@ -49,7 +49,7 @@ class ClusterClient:
         Returns:
             RegisterNodeResponse 消息
         """
-        timeout = timeout or self.timeout
+        timeout = timeout if timeout is not None else self.timeout
         return self._stub.RegisterNode(request, timeout=timeout)
 
     def deregister_node(
@@ -66,7 +66,7 @@ class ClusterClient:
         Returns:
             DeregisterNodeResponse 消息
         """
-        timeout = timeout or self.timeout
+        timeout = timeout if timeout is not None else self.timeout
         return self._stub.DeregisterNode(request, timeout=timeout)
 
     def heartbeat(
@@ -83,7 +83,7 @@ class ClusterClient:
         Returns:
             HeartbeatResponse 消息
         """
-        timeout = timeout or self.timeout
+        timeout = timeout if timeout is not None else self.timeout
         return self._stub.Heartbeat(request, timeout=timeout)
 
     def list_nodes(
@@ -100,7 +100,7 @@ class ClusterClient:
         Returns:
             ListNodesResponse 消息
         """
-        timeout = timeout or self.timeout
+        timeout = timeout if timeout is not None else self.timeout
         return self._stub.ListNodes(request, timeout=timeout)
 
     def update_node_resources_stream(
@@ -117,7 +117,7 @@ class ClusterClient:
         Returns:
             NodeResources 消息迭代器
         """
-        timeout = timeout or self.timeout
+        timeout = timeout if timeout is not None else self.timeout
         return self._stub.UpdateNodeResources(request_iterator, timeout=timeout)
 
     def close(self) -> None:

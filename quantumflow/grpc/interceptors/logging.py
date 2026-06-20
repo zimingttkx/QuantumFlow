@@ -12,14 +12,13 @@ import time
 from typing import Callable, Dict, Optional
 
 import grpc
-from grpc import aio
 
 from quantumflow.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
-class LoggingInterceptor(aio.ServerInterceptor):
+class LoggingInterceptor(grpc.ServerInterceptor):
     """日志拦截器 - 记录所有 gRPC 调用
 
     功能:
@@ -48,7 +47,7 @@ class LoggingInterceptor(aio.ServerInterceptor):
         self.include_metadata = include_metadata
         self.include_call_duration = include_call_duration
 
-    async def intercept_service(
+    def intercept_service(
         self,
         continuation: Callable,
         handler_call_details: grpc.HandlerCallDetails,
@@ -82,7 +81,7 @@ class LoggingInterceptor(aio.ServerInterceptor):
 
         try:
             # 执行调用
-            response = await continuation(handler_call_details)
+            response = continuation(handler_call_details)
             duration = time.perf_counter() - start_time
 
             # 记录成功

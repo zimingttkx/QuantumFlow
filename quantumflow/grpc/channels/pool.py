@@ -193,8 +193,7 @@ class GrpcChannelPool:
             to_remove = []
             for target, channel in self._channels.items():
                 if now - channel.last_used > self.max_idle_seconds:
-                    if not channel.is_alive():
-                        to_remove.append(target)
+                    to_remove.append(target)
 
             for target in to_remove:
                 self._channels[target].close()
