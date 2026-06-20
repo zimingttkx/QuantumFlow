@@ -354,11 +354,21 @@ class ClusterManager:
             ]
 
         # 过滤掉 GPU 显存剩余 < 10% 的节点（与 scheduler 保持一致）
-        healthy_nodes = [n for n in healthy_nodes if any(g.memory_free_percent > 0.1 for g in n.gpu_info)]
+        healthy_nodes = [
+            n for n in healthy_nodes
+            if any(
+                (g.memory_total - g.memory_used) / g.memory_total > 0.1
+                if g.memory_total > 0 else False
+                for g in n.gpu_info
+            )
+        ]
 
         # 按 (可用 GPU 数, 真实负载升序) 排序
         def node_score(n: Node) -> tuple:
-            available = sum(1 for g in n.gpu_info if g.memory_free_percent > 0.1)
+            available = sum(
+                1 for g in n.gpu_info
+                if g.memory_total > 0 and (g.memory_total - g.memory_used) / g.memory_total > 0.1
+            )
             return (available, -n._compute_load())
 
         sorted_nodes = sorted(healthy_nodes, key=node_score, reverse=True)
@@ -370,7 +380,10 @@ class ClusterManager:
             if remaining_gpus <= 0:
                 break
 
-            available = sum(1 for g in node.gpu_info if g.memory_free_percent > 0.1)
+            available = sum(
+                1 for g in node.gpu_info
+                if g.memory_total > 0 and (g.memory_total - g.memory_used) / g.memory_total > 0.1
+            )
             if available > 0:
                 selected.append(node)
                 remaining_gpus -= available

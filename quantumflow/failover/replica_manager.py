@@ -609,7 +609,7 @@ class ReplicaManager:
             # 需要添加的节点
             nodes_to_add = all_node_ids - current_replicas
             nodes_to_add = list(nodes_to_add)[
-                : target_count - len(current_replicas) + 1
+                : target_count - len(current_replicas)
             ]
 
             # 添加副本

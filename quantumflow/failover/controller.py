@@ -261,6 +261,7 @@ class FailoverController:
                     target_node = await self._failover_model(model_name, failed_node_id)
                     if target_node:
                         failover_event.target_node = target_node
+                        failover_event.target_nodes[model_name] = target_node
                 except Exception as e:
                     logger.error(
                         "model_failover_failed",
@@ -490,8 +491,7 @@ class FailoverController:
             是否成功
         """
         if self._failover_policy.require_manual_confirmation:
-            logger.warning("manual_confirmation_required")
-            return False
+            logger.info("manual_failover_confirmation_received")
 
         # 获取故障节点上的模型
         failed_node = await self._cluster_manager.get_node(failed_node_id)

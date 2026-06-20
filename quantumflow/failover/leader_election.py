@@ -266,7 +266,6 @@ class LeaderElection:
         )
         self._is_leader = True
         self._is_candidate = False
-        self._lock_acquired = True
 
         # 更新状态存储中的 Leader 信息
         await self._state_store.set_leader(self._node_id, self._current_term)

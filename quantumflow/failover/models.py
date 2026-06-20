@@ -130,10 +130,11 @@ class FailoverEvent:
     event_id: str
     event_type: str  # node_fail, gpu_fail, model_fail, timeout, manual
     source_node: str
-    target_node: str | None
-    reason: str
-    timestamp: datetime
-    success: bool
+    target_node: str | None = None
+    target_nodes: dict[str, str] = field(default_factory=dict)
+    reason: str = ""
+    timestamp: datetime | None = None
+    success: bool = False
     details: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -143,6 +144,7 @@ class FailoverEvent:
             "event_type": self.event_type,
             "source_node": self.source_node,
             "target_node": self.target_node,
+            "target_nodes": self.target_nodes,
             "reason": self.reason,
             "timestamp": self.timestamp.isoformat(),
             "success": self.success,
@@ -157,6 +159,7 @@ class FailoverEvent:
             event_type=data["event_type"],
             source_node=data["source_node"],
             target_node=data.get("target_node"),
+            target_nodes=data.get("target_nodes", {}),
             reason=data["reason"],
             timestamp=datetime.fromisoformat(data["timestamp"]),
             success=data["success"],
