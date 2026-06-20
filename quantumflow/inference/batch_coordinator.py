@@ -227,33 +227,26 @@ class SharedBatchCoordinator:
 
         # 按模型分组调用 engine_manager.generate() 实际执行推理
         for model_name, group_requests in model_groups.items():
-            prompts = [r.prompt for r in group_requests]
-            sampling_params_list = [r.sampling_params for r in group_requests]
-
-            try:
-                results: list[InferenceResult] = await self._engine_manager.generate(
-                    model_name=model_name,
-                    prompts=prompts,
-                    sampling_params_list=sampling_params_list,
-                    gpu_id=gpu_id,
-                )
-            except Exception as e:
-                logger.error(
-                    "batch_generate_error",
-                    model_name=model_name,
-                    gpu_id=gpu_id,
-                    error=str(e),
-                )
-                # 失败时设置异常到所有 future
-                for request in group_requests:
+            for request in group_requests:
+                try:
+                    results: list[InferenceResult] = await self._engine_manager.generate(
+                        model_name=model_name,
+                        prompts=[request.prompt],
+                        sampling_params=request.sampling_params,
+                    )
+                    # 将结果分发回对应的 future
+                    if request.future and not request.future.done():
+                        request.future.set_result(results[0])
+                except Exception as e:
+                    logger.error(
+                        "batch_generate_error",
+                        model_name=model_name,
+                        gpu_id=gpu_id,
+                        error=str(e),
+                    )
+                    # 失败时设置异常到该请求的 future
                     if request.future and not request.future.done():
                         request.future.set_exception(e)
-                continue
-
-            # 将结果分发回各个 future
-            for request, result in zip(group_requests, results):
-                if request.future and not request.future.done():
-                    request.future.set_result(result)
 
         logger.info(
             "batch_executed",

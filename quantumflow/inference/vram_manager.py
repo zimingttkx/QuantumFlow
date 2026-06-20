@@ -353,11 +353,16 @@ class VRAMManager:
             info.in_use = False
 
     def update_actual_vram(self, model_name: str):
-        """推理完成后，从GPU读取实际VRAM占用并更新记录"""
+        """推理完成后，从GPU读取实际VRAM占用并更新记录。
+
+        注意：这里记录的是当前 GPU 总已用 VRAM（包含所有已加载模型），
+        而非单个模型的增量 VRAM。如需精确的模型级增量，应在加载前后
+        分别采样并计算差值。
+        """
         info = self._loaded.get(model_name)
         if info is None:
             return
-        # 读取加载前后的GPU显存差
+        # 读取当前 GPU 总已用 VRAM
         info.actual_vram_gb = self._read_used_vram_gb()
         logger.info(
             "vram_actual_updated",
