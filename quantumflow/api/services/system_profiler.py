@@ -356,6 +356,8 @@ def _estimate_params_from_name(name: str) -> int:
         ("1b", 1_000_000_000),
         ("0.5b", 500_000_000),
     ]
+    # Sort by pattern length descending so "1.5b" matches before "1b"
+    patterns.sort(key=lambda x: len(x[0]), reverse=True)
     for pattern, count in patterns:
         if pattern in name:
             return count

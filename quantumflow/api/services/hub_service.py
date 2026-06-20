@@ -1,5 +1,6 @@
 """HuggingFace Hub服务 - 模型发现、搜索、验证、下载"""
 
+import asyncio
 import json
 import os
 
@@ -67,7 +68,8 @@ async def get_trending_models(limit: int = 30, filter_params: dict = None) -> li
     """
     filter_params = filter_params or {}
     try:
-        models_iter = list_models(
+        models_iter = await asyncio.to_thread(
+            list_models,
             pipeline_tag="text-generation",
             sort="downloads",
             limit=limit * 3,  # 多取一些做过滤
@@ -113,7 +115,8 @@ async def search_models(query: str, limit: int = 20) -> list[dict]:
         匹配的模型列表
     """
     try:
-        models_iter = list_models(
+        models_iter = await asyncio.to_thread(
+            list_models,
             search=query,
             sort="downloads",
             limit=limit,
@@ -152,7 +155,7 @@ async def validate_model(model_id: str) -> dict:
         }
     """
     try:
-        info = model_info(model_id, files_metadata=False)
+        info = await asyncio.to_thread(model_info, model_id, files_metadata=False)
         return {
             "valid": True,
             "model_id": model_id,
@@ -338,25 +341,27 @@ def _estimate_params(info) -> int:
     model_id_lower = model_id.lower()
 
     param_patterns = [
+        ("405b", 405_000_000_000),
+        ("180b", 180_000_000_000),
+        ("72b", 72_000_000_000),
+        ("70b", 70_000_000_000),
+        ("65b", 65_000_000_000),
+        ("40b", 40_000_000_000),
+        ("34b", 34_000_000_000),
+        ("20b", 20_000_000_000),
+        ("14b", 14_000_000_000),
+        ("13b", 13_000_000_000),
+        ("11b", 11_000_000_000),
+        ("9b", 9_000_000_000),
         ("8b", 8_000_000_000),
         ("7b", 7_000_000_000),
-        ("13b", 13_000_000_000),
-        ("70b", 70_000_000_000),
-        ("72b", 72_000_000_000),
-        ("34b", 34_000_000_000),
         ("3b", 3_000_000_000),
-        ("1b", 1_000_000_000),
         ("1.5b", 1_500_000_000),
+        ("1b", 1_000_000_000),
         ("0.5b", 500_000_000),
-        ("14b", 14_000_000_000),
-        ("40b", 40_000_000_000),
-        ("65b", 65_000_000_000),
-        ("180b", 180_000_000_000),
-        ("405b", 405_000_000_000),
-        ("20b", 20_000_000_000),
-        ("9b", 9_000_000_000),
-        ("11b", 11_000_000_000),
     ]
+    # Sort by pattern length descending so "1.5b" matches before "1b"
+    param_patterns.sort(key=lambda x: len(x[0]), reverse=True)
 
     for pattern, count in param_patterns:
         if pattern in model_id_lower:

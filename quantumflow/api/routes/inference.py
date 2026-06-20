@@ -1,6 +1,7 @@
 """推理路由"""
 
 import asyncio
+import threading
 import time
 from collections.abc import AsyncIterator
 from datetime import datetime
@@ -39,9 +40,25 @@ router = APIRouter(prefix="/inference", tags=["Inference"])
 
 # 模拟请求ID生成
 _request_counter = 0
+_request_counter_lock = threading.Lock()
 
 # 分布式调度器单例
 _scheduler: DistributedScheduler | None = None
+
+# 共享 RedisQueue 实例（避免每次请求重复创建连接）
+_shared_redis_queue: RedisQueue | None = None
+_shared_redis_queue_lock = threading.Lock()
+
+
+async def _get_shared_redis_queue() -> RedisQueue:
+    """获取或创建共享 RedisQueue 实例"""
+    global _shared_redis_queue
+    if _shared_redis_queue is None:
+        with _shared_redis_queue_lock:
+            if _shared_redis_queue is None:
+                _shared_redis_queue = RedisQueue()
+                await _shared_redis_queue.connect()
+    return _shared_redis_queue
 
 
 def _get_scheduler() -> DistributedScheduler:
@@ -147,41 +164,35 @@ async def _distributed_generate(
     await scheduler.submit(scheduling_request)
 
     # 等待结果（从Redis队列获取）
-    redis_mgr = await get_redis_manager()
-    redis_queue = RedisQueue()
-    await redis_queue.connect()
+    redis_queue = await _get_shared_redis_queue()
 
-    try:
-        start_time = time.time()
-        timeout_s = timeout_ms / 1000.0
+    start_time = time.time()
+    timeout_s = timeout_ms / 1000.0
 
-        while time.time() - start_time < timeout_s:
-            result = await redis_queue.get_result(request_id)
-            if result:
-                if result.get("status") == "success":
-                    r = result.get("result", {})
-                    return InferenceResponse(
-                        request_id=request_id,
-                        model=model_name,
-                        prompt=prompt,
-                        generated_text=r.get("generated_text", ""),
-                        finish_reason=r.get("finish_reason", "stop"),
-                        latency_ms=result.get("latency_ms", 0),
-                        usage={
-                            "prompt_tokens": r.get("prompt_tokens", 0),
-                            "completion_tokens": r.get("completion_tokens", 0),
-                            "total_tokens": r.get("total_tokens", 0),
-                        },
-                    )
-                else:
-                    raise InferenceError(result.get("reason", "Unknown error"))
-            await asyncio.sleep(0.1)
+    while time.time() - start_time < timeout_s:
+        result = await redis_queue.get_result(request_id)
+        if result:
+            if result.get("status") == "success":
+                r = result.get("result", {})
+                return InferenceResponse(
+                    request_id=request_id,
+                    model=model_name,
+                    prompt=prompt,
+                    generated_text=r.get("generated_text", ""),
+                    finish_reason=r.get("finish_reason", "stop"),
+                    latency_ms=result.get("latency_ms", 0),
+                    usage={
+                        "prompt_tokens": r.get("prompt_tokens", 0),
+                        "completion_tokens": r.get("completion_tokens", 0),
+                        "total_tokens": r.get("total_tokens", 0),
+                    },
+                )
+            else:
+                raise InferenceError(result.get("reason", "Unknown error"))
+        await asyncio.sleep(0.1)
 
-        # 超时
-        raise InferenceError(f"Request timeout after {timeout_ms}ms")
-
-    finally:
-        await redis_queue.disconnect()
+    # 超时
+    raise InferenceError(f"Request timeout after {timeout_ms}ms")
 
 
 async def _ensure_model_loaded(model_name: str, start_time: float) -> tuple[bool, str]:
@@ -201,8 +212,9 @@ async def _ensure_model_loaded(model_name: str, start_time: float) -> tuple[bool
 def _generate_request_id() -> str:
     """生成请求ID"""
     global _request_counter
-    _request_counter += 1
-    return f"req_{_request_counter:08d}"
+    with _request_counter_lock:
+        _request_counter += 1
+        return f"req_{_request_counter:08d}"
 
 
 def _convert_sampling_params(request: InferenceRequest) -> SamplingParams:
@@ -247,18 +259,9 @@ async def generate(request: InferenceRequest) -> InferenceResponse:
         if not engine_manager.is_model_loaded(request.model):
             ok, err = await _ensure_model_loaded(request.model, start_time)
             if not ok:
-                return InferenceResponse(
-                    request_id=request_id,
-                    model=request.model,
-                    prompt=request.prompt,
-                    generated_text=f"[模型加载失败] {err}\n\n用户输入: {request.prompt}",
-                    finish_reason="error",
-                    latency_ms=(time.time() - start_time) * 1000,
-                    usage={
-                        "prompt_tokens": len(request.prompt) // 4,
-                        "completion_tokens": 0,
-                        "total_tokens": len(request.prompt) // 4,
-                    },
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={"error": {"code": "MODEL_NOT_LOADED", "message": err}},
                 )
 
         sampling_params = _convert_sampling_params(request)
@@ -411,33 +414,10 @@ async def batch_generate(request: BatchInferenceRequest) -> BatchInferenceRespon
     if not engine_manager.is_model_loaded(request.model):
         ok, err = await _ensure_model_loaded(request.model, time.time())
         if not ok:
-            mock_results = []
-            for i, prompt in enumerate(request.prompts):
-                mock_results.append(
-                    InferenceResponse(
-                        request_id=f"{batch_id}_{i}",
-                        model=request.model,
-                        prompt=prompt,
-                        generated_text=f"[模型加载失败] {err}\n\n用户输入: {prompt}",
-                        finish_reason="error",
-                        latency_ms=0,
-                        usage={
-                            "prompt_tokens": len(prompt) // 4,
-                            "completion_tokens": 0,
-                            "total_tokens": len(prompt) // 4,
-                        },
-                    )
-                )
-        return BatchInferenceResponse(
-            batch_id=batch_id,
-            model=request.model,
-            total=len(request.prompts),
-            completed=0,  # 所有请求都失败了，没有成功完成
-            failed=len(request.prompts),
-            results=mock_results,
-            total_latency_ms=0,
-            avg_latency_ms=0,
-        )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"error": {"code": "MODEL_NOT_LOADED", "message": err}},
+            )
 
     # 从请求中提取采样参数
     req_sampling = request.sampling_params
@@ -714,8 +694,8 @@ async def batch_submit_to_queue(
                     model_name=request.model,
                     prompt=prompt,
                     priority=(
-                        request.sampling_params.priority
-                        if request.sampling_params
+                        request.priority
+                        if request.priority
                         else QueuePriority.NORMAL.value
                     ),
                     created_at=datetime_now(),

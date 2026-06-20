@@ -26,15 +26,16 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 # 内存缓存 (生产环境应使用 Redis)
 _tenant_cache: dict[str, Tenant] = {}
+_tenant_cache_times: dict[str, float] = {}
 _cache_lock = threading.Lock()
 _cache_ttl = 300  # 5 minutes
 
 
-def generate_api_key() -> tuple[str, str]:
+def generate_api_key() -> tuple[str, str, str]:
     """生成 API Key
 
     Returns:
-        (plain_key, hashed_key): 明文密钥 (仅返回一次) 和哈希值
+        (plain_key, hashed_key, prefix): 明文密钥 (仅返回一次)、哈希值和前缀
     """
     plain_key = f"qk_{secrets.token_urlsafe(32)}"
     hashed_key = hashlib.sha256(plain_key.encode()).hexdigest()
@@ -197,9 +198,9 @@ class TenantAuthMiddleware(BaseHTTPMiddleware):
         # 先检查内存缓存
         with _cache_lock:
             if key_hash in _tenant_cache:
-                cached = _tenant_cache[key_hash]
-                if time.time() - getattr(cached, "_cache_time", 0) < _cache_ttl:
-                    return cached
+                cache_time = _tenant_cache_times.get(key_hash, 0)
+                if time.time() - cache_time < _cache_ttl:
+                    return _tenant_cache[key_hash]
 
         # 从 Redis 加载
         if self.redis_enabled:
@@ -212,24 +213,42 @@ class TenantAuthMiddleware(BaseHTTPMiddleware):
         return None
 
     def _deserialize_tenant(self, data: dict) -> Tenant:
-        """反序列化租户数据"""
+        """反序列化租户数据
+
+        兼容 decode_responses=True (str keys) 和 decode_responses=False (bytes keys)。
+        """
+        def _get(key: str, default=None):
+            """同时尝试 str 和 bytes 键名"""
+            if key in data:
+                return data[key]
+            if isinstance(key, str) and key.encode() in data:
+                return data[key.encode()]
+            return default
+
         quota = QuotaConfig(
-            requests_per_minute=int(data.get(b"quota_requests_per_minute", 60)),
-            requests_per_day=int(data.get(b"quota_requests_per_day", 10000)),
-            max_tokens_per_request=int(data.get(b"quota_max_tokens", 8192)),
-            gpu_memory_mb=int(data.get(b"quota_gpu_memory", 4096)),
-            concurrent_requests=int(data.get(b"quota_concurrent", 10)),
+            requests_per_minute=int(_get("quota_requests_per_minute", 60)),
+            requests_per_day=int(_get("quota_requests_per_day", 10000)),
+            max_tokens_per_request=int(_get("quota_max_tokens", 8192)),
+            gpu_memory_mb=int(_get("quota_gpu_memory", 4096)),
+            concurrent_requests=int(_get("quota_concurrent", 10)),
         )
+        def _get_field(field: str, default=""):
+            val = _get(field, default)
+            if isinstance(val, bytes):
+                return val.decode()
+            return val
+
         tenant = Tenant(
-            id=data[b"id"].decode(),
-            name=data[b"name"].decode(),
-            api_key_hash=data[b"api_key_hash"].decode(),
-            api_key_prefix=data[b"api_key_prefix"].decode(),
-            status=TenantStatus(data[b"status"].decode()),
+            id=_get_field("id"),
+            name=_get_field("name"),
+            api_key_hash=_get_field("api_key_hash"),
+            api_key_prefix=_get_field("api_key_prefix"),
+            status=TenantStatus(_get_field("status")),
             quota=quota,
-            priority=int(data.get(b"priority", 5)),
+            priority=int(_get("priority", 5)),
         )
-        tenant._cache_time = time.time()
+        now = time.time()
         with _cache_lock:
             _tenant_cache[tenant.api_key_hash] = tenant
+            _tenant_cache_times[tenant.api_key_hash] = now
         return tenant
