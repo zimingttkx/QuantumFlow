@@ -249,12 +249,10 @@ class VLLMEngine(InferenceEngine):
                         token_ids = output_item.token_ids
                         text = output_item.text
                         if token_ids is not None and len(token_ids) > 0:
-                            # 按 token 切分回退：用空白分块（无法 100% 还原 token 边界）
-                            parts = text.split(" ") if text else [""]
-                            for i, part in enumerate(parts):
-                                chunk = part + (" " if i < len(parts) - 1 else "")
-                                if chunk:
-                                    yield chunk
+                            # 按字符逐个 yield，支持 CJK 等非空格分隔语言
+                            for char in text:
+                                if char:
+                                    yield char
                                     await asyncio.sleep(0.01)
                         elif text:
                             yield text

@@ -1,6 +1,7 @@
 """HuggingFace TGI推理后端"""
 
 import asyncio
+import json
 import time
 from collections.abc import AsyncIterator
 from typing import Any
@@ -357,8 +358,6 @@ class TGIEngine(InferenceEngine):
 
                         if data == "[DONE]":
                             break
-
-                        import json
 
                         try:
                             chunk = json.loads(data)

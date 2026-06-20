@@ -95,7 +95,7 @@ class HuggingFaceEngine(InferenceEngine):
             # 但 cached custom code 可能与本地版本不一致，需要根据实际情况选择
             model = AutoModelForCausalLM.from_pretrained(
                 config.model_path,
-                dtype=torch_dtype,
+                torch_dtype=torch_dtype,
                 device_map="auto" if device == "cuda" else None,
                 trust_remote_code=config.trust_remote_code,
                 low_cpu_mem_usage=True,
@@ -153,6 +153,7 @@ class HuggingFaceEngine(InferenceEngine):
         top_p: float,
         top_k: int,
         repetition_penalty: float,
+        generated_tokens: dict[int, int] | None = None,
     ) -> torch.Tensor:
         """
         从 logits 中采样下一个 token。
@@ -163,13 +164,14 @@ class HuggingFaceEngine(InferenceEngine):
             top_p: Nucleus sampling 的阈值
             top_k: Top-k 采样的 k 值
             repetition_penalty: 重复惩罚
+            generated_tokens: 已生成的 token 映射（用于 repetition penalty）
 
         Returns:
             选中的 token id [1]
         """
         # 应用 repetition_penalty（每个 token 只惩罚一次）
         if repetition_penalty != 1.0:
-            prev_tokens = getattr(self, "_generated_tokens", {})
+            prev_tokens = generated_tokens if generated_tokens is not None else {}
             for tok_id in set(prev_tokens.values()):  # 使用 set 去重，避免同一 token 被多次惩罚
                 logits[tok_id] /= repetition_penalty
 
@@ -298,7 +300,7 @@ class HuggingFaceEngine(InferenceEngine):
             return "", 0, 0, (time.time() - start_time) * 1000
 
         # 追踪已生成的 token（用于 repetition penalty）
-        self._generated_tokens = {}
+        generated_tokens: dict[int, int] = {}
 
         # ── Phase 1: Prefill（分块处理输入，累积 KV cache）──────────────
         past_key_values = None
@@ -342,6 +344,7 @@ class HuggingFaceEngine(InferenceEngine):
             top_p=sampling_params.top_p,
             top_k=sampling_params.top_k,
             repetition_penalty=1.0,
+            generated_tokens=generated_tokens,
         ).item()
 
         if next_token_id == tokenizer.eos_token_id:
@@ -349,7 +352,7 @@ class HuggingFaceEngine(InferenceEngine):
             return "", prompt_lens, 0, latency_ms
 
         generated_ids.append(next_token_id)
-        self._generated_tokens[0] = next_token_id
+        generated_tokens[0] = next_token_id
 
         for step in range(1, sampling_params.max_tokens):
             cur_token = torch.tensor([[generated_ids[-1]]], device=device)
@@ -374,13 +377,14 @@ class HuggingFaceEngine(InferenceEngine):
                 top_p=sampling_params.top_p,
                 top_k=sampling_params.top_k,
                 repetition_penalty=1.0,
+                generated_tokens=generated_tokens,
             ).item()
 
             if next_token_id == tokenizer.eos_token_id:
                 break
 
             generated_ids.append(next_token_id)
-            self._generated_tokens[step] = next_token_id
+            generated_tokens[step] = next_token_id
 
         # Decode 生成结果
         generated_text = tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
@@ -652,6 +656,7 @@ class HuggingFaceEngine(InferenceEngine):
 
         # ── Phase 2: Decode（逐 token yield）──────────
         # 从最后一个 prefill chunk 的 logits 采样第一个 token
+        generated_tokens: dict[int, int] = {}
         first_logits = outputs.logits[:, -1, :].squeeze(0)
         next_token_id = self._sample_token(
             first_logits,
@@ -659,6 +664,7 @@ class HuggingFaceEngine(InferenceEngine):
             top_p=sampling_params.top_p,
             top_k=sampling_params.top_k,
             repetition_penalty=1.0,
+            generated_tokens=generated_tokens,
         ).item()
 
         generated_ids = []
@@ -694,6 +700,7 @@ class HuggingFaceEngine(InferenceEngine):
                 top_p=sampling_params.top_p,
                 top_k=sampling_params.top_k,
                 repetition_penalty=1.0,
+                generated_tokens=generated_tokens,
             ).item()
 
             if next_token_id == tokenizer.eos_token_id:
@@ -761,24 +768,25 @@ class HuggingFaceEngine(InferenceEngine):
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         fut = loop.run_in_executor(executor, _enqueue)
 
-        while True:
-            try:
-                kind, value = await loop.run_in_executor(None, q.get, True, 0.1)
-            except queue.Empty:
-                await asyncio.sleep(0.01)
-                continue
+        try:
+            while True:
+                try:
+                    kind, value = await loop.run_in_executor(None, q.get, True, 0.1)
+                except queue.Empty:
+                    await asyncio.sleep(0.01)
+                    continue
 
-            if kind == "token":
-                yield value
-            elif kind == "error":
-                logger.error("stream_generate_error", model=model_name, error=str(value))
-                break
-            elif kind == "done":
-                break
-
-        await fut
-        thread.join()
-        executor.shutdown(wait=False)
+                if kind == "token":
+                    yield value
+                elif kind == "error":
+                    logger.error("stream_generate_error", model=model_name, error=str(value))
+                    break
+                elif kind == "done":
+                    break
+        finally:
+            await fut
+            thread.join()
+            executor.shutdown(wait=False)
 
     async def get_stats(self, model_name: str) -> dict[str, float]:
         """获取引擎统计"""
@@ -798,11 +806,13 @@ class HuggingFaceEngine(InferenceEngine):
                     import pynvml
 
                     pynvml.nvmlInit()
-                    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-                    util = pynvml.nvmlDeviceGetUtilizationRates(handle)
-                    stats["gpu_utilization"] = util.gpu / 100.0
-                    stats["gpu_memory_utilization"] = util.memory / 100.0
-                    pynvml.nvmlShutdown()
+                    try:
+                        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                        util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                        stats["gpu_utilization"] = util.gpu / 100.0
+                        stats["gpu_memory_utilization"] = util.memory / 100.0
+                    finally:
+                        pynvml.nvmlShutdown()
                 except Exception:
                     pass
 

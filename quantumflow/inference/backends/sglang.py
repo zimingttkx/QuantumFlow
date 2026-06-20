@@ -37,7 +37,7 @@ class SGLangEngine(InferenceEngine):
         self.config = config or {}
         self.base_url = base_url.rstrip("/")
         self._client: Any | None = None
-        self._timeout = timeout or self.config.get("timeout", 300)
+        self._timeout = timeout if timeout is not None else self.config.get("timeout", 300)
         # 并发信号量：避免单实例 SGLang 被并发打爆
         self._max_concurrent = max_concurrent
         self._semaphore: asyncio.Semaphore | None = None
@@ -141,7 +141,6 @@ class SGLangEngine(InferenceEngine):
             ]
 
         try:
-            time.time()
 
             async def _single_generate(prompt: str, index: int) -> InferenceResult:
                 """发送单个推理请求"""
@@ -427,7 +426,19 @@ class SGLangEngine(InferenceEngine):
             result = response.json()
             latency_ms = (time.time() - start_time) * 1000
 
-            choice = result.get("choices", [{}])[0]
+            choices = result.get("choices", [])
+            if not choices:
+                return InferenceResult(
+                    request_id=f"{model_name}_chat",
+                    outputs=["[SGLang错误: 空响应]"],
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    latency_ms=latency_ms,
+                    finish_reason="error",
+                    metrics={},
+                )
+
+            choice = choices[0]
             message = choice.get("message", {})
 
             return InferenceResult(
