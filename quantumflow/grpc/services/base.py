@@ -71,42 +71,33 @@ class BaseService:
         if not node_id:
             raise InvalidRequestError(field="node_id", reason="Node ID cannot be empty")
 
-    def _handle_exception(self, e: Exception) -> grpc.RpcError:
-        """将异常转换为 gRPC RpcError
+    def _handle_exception(self, e: Exception) -> GrpcQuantumFlowError:
+        """将异常转换为 gRPC 异常
 
         Args:
             e: 异常对象
 
         Returns:
-            grpc.RpcError
+            GrpcQuantumFlowError
         """
         if isinstance(e, GrpcQuantumFlowError):
-            return grpc.RpcError(
-                e.code,
-                e.message,
-            )
+            return e
         elif isinstance(e, ValueError):
-            return grpc.RpcError(
-                grpc.StatusCode.INVALID_ARGUMENT,
-                str(e),
-            )
+            return InvalidRequestError(field="unknown", reason=str(e))
         else:
             # 未知异常，包装为内部错误
-            return grpc.RpcError(
-                grpc.StatusCode.INTERNAL,
-                f"Internal error: {str(e)}",
-            )
+            return InternalServerError(reason=str(e), cause=e)
 
     def _create_rpc_error(
         self, code: grpc.StatusCode, message: str
-    ) -> grpc.RpcError:
-        """创建 gRPC RpcError
+    ) -> GrpcQuantumFlowError:
+        """创建 gRPC 异常
 
         Args:
             code: 状态码
             message: 错误消息
 
         Returns:
-            grpc.RpcError
+            GrpcQuantumFlowError
         """
-        return grpc.RpcError(code, message)
+        return GrpcQuantumFlowError(code=code, message=message)

@@ -90,9 +90,9 @@ class PackSchedulingStrategy(SchedulingStrategy):
         )
         util_ratio = sum(g.utilization for g in node.gpus) / len(node.gpus)
         computed = max(0.0, min(1.0, 0.6 * mem_used_ratio + 0.4 * util_ratio))
-        # 当 node.load 显式设置时（>0），优先用它；否则用计算值
+        # 当 node.load 显式设置时（>0），取两者中较大者；否则用计算值
         if node.load > 0:
-            return float(node.load)
+            return max(float(node.load), computed)
         return computed
 
     def _score_node(self, node: NodeResource, request: SchedulingRequest) -> float:
