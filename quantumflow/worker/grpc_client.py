@@ -3,6 +3,7 @@
 Worker 节点使用的 gRPC 客户端，用于连接 Controller。
 """
 
+import logging
 import threading
 import time
 from typing import Iterator, Optional
@@ -11,6 +12,8 @@ import grpc
 
 from quantumflow.grpc.channels.pool import GrpcChannelPool, get_default_pool
 from quantumflow.grpc.generated import quantumflow_pb2, quantumflow_pb2_grpc
+
+logger = logging.getLogger(__name__)
 
 
 class WorkerGrpcClient:
@@ -150,17 +153,28 @@ class WorkerGrpcClient:
             model_name: 模型名称
             backend: 后端类型
             memory_used: 已使用显存（字节）
+
+        Raises:
+            NotImplementedError: 此功能尚未实现
         """
-        # 这个功能可以通过心跳附带，不需要单独调用
-        pass
+        raise NotImplementedError(
+            "report_model_loaded is not yet implemented. "
+            "Model loaded status should be reported via heartbeat."
+        )
 
     def report_model_unloaded(self, model_name: str) -> None:
         """报告模型已卸载
 
         Args:
             model_name: 模型名称
+
+        Raises:
+            NotImplementedError: 此功能尚未实现
         """
-        pass
+        raise NotImplementedError(
+            "report_model_unloaded is not yet implemented. "
+            "Model unloaded status should be reported via heartbeat."
+        )
 
     def fetch_tasks(self) -> list:
         """获取待处理任务
@@ -195,6 +209,11 @@ class WorkerGrpcClient:
             self._running = False
             if self._heartbeat_thread:
                 self._heartbeat_thread.join(timeout=10.0)
+                if self._heartbeat_thread.is_alive():
+                    logger.warning(
+                        "heartbeat_thread_did_not_stop_in_time",
+                        extra={"node_id": self.node_id},
+                    )
                 self._heartbeat_thread = None
 
     def _heartbeat_loop(self, interval_seconds: float) -> None:
@@ -211,8 +230,10 @@ class WorkerGrpcClient:
                 self.send_heartbeat(resources)
 
             except Exception as e:
-                # 记录错误但继续运行
-                pass
+                logger.warning(
+                    "heartbeat_loop_error",
+                    extra={"node_id": self.node_id, "error": str(e)},
+                )
 
             time.sleep(interval_seconds)
 

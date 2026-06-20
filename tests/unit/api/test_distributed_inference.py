@@ -246,16 +246,14 @@ class TestDistributedGenerate:
         mock_queue.disconnect = AsyncMock()
 
         with patch("quantumflow.api.routes.inference._get_scheduler", return_value=mock_scheduler):
-            with patch("quantumflow.api.routes.inference.get_redis_manager") as mock_redis_mgr:
-                mock_redis_mgr.return_value.is_connected = True
-                with patch("quantumflow.api.routes.inference.RedisQueue", return_value=mock_queue):
-                    response = await _distributed_generate(
-                        request_id="dist-001",
-                        model_name="test-model",
-                        prompt="Hello",
-                        sampling_params=_make_sampling_params(),
-                        priority=3,
-                    )
+            with patch("quantumflow.api.routes.inference._get_shared_redis_queue", new_callable=AsyncMock, return_value=mock_queue):
+                response = await _distributed_generate(
+                    request_id="dist-001",
+                    model_name="test-model",
+                    prompt="Hello",
+                    sampling_params=_make_sampling_params(),
+                    priority=3,
+                )
 
         # 验证调度器被调用
         mock_scheduler.submit.assert_called_once()
@@ -284,19 +282,17 @@ class TestDistributedGenerate:
         mock_queue.disconnect = AsyncMock()
 
         with patch("quantumflow.api.routes.inference._get_scheduler", return_value=mock_scheduler):
-            with patch("quantumflow.api.routes.inference.get_redis_manager") as mock_redis_mgr:
-                mock_redis_mgr.return_value.is_connected = True
-                with patch("quantumflow.api.routes.inference.RedisQueue", return_value=mock_queue):
-                    with pytest.raises(Exception) as exc_info:
-                        await _distributed_generate(
-                            request_id="timeout-001",
-                            model_name="test-model",
-                            prompt="Hello",
-                            sampling_params=_make_sampling_params(),
-                            timeout_ms=100,  # 短超时用于测试
-                        )
+            with patch("quantumflow.api.routes.inference._get_shared_redis_queue", new_callable=AsyncMock, return_value=mock_queue):
+                with pytest.raises(Exception) as exc_info:
+                    await _distributed_generate(
+                        request_id="timeout-001",
+                        model_name="test-model",
+                        prompt="Hello",
+                        sampling_params=_make_sampling_params(),
+                        timeout_ms=100,  # 短超时用于测试
+                    )
 
-                    assert "timeout" in str(exc_info.value).lower() or "Timeout" in str(exc_info.value)
+                assert "timeout" in str(exc_info.value).lower() or "Timeout" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_distributed_generate_error_result(self):
@@ -313,17 +309,15 @@ class TestDistributedGenerate:
         mock_queue.disconnect = AsyncMock()
 
         with patch("quantumflow.api.routes.inference._get_scheduler", return_value=mock_scheduler):
-            with patch("quantumflow.api.routes.inference.get_redis_manager") as mock_redis_mgr:
-                mock_redis_mgr.return_value.is_connected = True
-                with patch("quantumflow.api.routes.inference.RedisQueue", return_value=mock_queue):
-                    with pytest.raises(Exception) as exc_info:
-                        await _distributed_generate(
-                            request_id="error-001",
-                            model_name="test-model",
-                            prompt="Hello",
-                            sampling_params=_make_sampling_params(),
-                            timeout_ms=5000,
-                        )
+            with patch("quantumflow.api.routes.inference._get_shared_redis_queue", new_callable=AsyncMock, return_value=mock_queue):
+                with pytest.raises(Exception) as exc_info:
+                    await _distributed_generate(
+                        request_id="error-001",
+                        model_name="test-model",
+                        prompt="Hello",
+                        sampling_params=_make_sampling_params(),
+                        timeout_ms=5000,
+                    )
 
                     assert "调度失败" in str(exc_info.value)
 
@@ -353,9 +347,7 @@ class TestDistributedGenerate:
         mock_queue.disconnect = AsyncMock()
 
         with patch("quantumflow.api.routes.inference._get_scheduler", return_value=mock_scheduler):
-            with patch("quantumflow.api.routes.inference.get_redis_manager") as mock_redis_mgr:
-                mock_redis_mgr.return_value.is_connected = True
-                with patch("quantumflow.api.routes.inference.RedisQueue", return_value=mock_queue):
+            with patch("quantumflow.api.routes.inference._get_shared_redis_queue", new_callable=AsyncMock, return_value=mock_queue):
                     await _distributed_generate(
                         request_id="params-001",
                         model_name="test-model",
@@ -438,9 +430,7 @@ class TestModeSwitching:
         with patch("quantumflow.api.routes.inference.get_engine_manager", return_value=mock_engine):
             with patch("quantumflow.api.routes.inference._is_distributed_mode", return_value=True):
                 with patch("quantumflow.api.routes.inference._get_scheduler", return_value=mock_scheduler):
-                    with patch("quantumflow.api.routes.inference.get_redis_manager") as mock_redis_mgr:
-                        mock_redis_mgr.return_value.is_connected = True
-                        with patch("quantumflow.api.routes.inference.RedisQueue", return_value=mock_queue):
+                    with patch("quantumflow.api.routes.inference._get_shared_redis_queue", new_callable=AsyncMock, return_value=mock_queue):
                             request = InferenceRequest(
                                 model="test-model",
                                 prompt="Hello",

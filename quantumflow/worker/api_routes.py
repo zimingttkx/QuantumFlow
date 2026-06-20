@@ -1,8 +1,8 @@
 """Worker API 路由 - 接收 Controller 的指令"""
 
-from typing import Any
+from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from quantumflow.inference.engine import ModelConfig, SamplingParams
 from quantumflow.worker.worker import (
@@ -138,8 +138,8 @@ def create_worker_router(worker: WorkerNode) -> APIRouter:
             "hostname": worker.node_info.get("hostname"),
             "ip": worker.node_info.get("ip"),
             "port": worker.config.port,
-            "gpu_count": len(worker._gpu_info),
-            "gpu_info": worker._gpu_info,
+            "gpu_count": len(worker.node_info.get("gpu_info", [])),
+            "gpu_info": worker.node_info.get("gpu_info", []),
             "loaded_models": worker.engine.loaded_model_names if worker.engine else [],
             "active_requests": len(worker.active_requests),
             "completed_requests": worker.completed_requests,
@@ -148,19 +148,29 @@ def create_worker_router(worker: WorkerNode) -> APIRouter:
         }
 
     @router.get("/stats")
-    async def get_stats(model_name: str) -> dict[str, Any]:
+    async def get_stats(model_name: Optional[str] = Query(None)) -> dict[str, Any]:
         """
         获取模型统计信息
 
         Args:
-            model_name: 模型名称
+            model_name: 模型名称（可选，不指定则返回所有模型的统计）
         """
         try:
-            stats = await worker.get_stats(model_name)
-            return {
-                "model": model_name,
-                "stats": stats,
-            }
+            if model_name:
+                stats = await worker.get_stats(model_name)
+                return {
+                    "model": model_name,
+                    "stats": stats,
+                }
+            else:
+                # Return aggregate stats for all loaded models
+                return {
+                    "stats": {
+                        "active_requests": len(worker.active_requests),
+                        "completed_requests": worker.completed_requests,
+                        "failed_requests": worker.failed_requests,
+                    },
+                }
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e)) from e
 

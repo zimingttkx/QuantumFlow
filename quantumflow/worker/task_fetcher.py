@@ -65,6 +65,7 @@ class TaskFetcher:
             "tasks_completed": 0,
             "tasks_failed": 0,
             "tasks_retried": 0,
+            "tasks_cancelled": 0,
         }
 
         logger.info(
@@ -91,9 +92,10 @@ class TaskFetcher:
             logger.warning("task_fetcher_already_running")
             return
 
-        # 连接Redis
+        # 连接Redis — 复用 redis_mgr 的连接 URL
         redis_mgr = await get_redis_manager()
         if redis_mgr.is_connected:
+            # Use the same redis_url as the existing connection manager
             self._redis_queue = RedisQueue(redis_url=self.config.redis_url)
             await self._redis_queue.connect()
             logger.info("task_fetcher_redis_connected")
@@ -262,10 +264,13 @@ class TaskFetcher:
             )
 
             if results and len(results) > 0:
+                output_length = (
+                    len(results[0].outputs[0]) if results[0].outputs else 0
+                )
                 logger.info(
                     "task_completed",
                     request_id=request.request_id,
-                    output_length=len(results[0].outputs[0]) if results[0].outputs else 0,
+                    output_length=output_length,
                 )
                 return True
             else:
@@ -315,11 +320,22 @@ class TaskFetcher:
         """任务完成回调"""
         self._active_tasks.pop(request_id, None)
 
-        if task.exception():
+        try:
+            exception = task.exception()
+        except asyncio.CancelledError:
+            # Task was cancelled — update stats accordingly
+            self.stats["tasks_cancelled"] += 1
+            logger.warning(
+                "task_cancelled",
+                request_id=request_id,
+            )
+            return
+
+        if exception:
             logger.error(
                 "task_failed",
                 request_id=request_id,
-                error=str(task.exception()),
+                error=str(exception),
             )
 
     def get_stats(self) -> dict[str, Any]:

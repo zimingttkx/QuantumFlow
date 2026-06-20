@@ -159,53 +159,6 @@ class WorkerNode:
             "failed_requests": self.failed_requests,
         }
 
-    async def start(self, controller_url: str | None = None):
-        """启动Worker"""
-        if self._running:
-            return
-
-        self.controller_url = controller_url
-        self._running = True
-
-        # 初始化引擎
-        if self.engine and not self.engine.is_ready:
-            await self.engine.initialize()
-
-        # 收集GPU信息
-        self._gpu_info = await self._collect_gpu_info()
-
-        # 更新状态
-        self.status = NodeStatus.HEALTHY
-
-        # 启动心跳
-        if controller_url:
-            self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-
-        logger.info("worker_started", node_id=self.config.node_id)
-
-    async def stop(self):
-        """停止Worker"""
-        if not self._running:
-            return
-
-        self._running = False
-        self.status = NodeStatus.OFFLINE
-
-        # 停止心跳
-        if self._heartbeat_task:
-            self._heartbeat_task.cancel()
-            try:
-                await self._heartbeat_task
-            except asyncio.CancelledError:
-                pass
-
-        # 关闭引擎
-        if self.engine:
-            for model_name in self.engine.loaded_model_names:
-                await self.engine.unload_model(model_name)
-
-        logger.info("worker_stopped", node_id=self.config.node_id)
-
     def create_app(self) -> FastAPI:
         """创建 FastAPI 应用，用于接收 Controller 的指令"""
         # 如果已存在 app，直接返回（缓存）
@@ -262,7 +215,7 @@ class WorkerNode:
         self._shutdown_event = asyncio.Event()
 
         # 在线程中运行服务器（因为 uvicorn.run() 是同步的）
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         server_task = loop.run_in_executor(None, server.run)
 
         # 等待关闭事件或服务器任务完成
@@ -539,10 +492,12 @@ class WorkerNode:
         """获取本机IP"""
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            s.close()
-            return ip
+            try:
+                s.connect(("8.8.8.8", 80))
+                ip = s.getsockname()[0]
+                return ip
+            finally:
+                s.close()
         except Exception:
             return "127.0.0.1"
 
@@ -564,10 +519,12 @@ class WorkerNode:
             import pynvml
 
             pynvml.nvmlInit()
-            handle = pynvml.nvmlDeviceGetHandleByIndex(gpu_id)
-            temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
-            pynvml.nvmlShutdown()
-            return float(temp)
+            try:
+                handle = pynvml.nvmlDeviceGetHandleByIndex(gpu_id)
+                temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+                return float(temp)
+            finally:
+                pynvml.nvmlShutdown()
         except Exception:
             return 0.0
 
@@ -582,7 +539,7 @@ class WorkerNode:
                 for i in range(torch.cuda.device_count()):
                     props = torch.cuda.get_device_properties(i)
                     memory_allocated = torch.cuda.memory_allocated(i)
-                    torch.cuda.memory_reserved(i)
+                    memory_reserved = torch.cuda.memory_reserved(i)
 
                     gpu_info.append(
                         {
@@ -590,6 +547,7 @@ class WorkerNode:
                             "name": props.name,
                             "memory_total": props.total_memory,
                             "memory_used": memory_allocated,
+                            "memory_reserved": memory_reserved,
                             "utilization": (
                                 (memory_allocated / props.total_memory) * 100
                                 if props.total_memory > 0

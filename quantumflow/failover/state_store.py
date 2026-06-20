@@ -302,6 +302,14 @@ class NodeStateStore:
             logger.error("lock_acquire_failed", resource=resource, error=str(e))
             return False
 
+    RELEASE_LOCK_LUA = """
+    if redis.call('GET', KEYS[1]) == ARGV[1] then
+        return redis.call('DEL', KEYS[1])
+    else
+        return 0
+    end
+    """
+
     async def release_lock(self, resource: str, owner: str) -> bool:
         """
         释放分布式锁（仅当持有者匹配时）
@@ -317,30 +325,38 @@ class NodeStateStore:
             redis = self._get_redis()
             key = FAILOVER_LOCK_KEY.format(resource=resource)
 
-            # 先检查锁的持有者
-            data = redis.get(key)
-            if data is None:
-                return True  # 锁已不存在，视为成功
+            # 构建锁数据用于 Lua 脚本比较
+            now = datetime.now()
+            expires_at = now + timedelta(seconds=30)
+            lock_data = json.dumps({
+                "owner": owner,
+                "acquired_at": now.isoformat(),
+                "expires_at": expires_at.isoformat(),
+            })
 
-            if isinstance(data, bytes):
-                data = data.decode()
-
-            lock_info = json.loads(data)
-            if lock_info.get("owner") != owner:
+            # 使用 Lua 脚本原子性地检查持有者并删除
+            result = redis.eval(self.RELEASE_LOCK_LUA, 1, key, lock_data)
+            if result:
+                logger.debug("lock_released", resource=resource, owner=owner)
+                return True
+            else:
                 logger.warning(
                     "lock_release_denied",
                     resource=resource,
                     owner=owner,
-                    actual_owner=lock_info.get("owner"),
                 )
                 return False
-
-            redis.delete(key)
-            logger.debug("lock_released", resource=resource, owner=owner)
-            return True
         except Exception as e:
             logger.error("lock_release_failed", resource=resource, error=str(e))
             return False
+
+    EXTEND_LOCK_LUA = """
+    if redis.call('GET', KEYS[1]) == ARGV[1] then
+        return redis.call('EXPIRE', KEYS[1], ARGV[2])
+    else
+        return 0
+    end
+    """
 
     async def extend_lock(
         self, resource: str, owner: str, ttl_seconds: int = 30
@@ -360,25 +376,22 @@ class NodeStateStore:
             redis = self._get_redis()
             key = FAILOVER_LOCK_KEY.format(resource=resource)
 
-            data = redis.get(key)
-            if data is None:
-                return False
-
-            if isinstance(data, bytes):
-                data = data.decode()
-
-            lock_info = json.loads(data)
-            if lock_info.get("owner") != owner:
-                return False
-
-            # 延长过期时间
+            # 构建锁数据用于 Lua 脚本比较
             now = datetime.now()
             expires_at = now + timedelta(seconds=ttl_seconds)
-            lock_info["expires_at"] = expires_at.isoformat()
+            lock_data = json.dumps({
+                "owner": owner,
+                "acquired_at": now.isoformat(),
+                "expires_at": expires_at.isoformat(),
+            })
 
-            redis.set(key, json.dumps(lock_info), ex=ttl_seconds)
-            logger.debug("lock_extended", resource=resource, owner=owner)
-            return True
+            # 使用 Lua 脚本原子性地检查持有者并延长 TTL
+            result = redis.eval(self.EXTEND_LOCK_LUA, 1, key, lock_data, ttl_seconds)
+            if result:
+                logger.debug("lock_extended", resource=resource, owner=owner)
+                return True
+            else:
+                return False
         except Exception as e:
             logger.error("lock_extend_failed", resource=resource, error=str(e))
             return False

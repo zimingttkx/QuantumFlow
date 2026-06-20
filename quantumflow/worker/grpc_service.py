@@ -47,9 +47,11 @@ class WorkerGrpcService(
         # 验证请求
         if not request.request_id:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "request_id cannot be empty")
+            return quantumflow_pb2.InferenceResponse()
 
         if not request.model_name:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "model_name cannot be empty")
+            return quantumflow_pb2.InferenceResponse()
 
         try:
             # 如果有 WorkerNode，使用它执行推理
@@ -103,6 +105,7 @@ class WorkerGrpcService(
             InferenceResponse 消息
         """
         start_time = time.perf_counter()
+        actual_tokens_generated = 0
 
         try:
             if self.worker_node and self.worker_node.engine_manager:
@@ -120,22 +123,23 @@ class WorkerGrpcService(
             for i, token in enumerate(results):
                 duration_ms = (time.perf_counter() - start_time) * 1000
                 text = token.text if hasattr(token, 'text') else str(token)
+                actual_tokens_generated += 1
 
                 yield quantumflow_pb2.InferenceResponse(
                     request_id=request.request_id,
                     status=quantumflow_pb2.STATUS_PROCESSING,
                     text=text,
-                    tokens_generated=i + 1,
+                    tokens_generated=actual_tokens_generated,
                     latency_ms=duration_ms,
                 )
 
-            # 最后一条
+            # 最后一条 — use actual token count, not request.max_tokens
             duration_ms = (time.perf_counter() - start_time) * 1000
             yield quantumflow_pb2.InferenceResponse(
                 request_id=request.request_id,
                 status=quantumflow_pb2.STATUS_SUCCESS,
                 text="",
-                tokens_generated=request.max_tokens,
+                tokens_generated=actual_tokens_generated,
                 latency_ms=duration_ms,
             )
 
@@ -166,6 +170,7 @@ class WorkerGrpcService(
 
         if not request.batch_id:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "batch_id cannot be empty")
+            return quantumflow_pb2.BatchInferenceResponse()
 
         if not request.prompts:
             return quantumflow_pb2.BatchInferenceResponse(
@@ -220,5 +225,6 @@ class WorkerGrpcService(
             return quantumflow_pb2.BatchInferenceResponse(
                 batch_id=request.batch_id,
                 status=quantumflow_pb2.STATUS_ERROR,
+                error_message=str(e),
                 total_latency_ms=duration_ms,
             )

@@ -69,7 +69,7 @@ class TensorRTLLMEngine(InferenceEngine):
             logger.error("model_load_error", model=config.model_name, error=str(e))
             return False
 
-    async def _build_engine(self, config: ModelConfig):
+    def _build_engine(self, config: ModelConfig):
         """Build TensorRT-LLM engine"""
         import os
         from tensorrt_llm import LLM
@@ -219,11 +219,9 @@ class TensorRTLLMEngine(InferenceEngine):
                 for output_item in output.outputs:
                     text = getattr(output_item, 'text', '') or str(output_item)
                     if text:
-                        parts = text.split(" ")
-                        for i, part in enumerate(parts):
-                            chunk = part + (" " if i < len(parts) - 1 else "")
-                            if chunk:
-                                yield chunk
+                        for char in text:
+                            if char:
+                                yield char
                                 await asyncio.sleep(0.01)
 
         except Exception as e:
@@ -246,11 +244,20 @@ class TensorRTLLMEngine(InferenceEngine):
                     import pynvml
 
                     pynvml.nvmlInit()
-                    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-                    util = pynvml.nvmlDeviceGetUtilizationRates(handle)
-                    stats["gpu_utilization"] = util.gpu / 100.0
-                    stats["gpu_memory_utilization"] = util.memory / 100.0
-                    pynvml.nvmlShutdown()
+                    try:
+                        gpu_count = pynvml.nvmlDeviceGetCount()
+                        total_util = 0.0
+                        total_mem_util = 0.0
+                        for i in range(gpu_count):
+                            handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                            util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                            total_util += util.gpu
+                            total_mem_util += util.memory
+                        if gpu_count > 0:
+                            stats["gpu_utilization"] = (total_util / gpu_count) / 100.0
+                            stats["gpu_memory_utilization"] = (total_mem_util / gpu_count) / 100.0
+                    finally:
+                        pynvml.nvmlShutdown()
                 except Exception:
                     pass
 
