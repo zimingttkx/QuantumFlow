@@ -22,13 +22,13 @@ from quantumflow.core.constants import (
     ModelStatus,
     NodeStatus,
     PERFORMANCE_CONFIG,
-    QueuePriority,
     SchedulingStrategyType,
     ParallelStrategyType,
     ResourceType,
     TIMEOUT_CONFIG,
     VERSION,
 )
+from quantumflow.storage.redis_queue import QueuePriority
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -191,14 +191,15 @@ class TestQueuePriority:
 
     def test_all_members_exist(self):
         members = {m.name for m in QueuePriority}
-        expected = {"HIGH", "NORMAL", "LOW"}
+        expected = {"LOW", "NORMAL", "HIGH", "CRITICAL"}
         assert members == expected
 
     def test_int_values_and_ordering(self):
-        assert QueuePriority.HIGH.value == 0
+        assert QueuePriority.LOW.value == 0
         assert QueuePriority.NORMAL.value == 5
-        assert QueuePriority.LOW.value == 10
-        assert QueuePriority.HIGH < QueuePriority.NORMAL < QueuePriority.LOW
+        assert QueuePriority.HIGH.value == 7
+        assert QueuePriority.CRITICAL.value == 9
+        assert QueuePriority.LOW < QueuePriority.NORMAL < QueuePriority.HIGH < QueuePriority.CRITICAL
 
     def test_is_int_enum(self):
         from enum import Enum
@@ -206,7 +207,7 @@ class TestQueuePriority:
         assert issubclass(QueuePriority, Enum)
 
     def test_direct_int_comparison(self):
-        assert QueuePriority.HIGH == 0
+        assert QueuePriority.LOW == 0
         assert QueuePriority.NORMAL == 5
 
 
@@ -311,7 +312,7 @@ class TestTimeoutConfig:
         "request.max",
         "model.load",
         "node.heartbeat",
-        "调度.evaluate",
+        "schedule.evaluate",
     ]
 
     def test_all_keys_present(self):

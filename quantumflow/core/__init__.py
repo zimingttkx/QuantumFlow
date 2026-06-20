@@ -6,7 +6,6 @@ from quantumflow.core.constants import (
     ModelStatus,
     NodeStatus,
     ParallelStrategyType,
-    QueuePriority,
     SchedulingStrategyType,
 )
 from quantumflow.core.exceptions import (
@@ -28,7 +27,6 @@ __all__ = [
     "NodeStatus",
     "ModelStatus",
     "JobStatus",
-    "QueuePriority",
     "InferenceBackendType",
     "SchedulingStrategyType",
     "ParallelStrategyType",

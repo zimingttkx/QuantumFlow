@@ -106,20 +106,13 @@ GPU_MEMORY_FRACTION = 0.92  # GPU显存使用比例
 GPU_UTILIZATION_THRESHOLD = 0.95  # GPU利用率阈值
 
 
-# 队列优先级
-class QueuePriority(int, Enum):
-    HIGH = 0
-    NORMAL = 5
-    LOW = 10
-
-
 # 超时配置
 TIMEOUT_CONFIG = {
     "request.default": 300,  # 默认请求超时
     "request.max": 3600,  # 最大请求超时
     "model.load": 600,  # 模型加载超时
     "node.heartbeat": 30,  # 节点心跳超时
-    "调度.evaluate": 5,  # 调度评估超时
+    "schedule.evaluate": 5,  # 调度评估超时
 }
 
 # 性能调优参数
