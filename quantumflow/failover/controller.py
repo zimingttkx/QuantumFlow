@@ -496,6 +496,7 @@ class FailoverController:
                 failed_node_id=failed_node_id,
                 target_node_id=target_node_id,
             )
+            return False
 
         # 获取故障节点上的模型
         failed_node = await self._cluster_manager.get_node(failed_node_id)

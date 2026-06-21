@@ -117,6 +117,10 @@ class RedisConnectionManager:
         """获取Redis客户端"""
         return self._redis_client
 
+    def get_client(self):
+        """获取Redis客户端（方法形式，兼容 NodeStateStore）"""
+        return self._redis_client
+
     async def health_check(self) -> dict:
         """健康检查"""
         if not self.is_connected:
