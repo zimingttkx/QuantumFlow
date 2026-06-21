@@ -13,7 +13,7 @@ import structlog
 logger = structlog.get_logger().bind(component="redis_queue")
 
 
-class QueuePriority(Enum):
+class QueuePriority(int, Enum):
     """队列优先级"""
 
     LOW = 0
