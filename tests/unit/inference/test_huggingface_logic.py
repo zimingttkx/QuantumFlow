@@ -162,6 +162,7 @@ class TestSampleTokenLogic:
             top_p=1.0,
             top_k=0,
             repetition_penalty=2.0,
+            generated_tokens=engine._generated_tokens,
         )
         # token 5 会被惩罚，但 token 0 不会
         # 由于 token 5 的 logit 从 10 变成 5，与 token 0 相等

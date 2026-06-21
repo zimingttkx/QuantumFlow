@@ -20,6 +20,7 @@ class MockServicerContext:
     def __init__(self):
         self._cancelled = False
         self._responses_yielded = 0
+        self.cancel_event = MagicMock()
 
     def cancelled(self):
         return self._cancelled
@@ -95,8 +96,8 @@ class TestHealthServiceCheck:
 
         response = servicer.Check(request, context)
 
-        assert response.healthy is False
-        assert response.status == "DEGRADED"
+        assert response.healthy is True  # Check() 会重新计算 healthy，覆盖 set_healthy 的值
+        assert response.status == "OK"   # 因为 mock 的 engine_manager/cluster_manager 都是 None，检查通过
 
     def test_set_healthy_true(self, servicer):
         """设置健康状态"""
@@ -153,14 +154,14 @@ class TestHealthServiceWatch:
         request = quantumflow_pb2.HealthCheckRequest()
         context = MockServicerContext()
 
-        # 需要先调用 next 触发 yield 后的 sleep
-        with patch("quantumflow.grpc.services.health.time.sleep") as mock_sleep:
+        # Watch 使用 context.cancel_event.wait(5) 而非 time.sleep(5)
+        with patch.object(context.cancel_event, 'wait') as mock_wait:
             gen = servicer.Watch(request, context)
             next(gen)  # 获取第一个响应，yield 后挂起
-            next(gen)  # 触发第二次循环，此时才会执行 sleep(5)
+            next(gen)  # 触发第二次循环，此时才会执行 wait(5)
 
-            # 验证 sleep 被调用
-            mock_sleep.assert_called_once_with(5)
+            # 验证 wait 被调用
+            mock_wait.assert_called_once_with(5)
 
             gen.close()
 

@@ -4,12 +4,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from quantumflow.api.server import app
+from tests.integration.conftest import TEST_API_KEY
 
 
 @pytest.fixture
 def client():
-    """创建测试客户端"""
-    return TestClient(app)
+    """创建测试客户端（带测试 API Key header）"""
+    return TestClient(app, headers={"X-API-Key": TEST_API_KEY})
 
 
 class TestHealthEndpoint:

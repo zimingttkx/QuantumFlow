@@ -111,9 +111,12 @@ class TestReplicaManagerExceptionPaths:
             MagicMock(node_id="node-1", status=NodeStatus.HEALTHY),
             MagicMock(node_id="node-2", status=NodeStatus.HEALTHY),
             MagicMock(node_id="node-3", status=NodeStatus.HEALTHY),
+            MagicMock(node_id="node-4", status=NodeStatus.HEALTHY),
         ])
         # 让 create_replica 抛出异常
         replica_manager.create_replica = AsyncMock(side_effect=Exception("Create failed"))
+        # 需要让 target_count > current_replicas 才会触发 create_replica 调用
+        replica_manager._replica_policy.default_replica_count = 3
 
         result = await replica_manager.redistribute_replicas("test-model")
 

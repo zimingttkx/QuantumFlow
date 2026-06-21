@@ -762,12 +762,12 @@ class TestEstimateParamsFromName:
     def test_3_8b(self):
         """[边界用例] 3.8b 模式匹配
 
-        NOTE: "3.8b" in name 会先匹配到 "8b" 模式 (因为 "8b" 在列表中比 "3.8b" 靠前，
-        且 Python 的 `in` 操作符是顺序查找，第一个匹配优先)。这是源码的已知行为。
+        NOTE: patterns 按长度降序排序，所以 "3.8b" 会在 "8b" 之前匹配，
+        返回 3.8B 而非 8B。
         """
         result = _estimate_params_from_name("phi-3.8b")
-        # 实际行为: "3.8b" 中先找到 "8b" 子串，返回 8B 而非 3.8B
-        assert result == 8_000_000_000
+        # patterns 排序后 "3.8b" 优先匹配
+        assert result == 3_800_000_000
 
     def test_no_match(self):
         assert _estimate_params_from_name("unknown") == 0

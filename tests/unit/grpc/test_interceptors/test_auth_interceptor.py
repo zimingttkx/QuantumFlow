@@ -145,12 +145,11 @@ class TestAuthInterceptorBypassMethods:
         )
         continuation = MagicMock()
 
-        # 验证抛出异常
-        with pytest.raises(Exception) as exc_info:
-            interceptor.intercept_service(continuation, details)
-
-        # 验证异常是认证相关
-        assert "UNAUTHENTICATED" in str(exc_info.value) or "Invalid" in str(exc_info.value)
+        # 验证返回 aborting handler (不是异常，而是 grpc.RpcMethodHandler)
+        result = interceptor.intercept_service(continuation, details)
+        assert result is not None
+        # 返回的 handler 不是 continuation 的结果
+        continuation.assert_not_called()
 
     def test_successful_authentication_passes_through(self):
         """有效认证通过"""

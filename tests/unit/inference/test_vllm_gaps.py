@@ -428,19 +428,20 @@ class TestVLLMGetStats:
         with patch("torch.cuda.is_available", return_value=True):
             with patch("torch.cuda.memory_allocated", return_value=2 * 1024**3):
                 with patch("torch.cuda.memory_reserved", return_value=3 * 1024**3):
-                    with patch("pynvml.nvmlInit"):
-                        with patch("pynvml.nvmlDeviceGetHandleByIndex"):
-                            mock_util = MagicMock()
-                            mock_util.gpu = 75
-                            mock_util.memory = 50
-                            with patch("pynvml.nvmlDeviceGetUtilizationRates", return_value=mock_util):
-                                with patch("pynvml.nvmlShutdown"):
-                                    stats = await engine.get_stats("test")
+                    with patch("torch.cuda.device_count", return_value=1):
+                        # Also mock _get_nvml_manager at the module level
+                        with patch("quantumflow.inference.gpu_monitor._get_nvml_manager") as mock_mgr:
+                            mock_mgr_instance = MagicMock()
+                            mock_mgr_instance.get_utilization.return_value = 75
+                            mock_mgr_instance.get_memory_info.return_value = {"utilization": 0.5}
+                            mock_mgr_instance.get_temperature.return_value = 65
+                            mock_mgr.return_value = mock_mgr_instance
+                            stats = await engine.get_stats("test")
 
-        assert stats["gpu_memory_allocated"] == 2.0
-        assert stats["gpu_memory_reserved"] == 3.0
-        assert stats["gpu_utilization"] == 0.75
-        assert stats["gpu_memory_utilization"] == 0.5
+        assert stats["gpu_memory_allocated_gb"] == 2.0
+        assert stats["gpu_memory_reserved_gb"] == 3.0
+        assert stats["gpu_utilization_avg"] == 0.75
+        assert stats["gpu_memory_utilization_avg"] == 0.005
 
     @pytest.mark.asyncio
     async def test_get_stats_pynvml_fails_silently(self):
@@ -452,11 +453,12 @@ class TestVLLMGetStats:
         with patch("torch.cuda.is_available", return_value=True):
             with patch("torch.cuda.memory_allocated", return_value=1 * 1024**3):
                 with patch("torch.cuda.memory_reserved", return_value=1 * 1024**3):
-                    with patch("pynvml.nvmlInit", side_effect=ImportError):
-                        stats = await engine.get_stats("test")
+                    with patch("torch.cuda.device_count", return_value=1):
+                        with patch("quantumflow.inference.gpu_monitor._get_nvml_manager", side_effect=ImportError):
+                            stats = await engine.get_stats("test")
 
-        assert "gpu_memory_allocated" in stats
-        assert "gpu_utilization" not in stats
+        assert "gpu_memory_allocated_gb" in stats
+        assert "gpu_utilization_avg" not in stats
 
     @pytest.mark.asyncio
     async def test_get_stats_cuda_not_available(self):

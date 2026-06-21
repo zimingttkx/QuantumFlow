@@ -66,6 +66,9 @@ class TestBaseServiceValidation:
         service._validate_node_id("node-123")
 
 
+from quantumflow.grpc.exceptions import GrpcQuantumFlowError
+
+
 class TestBaseServiceExceptionHandling:
     """异常处理测试"""
 
@@ -76,7 +79,7 @@ class TestBaseServiceExceptionHandling:
         error = NodeNotFoundError("node-123")
         result = service._handle_exception(error)
 
-        assert isinstance(result, grpc.RpcError)
+        assert isinstance(result, GrpcQuantumFlowError)
 
     def test_handle_value_error(self):
         """处理 ValueError"""
@@ -85,7 +88,7 @@ class TestBaseServiceExceptionHandling:
         error = ValueError("Invalid value")
         result = service._handle_exception(error)
 
-        assert isinstance(result, grpc.RpcError)
+        assert isinstance(result, GrpcQuantumFlowError)
 
     def test_handle_unknown_error(self):
         """处理未知异常"""
@@ -94,7 +97,7 @@ class TestBaseServiceExceptionHandling:
         error = RuntimeError("Unknown error")
         result = service._handle_exception(error)
 
-        assert isinstance(result, grpc.RpcError)
+        assert isinstance(result, GrpcQuantumFlowError)
 
     def test_create_rpc_error(self):
         """创建 RpcError"""
@@ -105,7 +108,7 @@ class TestBaseServiceExceptionHandling:
             "Not found"
         )
 
-        assert isinstance(error, grpc.RpcError)
+        assert isinstance(error, GrpcQuantumFlowError)
 
 
 class NodeNotFoundError(GrpcQuantumFlowError):

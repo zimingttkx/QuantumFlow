@@ -89,6 +89,14 @@ class TestIsDistributedMode:
 
     def test_returns_true_when_workers_exist(self):
         """有 Worker 注册时应返回 True"""
+        import asyncio
+        # Ensure a usable event loop exists
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
         with patch("quantumflow.api.routes.inference._get_scheduler") as mock_get_sched:
             mock_scheduler = MagicMock()
             mock_scheduler.get_worker_count = AsyncMock(return_value=2)

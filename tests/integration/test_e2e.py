@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from quantumflow.api.server import create_app
+from tests.integration.conftest import TEST_API_KEY
 
 
 class TestE2EInferenceWorkflow:
@@ -18,8 +19,8 @@ class TestE2EInferenceWorkflow:
 
     @pytest.fixture
     def client(self, app):
-        """创建测试客户端"""
-        return TestClient(app)
+        """创建测试客户端（带测试 API Key）"""
+        return TestClient(app, headers={"X-API-Key": TEST_API_KEY})
 
     def test_health_check(self, client):
         """测试健康检查端点"""

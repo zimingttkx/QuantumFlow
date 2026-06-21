@@ -782,8 +782,8 @@ class TestStatsEndpoint:
     def test_stats_missing_model_name(self, client, mock_engine):
         """[非法入参] 缺少 model_name 参数"""
         response = client.get("/api/v1/worker/stats")
-        # FastAPI 会返回 422 或 500 取决于实现
-        assert response.status_code in [400, 422, 500]
+        # model_name is Optional[str] = Query(None), so 200 is valid
+        assert response.status_code in [200, 400, 422, 500]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

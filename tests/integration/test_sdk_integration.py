@@ -2,6 +2,7 @@
 import pytest
 import time
 from quantumflow.sdk import SyncQuantumFlowClient
+from tests.integration.conftest import TEST_API_KEY
 
 
 class TestSDKIntegrationReal:
@@ -9,7 +10,7 @@ class TestSDKIntegrationReal:
 
     def test_health_check_real(self):
         """验证：真实健康检查"""
-        client = SyncQuantumFlowClient(base_url="http://localhost:8000")
+        client = SyncQuantumFlowClient(base_url="http://localhost:8000", api_key=TEST_API_KEY)
         health = client.health_check()
         assert health["status"] == "healthy"
         assert "version" in health
@@ -17,7 +18,7 @@ class TestSDKIntegrationReal:
 
     def test_list_models_real(self):
         """验证：真实获取模型列表"""
-        client = SyncQuantumFlowClient(base_url="http://localhost:8000")
+        client = SyncQuantumFlowClient(base_url="http://localhost:8000", api_key=TEST_API_KEY)
         models = client.list_models()
         assert isinstance(models, list)
         # models 可能为空，因为没有模型加载
@@ -25,7 +26,7 @@ class TestSDKIntegrationReal:
 
     def test_generate_with_mock_model(self):
         """验证：使用真实推理请求（可能失败，因为模型可能不存在）"""
-        client = SyncQuantumFlowClient(base_url="http://localhost:8000")
+        client = SyncQuantumFlowClient(base_url="http://localhost:8000", api_key=TEST_API_KEY)
 
         # 发送一个生成请求
         try:
@@ -46,11 +47,11 @@ class TestSDKIntegrationReal:
 
     def test_client_lifecycle(self):
         """验证：客户端生命周期"""
-        client = SyncQuantumFlowClient(base_url="http://localhost:8000")
+        client = SyncQuantumFlowClient(base_url="http://localhost:8000", api_key=TEST_API_KEY)
         assert client.base_url == "http://localhost:8000"
 
         # 使用上下文管理器
-        with SyncQuantumFlowClient(base_url="http://localhost:8000") as c:
+        with SyncQuantumFlowClient(base_url="http://localhost:8000", api_key=TEST_API_KEY) as c:
             health = c.health_check()
             assert health is not None
 

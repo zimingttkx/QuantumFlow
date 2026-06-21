@@ -50,7 +50,7 @@ class TestSyncClientGenerate:
             "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
         }
         mock_client_instance = MagicMock()
-        mock_client_instance.__enter__.return_value.post.return_value = mock_response
+        mock_client_instance.post.return_value = mock_response
         mock_client_class.return_value = mock_client_instance
 
         client = SyncQuantumFlowClient()
@@ -59,7 +59,7 @@ class TestSyncClientGenerate:
         assert response.request_id == "req_001"
         assert response.generated_text == "Hello, world!"
         assert response.model == "test-model"
-        mock_client_instance.__enter__.return_value.post.assert_called_once()
+        mock_client_instance.post.assert_called_once()
 
     @patch("httpx.Client")
     def test_generate_with_custom_params(self, mock_client_class):
@@ -76,7 +76,7 @@ class TestSyncClientGenerate:
             "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}
         }
         mock_client_instance = MagicMock()
-        mock_client_instance.__enter__.return_value.post.return_value = mock_response
+        mock_client_instance.post.return_value = mock_response
         mock_client_class.return_value = mock_client_instance
 
         client = SyncQuantumFlowClient()
@@ -89,7 +89,7 @@ class TestSyncClientGenerate:
 
         assert response.request_id == "req_002"
         # Verify the request was made with correct params
-        call_args = mock_client_instance.__enter__.return_value.post.call_args
+        call_args = mock_client_instance.post.call_args
         json_data = call_args.kwargs.get("json") or call_args[1].get("json")
         assert json_data["sampling_params"]["temperature"] == 0.5
         assert json_data["sampling_params"]["max_tokens"] == 100
@@ -108,7 +108,7 @@ class TestSyncClientListModels:
             {"name": "model-2", "status": "loading"}
         ]
         mock_client_instance = MagicMock()
-        mock_client_instance.__enter__.return_value.get.return_value = mock_response
+        mock_client_instance.get.return_value = mock_response
         mock_client_class.return_value = mock_client_instance
 
         client = SyncQuantumFlowClient()
@@ -116,7 +116,7 @@ class TestSyncClientListModels:
 
         assert len(models) == 2
         assert models[0]["name"] == "model-1"
-        mock_client_instance.__enter__.return_value.get.assert_called_once()
+        mock_client_instance.get.assert_called_once()
 
 
 class TestSyncClientHealthCheck:
@@ -133,7 +133,7 @@ class TestSyncClientHealthCheck:
             "uptime_seconds": 3600
         }
         mock_client_instance = MagicMock()
-        mock_client_instance.__enter__.return_value.get.return_value = mock_response
+        mock_client_instance.get.return_value = mock_response
         mock_client_class.return_value = mock_client_instance
 
         client = SyncQuantumFlowClient()
@@ -153,7 +153,7 @@ class TestSyncClientErrorHandling:
         mock_response.status_code = 429
         mock_response.text = "Rate limit exceeded"
         mock_client_instance = MagicMock()
-        mock_client_instance.__enter__.return_value.post.return_value = mock_response
+        mock_client_instance.post.return_value = mock_response
         mock_client_class.return_value = mock_client_instance
 
         client = SyncQuantumFlowClient()
@@ -168,7 +168,7 @@ class TestSyncClientErrorHandling:
         mock_response.status_code = 500
         mock_response.text = "Internal server error"
         mock_client_instance = MagicMock()
-        mock_client_instance.__enter__.return_value.post.return_value = mock_response
+        mock_client_instance.post.return_value = mock_response
         mock_client_class.return_value = mock_client_instance
 
         client = SyncQuantumFlowClient()
@@ -184,7 +184,7 @@ class TestSyncClientErrorHandling:
         mock_response.status_code = 429
         mock_response.text = "Rate limit exceeded"
         mock_client_instance = MagicMock()
-        mock_client_instance.__enter__.return_value.get.return_value = mock_response
+        mock_client_instance.get.return_value = mock_response
         mock_client_class.return_value = mock_client_instance
 
         client = SyncQuantumFlowClient()
@@ -199,7 +199,7 @@ class TestSyncClientErrorHandling:
         mock_response.status_code = 404
         mock_response.text = "Not found"
         mock_client_instance = MagicMock()
-        mock_client_instance.__enter__.return_value.get.return_value = mock_response
+        mock_client_instance.get.return_value = mock_response
         mock_client_class.return_value = mock_client_instance
 
         client = SyncQuantumFlowClient()
@@ -239,7 +239,7 @@ class TestTimeoutHandling:
     def test_post_timeout(self, mock_client_class):
         """验证：POST 请求超时"""
         mock_client_instance = MagicMock()
-        mock_client_instance.__enter__.return_value.post.side_effect = httpx.TimeoutException("timeout")
+        mock_client_instance.post.side_effect = httpx.TimeoutException("timeout")
         mock_client_class.return_value = mock_client_instance
 
         client = SyncQuantumFlowClient()
@@ -251,7 +251,7 @@ class TestTimeoutHandling:
     def test_get_timeout(self, mock_client_class):
         """验证：GET 请求超时"""
         mock_client_instance = MagicMock()
-        mock_client_instance.__enter__.return_value.get.side_effect = httpx.TimeoutException("timeout")
+        mock_client_instance.get.side_effect = httpx.TimeoutException("timeout")
         mock_client_class.return_value = mock_client_instance
 
         client = SyncQuantumFlowClient()
@@ -271,8 +271,7 @@ class TestSyncClientContextManager:
         mock_response.json.return_value = {"status": "healthy", "version": "1.0.0"}
 
         mock_client_instance = MagicMock()
-        mock_client_instance.__enter__.return_value.get.return_value = mock_response
-        mock_client_instance.__enter__.return_value.request.return_value = mock_response
+        mock_client_instance.get.return_value = mock_response
         mock_client_class.return_value = mock_client_instance
 
         with SyncQuantumFlowClient() as client:

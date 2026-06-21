@@ -13,6 +13,7 @@ from quantumflow.api.middleware.auth import (
     generate_api_key,
     hash_api_key,
     _tenant_cache,
+    _tenant_cache_times,
     _cache_lock,
 )
 from quantumflow.api.models.tenant import Tenant, TenantStatus, QuotaConfig
@@ -252,10 +253,10 @@ def test_authenticate_cache_hit():
         status=TenantStatus.ACTIVE,
         quota=quota,
     )
-    tenant._cache_time = time.time()
     key_hash = tenant.api_key_hash
     with _cache_lock:
         _tenant_cache[key_hash] = tenant
+        _tenant_cache_times[key_hash] = time.time()  # Also set the cache time
 
     import asyncio
     middleware = TenantAuthMiddleware(FastAPI())
@@ -275,10 +276,10 @@ def test_authenticate_cache_expired():
         status=TenantStatus.ACTIVE,
         quota=quota,
     )
-    tenant._cache_time = time.time() - 600  # 10 分钟前
     key_hash = tenant.api_key_hash
     with _cache_lock:
         _tenant_cache[key_hash] = tenant
+        _tenant_cache_times[key_hash] = time.time() - 600  # 10 分钟前
 
     import asyncio
     middleware = TenantAuthMiddleware(FastAPI())
@@ -338,7 +339,8 @@ def test_deserialize_tenant():
     assert tenant.priority == 7
     assert tenant.quota.requests_per_minute == 30
     assert tenant.quota.concurrent_requests == 5
-    assert hasattr(tenant, "_cache_time")
+    # _cache_time is stored in _tenant_cache_times dict, not on the Tenant object
+    assert tenant.api_key_hash in _tenant_cache_times
 
 
 def test_deserialize_tenant_defaults():

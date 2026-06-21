@@ -287,7 +287,6 @@ async def test_async_client_stores_credentials():
 @pytest.mark.asyncio
 async def test_async_arequest_returns_parsed_json_on_2xx():
     """2xx → 返回 json() 结果."""
-    client = AsyncQuantumFlowClient(base_url="http://localhost:8000", api_key="k")
     ok = _mock_httpx_response(200, {"models": []})
     with patch("quantumflow.sdk.client.httpx.AsyncClient") as MockClient:
         # `async with httpx.AsyncClient(...)` 要求 __aenter__/__aexit__
@@ -297,6 +296,7 @@ async def test_async_arequest_returns_parsed_json_on_2xx():
         mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
         mock_instance.__aexit__ = AsyncMock(return_value=False)
         MockClient.return_value = mock_instance
+        client = AsyncQuantumFlowClient(base_url="http://localhost:8000", api_key="k")
         result = await client._arequest("GET", "/api/v1/models")
     assert result == {"models": []}, f"got {result!r}"
 

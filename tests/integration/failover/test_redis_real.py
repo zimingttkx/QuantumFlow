@@ -16,7 +16,7 @@ from typing import Optional
 
 import pytest
 
-from quantumflow.failover.models import FailoverEvent, ReplicaRole, FailoverState, HealthStatus
+from quantumflow.failover.models import FailoverEvent, NodeFailoverState, ReplicaRole, FailoverState, HealthStatus
 from quantumflow.failover.state_store import NodeStateStore
 
 
@@ -79,15 +79,25 @@ async def real_redis_manager(redis_url):
 
 
 @pytest.fixture
-async def real_state_store(real_redis_manager):
+async def real_state_store(real_redis_manager, redis_url):
     """Create NodeStateStore with real Redis."""
-    from quantumflow.failover.redis_manager import RedisConnectionManager
+    import redis as sync_redis
 
-    manager = RedisConnectionManager(redis_url=redis_url)
+    # Use sync Redis client because NodeStateStore uses sync redis calls
+    sync_client = sync_redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
+
+    class SyncRedisWrapper:
+        """Wrapper to make NodeStateStore use sync Redis client"""
+        def __init__(self, client):
+            self._client = client
+        def get_client(self):
+            return self._client
+
+    manager = SyncRedisWrapper(sync_client)
     store = NodeStateStore(redis_manager=manager)
-    await store.initialize()
+    store._initialized = True
     yield store
-    await store.close()
+    sync_client.close()
 
 
 # ==============================================================================

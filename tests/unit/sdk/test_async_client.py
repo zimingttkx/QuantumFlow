@@ -85,9 +85,18 @@ class TestAsyncContextManager:
     @pytest.mark.asyncio
     async def test_async_context_manager_with_health(self):
         """验证：异步上下文管理器中使用"""
-        async with AsyncQuantumFlowClient() as client:
-            health = await client.health_check()
-            assert health is not None
+        with patch("httpx.AsyncClient") as mock_async_client:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {"status": "healthy"}
+            mock_client_instance = MagicMock()
+            mock_client_instance.request = AsyncMock(return_value=mock_response)
+            mock_client_instance.aclose = AsyncMock()
+            mock_async_client.return_value = mock_client_instance
+
+            async with AsyncQuantumFlowClient() as client:
+                health = await client.health_check()
+                assert health["status"] == "healthy"
 
 
 class TestAsyncErrorHandling:
@@ -124,14 +133,15 @@ class TestAsyncErrorHandling:
     @pytest.mark.asyncio
     async def test_async_with_api_key(self):
         """验证：带 api_key 的异步请求"""
-        client = AsyncQuantumFlowClient(api_key="test-key-123")
-        assert client.api_key == "test-key-123"
-        # headers 构建在 _arequest 中，需要 mock httpx 来覆盖
-        # 这里验证初始化正确即可
         with patch("httpx.AsyncClient") as mock_async_client:
             mock_response = MagicMock()
             mock_response.status_code = 200
             mock_response.json.return_value = {"status": "healthy"}
-            mock_async_client.return_value.__aenter__.return_value.request.return_value = mock_response
+            mock_client_instance = MagicMock()
+            mock_client_instance.request = AsyncMock(return_value=mock_response)
+            mock_async_client.return_value = mock_client_instance
+
+            client = AsyncQuantumFlowClient(api_key="test-key-123")
+            assert client.api_key == "test-key-123"
             health = await client.health_check()
             assert health["status"] == "healthy"

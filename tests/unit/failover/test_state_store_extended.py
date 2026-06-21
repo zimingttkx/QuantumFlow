@@ -239,6 +239,7 @@ class TestDistributedLockExtended:
         """测试延长不存在的锁"""
         store, mock_redis = store_with_mock_redis
         mock_redis.get.return_value = None
+        mock_redis.eval.return_value = 0  # No lock exists, Lua returns 0
 
         result = await store.extend_lock("leader", "node-1", ttl_seconds=30)
 
@@ -255,6 +256,7 @@ class TestDistributedLockExtended:
             "expires_at": (datetime.now() + timedelta(seconds=30)).isoformat(),
         })
         mock_redis.get.return_value = stored_lock
+        mock_redis.eval.return_value = 0  # Wrong owner, Lua returns 0
 
         result = await store.extend_lock("leader", "node-2", ttl_seconds=30)
 
@@ -272,6 +274,7 @@ class TestDistributedLockExtended:
         })
         mock_redis.get.return_value = stored_lock.encode("utf-8")
         mock_redis.set.return_value = True
+        mock_redis.eval.return_value = 1  # Lua returns 1 on success
 
         result = await store.extend_lock("leader", "node-1", ttl_seconds=60)
 
@@ -281,7 +284,7 @@ class TestDistributedLockExtended:
     async def test_extend_lock_exception(self, store_with_mock_redis):
         """测试延长锁时异常"""
         store, mock_redis = store_with_mock_redis
-        mock_redis.get.side_effect = Exception("Redis error")
+        mock_redis.eval.side_effect = Exception("Redis error")
 
         result = await store.extend_lock("leader", "node-1", ttl_seconds=30)
 
@@ -291,7 +294,7 @@ class TestDistributedLockExtended:
     async def test_release_lock_exception(self, store_with_mock_redis):
         """测试释放锁时异常"""
         store, mock_redis = store_with_mock_redis
-        mock_redis.get.side_effect = Exception("Redis error")
+        mock_redis.eval.side_effect = Exception("Redis error")
 
         result = await store.release_lock("leader", "node-1")
 

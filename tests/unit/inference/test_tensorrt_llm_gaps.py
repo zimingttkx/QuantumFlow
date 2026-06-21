@@ -643,7 +643,7 @@ class TestTensorRTLLMBuildEngine:
 
         with patch.dict("sys.modules", {"tensorrt_llm": mock_trt_llm}):
             with patch.dict("os.environ", {}, clear=False):
-                result = await engine._build_engine(config)
+                result = engine._build_engine(config)
 
         mock_trt_llm.LLM.assert_called_once()
         call_kwargs = mock_trt_llm.LLM.call_args[1]

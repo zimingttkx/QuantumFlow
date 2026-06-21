@@ -373,11 +373,12 @@ class TestDistributedLock:
             "expires_at": (datetime.now() + timedelta(seconds=30)).isoformat(),
         })
         mock_redis.get.return_value = stored_lock
+        mock_redis.eval.return_value = 1  # Lua script returns 1 on success
 
         result = await store.release_lock("leader", "node-1")
 
         assert result is True
-        mock_redis.delete.assert_called_once()
+        mock_redis.eval.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_release_lock_denied_wrong_owner(self, store_with_mock_redis):
@@ -390,6 +391,7 @@ class TestDistributedLock:
             "expires_at": (datetime.now() + timedelta(seconds=30)).isoformat(),
         })
         mock_redis.get.return_value = stored_lock
+        mock_redis.eval.return_value = 0  # Lua script returns 0 for wrong owner
 
         # node-2 尝试释放 node-1 的锁
         result = await store.release_lock("leader", "node-2")
@@ -402,10 +404,11 @@ class TestDistributedLock:
         """测试释放已过期的锁"""
         store, mock_redis = store_with_mock_redis
         mock_redis.get.return_value = None  # 锁已不存在
+        mock_redis.eval.return_value = 0  # Lua returns 0 when lock doesn't exist
 
         result = await store.release_lock("leader", "node-1")
 
-        assert result is True  # 视为成功
+        assert result is False  # 锁不存在时 Lua 返回 0, release_lock 返回 False
 
     @pytest.mark.asyncio
     async def test_extend_lock_success(self, store_with_mock_redis):
@@ -419,6 +422,7 @@ class TestDistributedLock:
         })
         mock_redis.get.return_value = stored_lock
         mock_redis.set.return_value = True
+        mock_redis.eval.return_value = 1  # Lua script returns 1 on success
 
         result = await store.extend_lock("leader", "node-1", ttl_seconds=60)
 
@@ -435,6 +439,7 @@ class TestDistributedLock:
             "expires_at": (datetime.now() + timedelta(seconds=30)).isoformat(),
         })
         mock_redis.get.return_value = stored_lock
+        mock_redis.eval.return_value = 0  # Lua script returns 0 for wrong owner
 
         result = await store.extend_lock("leader", "node-2", ttl_seconds=60)
 
