@@ -22,9 +22,13 @@ class RateLimitError(APIError):
         super().__init__(status_code=429, message=message)
 
 
-class TimeoutError(QuantumFlowError):
+class QuantumFlowTimeoutError(QuantumFlowError):
     """请求超时错误"""
     pass
+
+
+# Alias for backward compatibility
+TimeoutError = QuantumFlowTimeoutError
 
 
 class ValidationError(QuantumFlowError):

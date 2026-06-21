@@ -303,11 +303,14 @@ class NodeStateStore:
             return False
 
     RELEASE_LOCK_LUA = """
-    if redis.call('GET', KEYS[1]) == ARGV[1] then
-        return redis.call('DEL', KEYS[1])
-    else
-        return 0
+    local data = redis.call('GET', KEYS[1])
+    if data then
+        local decoded = cjson.decode(data)
+        if decoded and decoded['owner'] == ARGV[1] then
+            return redis.call('DEL', KEYS[1])
+        end
     end
+    return 0
     """
 
     async def release_lock(self, resource: str, owner: str) -> bool:
@@ -325,17 +328,8 @@ class NodeStateStore:
             redis = self._get_redis()
             key = FAILOVER_LOCK_KEY.format(resource=resource)
 
-            # 构建锁数据用于 Lua 脚本比较
-            now = datetime.now()
-            expires_at = now + timedelta(seconds=30)
-            lock_data = json.dumps({
-                "owner": owner,
-                "acquired_at": now.isoformat(),
-                "expires_at": expires_at.isoformat(),
-            })
-
-            # 使用 Lua 脚本原子性地检查持有者并删除
-            result = redis.eval(self.RELEASE_LOCK_LUA, 1, key, lock_data)
+            # 使用 Lua 脚本原子性地检查 owner 并删除
+            result = redis.eval(self.RELEASE_LOCK_LUA, 1, key, owner)
             if result:
                 logger.debug("lock_released", resource=resource, owner=owner)
                 return True
@@ -351,11 +345,14 @@ class NodeStateStore:
             return False
 
     EXTEND_LOCK_LUA = """
-    if redis.call('GET', KEYS[1]) == ARGV[1] then
-        return redis.call('EXPIRE', KEYS[1], ARGV[2])
-    else
-        return 0
+    local data = redis.call('GET', KEYS[1])
+    if data then
+        local decoded = cjson.decode(data)
+        if decoded and decoded['owner'] == ARGV[1] then
+            return redis.call('EXPIRE', KEYS[1], ARGV[2])
+        end
     end
+    return 0
     """
 
     async def extend_lock(
@@ -376,17 +373,8 @@ class NodeStateStore:
             redis = self._get_redis()
             key = FAILOVER_LOCK_KEY.format(resource=resource)
 
-            # 构建锁数据用于 Lua 脚本比较
-            now = datetime.now()
-            expires_at = now + timedelta(seconds=ttl_seconds)
-            lock_data = json.dumps({
-                "owner": owner,
-                "acquired_at": now.isoformat(),
-                "expires_at": expires_at.isoformat(),
-            })
-
-            # 使用 Lua 脚本原子性地检查持有者并延长 TTL
-            result = redis.eval(self.EXTEND_LOCK_LUA, 1, key, lock_data, ttl_seconds)
+            # 使用 Lua 脚本原子性地检查 owner 并延长 TTL
+            result = redis.eval(self.EXTEND_LOCK_LUA, 1, key, owner, ttl_seconds)
             if result:
                 logger.debug("lock_extended", resource=resource, owner=owner)
                 return True

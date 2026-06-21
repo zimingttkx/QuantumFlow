@@ -2,7 +2,7 @@
 import httpx
 from typing import Any
 
-from quantumflow.sdk.exceptions import APIError, RateLimitError, TimeoutError
+from quantumflow.sdk.exceptions import APIError, RateLimitError, QuantumFlowTimeoutError
 
 
 class SyncQuantumFlowClient:
@@ -39,7 +39,7 @@ class SyncQuantumFlowClient:
                 raise APIError(response.status_code, response.text)
             return response.json()
         except httpx.TimeoutException:
-            raise TimeoutError(f"Request to {path} timed out")
+            raise QuantumFlowTimeoutError(f"Request to {path} timed out")
 
     def _get(self, path: str, **kwargs) -> dict[str, Any]:
         """发送 GET 请求"""
@@ -51,7 +51,7 @@ class SyncQuantumFlowClient:
                 raise APIError(response.status_code, response.text)
             return response.json()
         except httpx.TimeoutException:
-            raise TimeoutError(f"Request to {path} timed out")
+            raise QuantumFlowTimeoutError(f"Request to {path} timed out")
 
     def generate(
         self,
@@ -118,29 +118,28 @@ class AsyncQuantumFlowClient:
         self.api_key = api_key
         self.tenant_id = tenant_id
         self.timeout = timeout
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["X-API-Key"] = api_key
+        if tenant_id:
+            headers["X-Tenant-ID"] = tenant_id
+        self._client = httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=timeout,
+            headers=headers,
+        )
 
     async def _arequest(self, method: str, path: str, **kwargs) -> dict[str, Any]:
         """发送异步 HTTP 请求"""
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["X-API-Key"] = self.api_key
-        if self.tenant_id:
-            headers["X-Tenant-ID"] = self.tenant_id
-
-        async with httpx.AsyncClient(
-            base_url=self.base_url,
-            timeout=self.timeout,
-            headers=headers,
-        ) as client:
-            try:
-                response = await client.request(method, path, **kwargs)
-                if response.status_code == 429:
-                    raise RateLimitError()
-                if response.status_code >= 400:
-                    raise APIError(response.status_code, response.text)
-                return response.json()
-            except httpx.TimeoutException:
-                raise TimeoutError(f"Request to {path} timed out")
+        try:
+            response = await self._client.request(method, path, **kwargs)
+            if response.status_code == 429:
+                raise RateLimitError()
+            if response.status_code >= 400:
+                raise APIError(response.status_code, response.text)
+            return response.json()
+        except httpx.TimeoutException:
+            raise QuantumFlowTimeoutError(f"Request to {path} timed out")
 
     async def generate(
         self,
@@ -186,7 +185,7 @@ class AsyncQuantumFlowClient:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        pass
+        await self._client.aclose()
 
 
 QuantumFlowSDK = SyncQuantumFlowClient

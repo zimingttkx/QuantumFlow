@@ -491,7 +491,11 @@ class FailoverController:
             是否成功
         """
         if self._failover_policy.require_manual_confirmation:
-            logger.info("manual_failover_confirmation_received")
+            logger.info(
+                "manual_failover_confirmation_received",
+                failed_node_id=failed_node_id,
+                target_node_id=target_node_id,
+            )
 
         # 获取故障节点上的模型
         failed_node = await self._cluster_manager.get_node(failed_node_id)

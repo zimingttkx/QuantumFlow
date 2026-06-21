@@ -146,7 +146,7 @@ class FailoverEvent:
             "target_node": self.target_node,
             "target_nodes": self.target_nodes,
             "reason": self.reason,
-            "timestamp": self.timestamp.isoformat(),
+            "timestamp": self.timestamp.isoformat() if self.timestamp else None,
             "success": self.success,
             "details": self.details,
         }
@@ -154,14 +154,17 @@ class FailoverEvent:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "FailoverEvent":
         """从字典创建"""
+        timestamp = data.get("timestamp")
+        if timestamp:
+            timestamp = datetime.fromisoformat(timestamp)
         return cls(
             event_id=data["event_id"],
             event_type=data["event_type"],
             source_node=data["source_node"],
             target_node=data.get("target_node"),
             target_nodes=data.get("target_nodes", {}),
-            reason=data["reason"],
-            timestamp=datetime.fromisoformat(data["timestamp"]),
-            success=data["success"],
+            reason=data.get("reason", ""),
+            timestamp=timestamp,
+            success=data.get("success", False),
             details=data.get("details", {}),
         )
